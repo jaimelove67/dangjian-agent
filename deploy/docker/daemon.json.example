@@ -1,0 +1,11 @@
+{
+  "registry-mirrors": [
+    "https://docker.m.daocloud.io"
+  ],
+  "max-concurrent-downloads": 10,
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}

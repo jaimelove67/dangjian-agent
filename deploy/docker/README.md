@@ -6,6 +6,8 @@
 deploy/
 ├── docker/
 │   ├── README.md                    # 本文档
+│   ├── MIRROR_GUIDE.md              # 镜像源与网络排障指南
+│   ├── daemon.json.example          # Docker 镜像源配置模板
 │   ├── init-db.sh                   # 数据库初始化脚本
 │   └── nginx.conf                   # Nginx 配置（生产环境）
 └── kubernetes/                      # K8s 配置（可选）
@@ -263,6 +265,23 @@ docker stats party-agent-app
    ```bash
    docker exec party-agent-app env | grep MODEL
    ```
+
+### 构建报 unexpected media type text/html
+
+这是**镜像加速源**问题，与项目代码无关。完整排查步骤见
+[镜像源与网络排障指南](MIRROR_GUIDE.md)。
+
+```bash
+# 自检哪些源可用，并找出坏源
+bash scripts/check-docker-mirrors.sh
+```
+
+要点：`daemon.json` 的 `registry-mirrors` 里只要有**一个**返回 HTML 网页的坏源，就会让
+整次拉取失败，且 **Docker 不会自动回退到下一个可用源**。务必移除
+`mirror.ccs.tencentyun.com`（腾讯云内网专用，非腾讯云机器必然失败）。
+
+改用离线方式可彻底绕开：`bash scripts/offline-images.sh save` 打包 →
+`bash scripts/offline-images.sh load` 导入。
 
 ## 生产环境部署建议
 

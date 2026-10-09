@@ -1,5 +1,11 @@
 # 党建工作智能体 - 生产环境 Dockerfile
-FROM python:3.11-slim
+#
+# 基础镜像默认使用官方 Docker Hub 镜像，可直接构建。
+# 网络受限时不必改代码，通过 build arg 指定加速源即可：
+#   docker build --build-arg BASE_IMAGE=docker.m.daocloud.io/library/python:3.11-slim .
+# 或使用 compose 变量：在 .env 中设置 DOCKERHUB_MIRROR=docker.m.daocloud.io
+ARG BASE_IMAGE=python:3.11-slim
+FROM ${BASE_IMAGE}
 
 # 设置工作目录
 WORKDIR /app

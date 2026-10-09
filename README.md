@@ -1,4 +1,4 @@
-# 党建工作智能体
+    # 党建工作智能体
 
 基于 LangChain 和 LangGraph 的高校党建工作智能辅助系统，提供知识问答、党员发展管理、组织生活、学习考核等功能。
 
@@ -127,6 +127,7 @@ uvicorn app.main:app --reload --port 8000
 - [项目框架文档](党建工作智能体_LangChain实现项目文档.md)
 - [开发规范文档](开发规范文档.md)
 - [Docker 部署指南](deploy/docker/README.md)
+- [镜像源与网络排障指南](deploy/docker/MIRROR_GUIDE.md) - 构建报 `unexpected media type text/html` 时看这份
 - [API 文档](http://localhost:8000/docs) - 启动服务后访问
 
 ## 🧪 测试
@@ -149,6 +150,9 @@ pytest --cov=app --cov-report=html
 ```
 
 ## 📦 部署
+
+> 构建阶段若报 `unexpected media type text/html`，属于**镜像源**问题（非项目代码问题），
+> 处理方式见 [镜像源与网络排障指南](deploy/docker/MIRROR_GUIDE.md)。
 
 ### 生产环境部署
 

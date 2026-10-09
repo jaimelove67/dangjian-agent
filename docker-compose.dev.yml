@@ -1,10 +1,13 @@
 # 党建工作智能体 - 开发环境 Docker Compose 配置
+#
+# 镜像源说明：同 docker-compose.yml，可通过 .env 中的
+#   DOCKERHUB_MIRROR / GHCR_MIRROR 覆盖，默认值等价于原配置。
 version: '3.8'
 
 services:
   # PostgreSQL 数据库
   postgres:
-    image: pgvector/pgvector:pg16
+    image: ${DOCKERHUB_MIRROR:-docker.io}/pgvector/pgvector:pg16
     container_name: party-agent-postgres-dev
     environment:
       POSTGRES_DB: party_agent_dev
@@ -26,7 +29,7 @@ services:
 
   # Redis
   redis:
-    image: redis:7-alpine
+    image: ${DOCKERHUB_MIRROR:-docker.io}/library/redis:7-alpine
     container_name: party-agent-redis-dev
     command: redis-server --appendonly yes
     volumes:
@@ -46,6 +49,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+      args:
+        BASE_IMAGE: ${DOCKERHUB_MIRROR:-docker.io}/library/python:3.11-slim
     container_name: party-agent-app-dev
     environment:
       DATABASE_URL: postgresql://party_user:dev_password@postgres:5432/party_agent_dev
@@ -81,7 +86,7 @@ services:
 
   # pgAdmin（数据库管理工具）
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: ${DOCKERHUB_MIRROR:-docker.io}/dpage/pgadmin4:latest
     container_name: party-agent-pgadmin-dev
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@party-agent.local
@@ -98,7 +103,7 @@ services:
 
   # Redis Commander（Redis 管理工具）
   redis-commander:
-    image: rediscommander/redis-commander:latest
+    image: ${DOCKERHUB_MIRROR:-docker.io}/rediscommander/redis-commander:latest
     container_name: party-agent-redis-commander-dev
     environment:
       REDIS_HOSTS: local:redis:6379
