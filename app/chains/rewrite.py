@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from typing import Awaitable, Callable, Optional, Sequence
+from typing import Awaitable, Callable, Optional, Protocol, Sequence
 
 from app.prompts.qa import REWRITE_PROMPT
 
@@ -14,9 +14,15 @@ from app.prompts.qa import REWRITE_PROMPT
 LLMCall = Callable[[str], Awaitable[str]]
 
 
+class QATurnLike(Protocol):
+    """问答轮次协议（用于类型标注）"""
+    question: str
+    answer: str
+
+
 async def rewrite_question(
     question: str,
-    history: Optional[Sequence[object]] = None,
+    history: Optional[Sequence[QATurnLike]] = None,
     *,
     llm_call: Optional[LLMCall] = None,
     max_history_turns: int = 3,
@@ -25,7 +31,7 @@ async def rewrite_question(
 
     Args:
         question: 用户当前问题
-        history: 会话历史（``QATurn`` 序列）
+        history: 会话历史（``QATurn`` 或实现 ``QATurnLike`` 协议的对象序列）
         llm_call: 异步 LLM 调用；为空时不改写
         max_history_turns: 参与改写的历史轮次上限
 
@@ -41,7 +47,7 @@ async def rewrite_question(
         return current
 
     history_text = "\n".join(
-        f"问：{getattr(turn, 'question', '')}\n答：{getattr(turn, 'answer', '')}"
+        f"问：{turn.question}\n答：{turn.answer}"
         for turn in turns
     )
     prompt = REWRITE_PROMPT.format(history=history_text, question=current)

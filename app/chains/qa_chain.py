@@ -81,15 +81,35 @@ class QAChain:
         )
         logger.info(
             "qa_stage_rewrite",
-            extra={"tenant_id": tenant_id, "session_id": session_id},
+            extra={
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "original_question": question,
+                "rewritten_question": standalone_question,
+            },
         )
 
         # 阶段 2：检索
-        chunks = await self.retriever.retrieve(
-            question=standalone_question,
-            tenant_id=tenant_id,
-            include_expired=include_expired,
-        )
+        try:
+            chunks = await self.retriever.retrieve(
+                question=standalone_question,
+                tenant_id=tenant_id,
+                include_expired=include_expired,
+            )
+            logger.info(
+                "qa_stage_retrieve",
+                extra={
+                    "tenant_id": tenant_id,
+                    "chunk_count": len(chunks),
+                    "has_scores": any(c.score is not None for c in chunks),
+                },
+            )
+        except Exception as e:
+            logger.exception(
+                "qa_retrieval_failed",
+                extra={"tenant_id": tenant_id, "error": str(e)},
+            )
+            raise
 
         # 阶段 3：重排判定（无依据则直接拒答，跳过生成）
         if self._is_no_evidence(chunks):
@@ -104,12 +124,36 @@ class QAChain:
             return response
 
         # 阶段 4：生成
-        draft = await self.generator.generate(
-            question=standalone_question, chunks=chunks
-        )
+        try:
+            draft = await self.generator.generate(
+                question=standalone_question, chunks=chunks
+            )
+            logger.info(
+                "qa_stage_generate",
+                extra={
+                    "tenant_id": tenant_id,
+                    "draft_length": len(draft),
+                    "chunk_count": len(chunks),
+                },
+            )
+        except Exception as e:
+            logger.exception(
+                "qa_generation_failed",
+                extra={"tenant_id": tenant_id, "error": str(e)},
+            )
+            raise
 
         # 阶段 5：引用核验
         verification: VerificationResult = self.verifier.verify(draft, chunks)
+        logger.info(
+            "qa_stage_verify",
+            extra={
+                "tenant_id": tenant_id,
+                "citation_count": len(verification.citations),
+                "warning_count": len(verification.warnings),
+                "is_valid": verification.valid,
+            },
+        )
 
         # 阶段 6：统一响应组装
         response = QAResponse(
