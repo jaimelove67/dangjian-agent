@@ -65,13 +65,13 @@ MODELS = [
         "description": "本地部署的大语言模型（用于敏感数据）",
     },
     {
-        "model_id": "bge-reranker",
-        "model_name": "bge-reranker-large",
+        "model_id": "qwen-reranker",
+        "model_name": "qwen3.7-text-rerank",
         "model_type": "reranker",
-        "deployment_type": "local",
-        "provider": "sentence-transformers",
-        "model_path": "/models/bge-reranker-large",
-        "description": "本地重排模型",
+        "deployment_type": "external",
+        "provider": "dashscope",
+        "api_key_env": "DASHSCOPE_API_KEY",
+        "description": "Qwen 3.7 Text Rerank - 文本重排模型",
     },
 ]
 

@@ -13,6 +13,10 @@ from app.llm.providers.dashscope_embedding import (
     DashScopeEmbeddingProvider,
     create_dashscope_embedding_provider,
 )
+from app.llm.providers.dashscope_reranker import (
+    DashScopeRerankerProvider,
+    create_dashscope_reranker_provider,
+)
 from app.llm.providers.local_embedding import (
     LocalEmbeddingProvider,
     create_local_embedding_provider,
@@ -25,6 +29,9 @@ __all__ = [
     # DashScope Embedding
     "DashScopeEmbeddingProvider",
     "create_dashscope_embedding_provider",
+    # DashScope Reranker
+    "DashScopeRerankerProvider",
+    "create_dashscope_reranker_provider",
     # Local Embedding
     "LocalEmbeddingProvider",
     "create_local_embedding_provider",

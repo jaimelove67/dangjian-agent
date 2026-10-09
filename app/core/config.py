@@ -69,10 +69,10 @@ class Settings(BaseSettings):
         description="向量化模型名称"
     )
 
-    # 重排模型配置（本地部署）
-    RERANKER_MODEL_PATH: str = Field(
-        default="/models/bge-reranker-large",
-        description="重排模型路径"
+    # 重排模型配置（阿里云）
+    RERANKER_MODEL_NAME: str = Field(
+        default="qwen3.7-text-rerank",
+        description="重排模型名称"
     )
 
     # ==================== 检索配置 ====================

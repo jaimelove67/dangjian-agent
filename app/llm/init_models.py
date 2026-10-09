@@ -12,6 +12,7 @@ from app.llm.router import get_model_router
 from app.llm.gateway import get_gateway
 from app.llm.providers.qwen import create_dashscope_provider
 from app.llm.providers.dashscope_embedding import create_dashscope_embedding_provider
+from app.llm.providers.dashscope_reranker import create_dashscope_reranker_provider
 from app.llm.providers.local_embedding import create_local_embedding_provider
 from app.llm.base import DataLevel, TaskType
 from app.core.config import settings
@@ -72,6 +73,26 @@ def init_models() -> None:
             logger.error("failed_to_register_qwen_embedding", error=str(e))
     else:
         logger.warning("dashscope_api_key_not_configured_for_embedding")
+
+    # ==================== 注册阿里云重排模型 ====================
+    if settings.DASHSCOPE_API_KEY:
+        try:
+            qwen_reranker_provider = create_dashscope_reranker_provider(
+                model_id="qwen-reranker",
+                model_name=settings.RERANKER_MODEL_NAME,
+                api_key=settings.DASHSCOPE_API_KEY,
+            )
+            registry.register(qwen_reranker_provider)
+            logger.info(
+                "qwen_reranker_model_registered",
+                model_id="qwen-reranker",
+                model_name=settings.RERANKER_MODEL_NAME
+            )
+
+        except Exception as e:
+            logger.error("failed_to_register_qwen_reranker", error=str(e))
+    else:
+        logger.warning("dashscope_api_key_not_configured_for_reranker")
 
     # ==================== 配置路由规则 ====================
     if settings.DASHSCOPE_API_KEY:
