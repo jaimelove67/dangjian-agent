@@ -1,29 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ClaudeCodeEditorTabs">
-    <option name="activeSessionId" value="54a642dc-ab4f-4695-bb3a-e7078c4b2543" />
+    <option name="activeSessionId" value="adf497c7-2777-42d6-b8ae-1c38aea5d3b1" />
     <option name="openSessionIds">
       <list>
         <option value="1369cff0-0e4b-47f6-8cee-c4d35c432577" />
-        <option value="4f86872b-61c0-4f3e-80a7-68e72b51f52a" />
-        <option value="2d853e4b-c5bc-4fb2-84bf-8f787b33f853" />
-        <option value="54a642dc-ab4f-4695-bb3a-e7078c4b2543" />
+        <option value="3b4e3aa0-c32a-448c-a7fb-14f443fcbb32" />
+        <option value="adf497c7-2777-42d6-b8ae-1c38aea5d3b1" />
       </list>
     </option>
     <option name="sessionPaths">
       <map>
         <entry key="1369cff0-0e4b-47f6-8cee-c4d35c432577" value="/sessions/new" />
-        <entry key="2d853e4b-c5bc-4fb2-84bf-8f787b33f853" value="/sessions/b4136065-0450-4f41-8436-bb3a0a82f237" />
-        <entry key="4f86872b-61c0-4f3e-80a7-68e72b51f52a" value="/sessions/11133eb0-b669-4308-82e1-0aade8e26496" />
-        <entry key="54a642dc-ab4f-4695-bb3a-e7078c4b2543" value="/sessions/a0bbd9eb-2380-4a37-a51d-552ab7b22a89" />
+        <entry key="3b4e3aa0-c32a-448c-a7fb-14f443fcbb32" value="/sessions/76026de8-fcb7-4638-85a6-ad9cb684baaa" />
+        <entry key="adf497c7-2777-42d6-b8ae-1c38aea5d3b1" value="/sessions/4ba6b8a9-ea60-4489-baf0-841272bd5b31" />
       </map>
     </option>
     <option name="sessionTitles">
       <map>
         <entry key="1369cff0-0e4b-47f6-8cee-c4d35c432577" value="Claude Code" />
-        <entry key="2d853e4b-c5bc-4fb2-84bf-8f787b33f853" value="你现在使用本地的gh。cli将此项目上传到我的仓库里" />
-        <entry key="4f86872b-61c0-4f3e-80a7-68e72b51f52a" value="你现在根据文件夹里的require。txt文件的要求写一个项目文档" />
-        <entry key="54a642dc-ab4f-4695-bb3a-e7078c4b2543" value="你能搜索符合当前项目的开源的前端框架吗" />
+        <entry key="3b4e3aa0-c32a-448c-a7fb-14f443fcbb32" value="当前的数据库要求使用向量数据库，你现在选择的是postgresql，为什么不选择开源的向量数据库呢" />
+        <entry key="adf497c7-2777-42d6-b8ae-1c38aea5d3b1" value="你现在完成b开发者day2的人物" />
       </map>
     </option>
   </component>

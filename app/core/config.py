@@ -52,11 +52,24 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = Field(default="json", description="日志格式: json/text")
 
     # ==================== 模型配置 ====================
-    QWEN_API_KEY: Optional[str] = Field(default=None, description="通义千问 API Key")
-    EMBEDDING_MODEL_PATH: str = Field(
-        default="/models/bge-large-zh-v1.5",
-        description="Embedding 模型路径"
+    # 阿里云 DashScope API Key（支持通义千问和DeepSeek）
+    DASHSCOPE_API_KEY: Optional[str] = Field(default=None, description="阿里云 DashScope API Key")
+
+    # LLM 模型配置
+    LLM_MODEL_NAME: str = Field(
+        default="deepseek-v4.1-flash",
+        description="LLM 模型名称"
     )
+    LLM_MAX_TOKENS: int = Field(default=4096, description="LLM 最大token数")
+    LLM_TEMPERATURE: float = Field(default=0.7, description="LLM 温度参数")
+
+    # Embedding 模型配置（阿里云）
+    EMBEDDING_MODEL_NAME: str = Field(
+        default="qwen3.7-text-embedding-flash",
+        description="向量化模型名称"
+    )
+
+    # 重排模型配置（本地部署）
     RERANKER_MODEL_PATH: str = Field(
         default="/models/bge-reranker-large",
         description="重排模型路径"

@@ -1,6 +1,7 @@
 """模型初始化脚本
 
 加载模型配置并注册到系统中。
+支持阿里云DashScope服务（DeepSeek和Qwen向量化模型）。
 """
 
 import os
@@ -9,7 +10,8 @@ from typing import Optional
 from app.llm.registry import get_model_registry
 from app.llm.router import get_model_router
 from app.llm.gateway import get_gateway
-from app.llm.providers.qwen import create_qwen_provider
+from app.llm.providers.qwen import create_dashscope_provider
+from app.llm.providers.dashscope_embedding import create_dashscope_embedding_provider
 from app.llm.providers.local_embedding import create_local_embedding_provider
 from app.llm.base import DataLevel, TaskType
 from app.core.config import settings
@@ -26,67 +28,68 @@ def init_models() -> None:
 
     logger.info("initializing_models")
 
-    # ==================== 注册通义千问模型 ====================
-    if settings.QWEN_API_KEY:
+    # ==================== 注册 DeepSeek 模型（通过阿里云DashScope） ====================
+    if settings.DASHSCOPE_API_KEY:
         try:
-            qwen_provider = create_qwen_provider(
-                model_id="qwen-turbo",
-                model_name="qwen-turbo",
-                api_key=settings.QWEN_API_KEY,
-                max_tokens=4096,
-                temperature=0.7,
+            deepseek_provider = create_dashscope_provider(
+                model_id="deepseek-flash",
+                model_name=settings.LLM_MODEL_NAME,
+                api_key=settings.DASHSCOPE_API_KEY,
+                max_tokens=settings.LLM_MAX_TOKENS,
+                temperature=settings.LLM_TEMPERATURE,
             )
-            registry.register(qwen_provider)
-            logger.info("qwen_model_registered", model_id="qwen-turbo")
+            registry.register(deepseek_provider)
+            logger.info(
+                "deepseek_model_registered",
+                model_id="deepseek-flash",
+                model_name=settings.LLM_MODEL_NAME
+            )
 
-            # 添加通义千问到白名单
+            # 添加阿里云到白名单
             gateway.add_allowed_domain("dashscope.aliyuncs.com")
 
         except Exception as e:
-            logger.error("failed_to_register_qwen", error=str(e))
+            logger.error("failed_to_register_deepseek", error=str(e))
     else:
-        logger.warning("qwen_api_key_not_configured")
+        logger.warning("dashscope_api_key_not_configured")
 
-    # ==================== 注册本地向量化模型 ====================
-    try:
-        # 检查模型路径是否存在
-        embedding_path = settings.EMBEDDING_MODEL_PATH
-
-        # 如果模型路径不存在，尝试下载或使用默认模型名
-        if not os.path.exists(embedding_path):
-            logger.warning(
-                "embedding_model_path_not_found",
-                path=embedding_path,
-                using_default="BAAI/bge-large-zh-v1.5"
+    # ==================== 注册阿里云向量化模型 ====================
+    if settings.DASHSCOPE_API_KEY:
+        try:
+            qwen_embedding_provider = create_dashscope_embedding_provider(
+                model_id="qwen-embedding",
+                model_name=settings.EMBEDDING_MODEL_NAME,
+                api_key=settings.DASHSCOPE_API_KEY,
             )
-            embedding_path = "BAAI/bge-large-zh-v1.5"
+            registry.register(qwen_embedding_provider)
+            logger.info(
+                "qwen_embedding_model_registered",
+                model_id="qwen-embedding",
+                model_name=settings.EMBEDDING_MODEL_NAME
+            )
 
-        embedding_provider = create_local_embedding_provider(
-            model_id="bge-large-zh",
-            model_path=embedding_path,
-        )
-        registry.register(embedding_provider)
-        logger.info(
-            "embedding_model_registered",
-            model_id="bge-large-zh",
-            dimensions=embedding_provider.get_dimensions()
-        )
-
-    except Exception as e:
-        logger.error("failed_to_register_embedding", error=str(e))
+        except Exception as e:
+            logger.error("failed_to_register_qwen_embedding", error=str(e))
+    else:
+        logger.warning("dashscope_api_key_not_configured_for_embedding")
 
     # ==================== 配置路由规则 ====================
-    # 公开数据优先外部模型（如果有）
-    if settings.QWEN_API_KEY:
+    if settings.DASHSCOPE_API_KEY:
+        # 公开数据使用外部模型（DeepSeek）
         router.register_route(
             data_level=DataLevel.PUBLIC,
             task_type=TaskType.QA,
-            model_id="qwen-turbo"
+            model_id="deepseek-flash"
         )
         router.register_route(
             data_level=DataLevel.PUBLIC,
             task_type=TaskType.SUMMARIZE,
-            model_id="qwen-turbo"
+            model_id="deepseek-flash"
+        )
+        router.register_route(
+            data_level=DataLevel.PUBLIC,
+            task_type=TaskType.EXTRACT,
+            model_id="deepseek-flash"
         )
 
     # ==================== 输出初始化结果 ====================

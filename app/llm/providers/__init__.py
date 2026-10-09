@@ -3,12 +3,32 @@
 包含各种模型提供者的实现。
 """
 
-from app.llm.providers.qwen import QwenProvider, create_qwen_provider
-from app.llm.providers.local_embedding import LocalEmbeddingProvider, create_local_embedding_provider
+from app.llm.providers.qwen import (
+    DashScopeProvider,
+    QwenProvider,
+    create_dashscope_provider,
+    create_qwen_provider,
+)
+from app.llm.providers.dashscope_embedding import (
+    DashScopeEmbeddingProvider,
+    create_dashscope_embedding_provider,
+)
+from app.llm.providers.local_embedding import (
+    LocalEmbeddingProvider,
+    create_local_embedding_provider,
+)
 
 __all__ = [
-    "QwenProvider",
-    "create_qwen_provider",
+    # DashScope LLM
+    "DashScopeProvider",
+    "create_dashscope_provider",
+    # DashScope Embedding
+    "DashScopeEmbeddingProvider",
+    "create_dashscope_embedding_provider",
+    # Local Embedding
     "LocalEmbeddingProvider",
     "create_local_embedding_provider",
+    # 兼容性别名
+    "QwenProvider",
+    "create_qwen_provider",
 ]

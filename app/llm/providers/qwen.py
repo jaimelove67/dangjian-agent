@@ -1,6 +1,8 @@
-"""通义千问模型提供者
+"""阿里云 DashScope 模型提供者
 
-接入阿里云通义千问大模型服务。
+接入阿里云 DashScope 服务，支持：
+- DeepSeek 系列模型
+- 通义千问系列模型
 """
 
 from typing import List, Optional
@@ -20,8 +22,11 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-class QwenProvider(BaseModelProvider):
-    """通义千问模型提供者"""
+class DashScopeProvider(BaseModelProvider):
+    """阿里云 DashScope 模型提供者
+
+    支持通义千问和DeepSeek等模型
+    """
 
     def __init__(self, config: ModelConfig):
         """初始化
@@ -38,9 +43,10 @@ class QwenProvider(BaseModelProvider):
             raise ValueError("Qwen API Key is required")
 
         logger.info(
-            "qwen_provider_initialized",
+            "dashscope_provider_initialized",
             model_id=config.model_id,
-            model_name=config.model_name
+            model_name=config.model_name,
+            provider=config.provider
         )
 
     async def generate(
@@ -83,7 +89,7 @@ class QwenProvider(BaseModelProvider):
                     }
 
                 logger.info(
-                    "qwen_generate_success",
+                    "dashscope_generate_success",
                     model_id=self.config.model_id,
                     prompt_length=len(prompt),
                     response_length=len(content),
@@ -100,9 +106,9 @@ class QwenProvider(BaseModelProvider):
                     }
                 )
             else:
-                error_msg = f"Qwen API error: {response.code} - {response.message}"
+                error_msg = f"DashScope API error: {response.code} - {response.message}"
                 logger.error(
-                    "qwen_generate_error",
+                    "dashscope_generate_error",
                     model_id=self.config.model_id,
                     error=error_msg
                 )
@@ -110,7 +116,7 @@ class QwenProvider(BaseModelProvider):
 
         except Exception as e:
             logger.error(
-                "qwen_generate_exception",
+                "dashscope_generate_exception",
                 model_id=self.config.model_id,
                 error=str(e)
             )
@@ -123,19 +129,19 @@ class QwenProvider(BaseModelProvider):
     ) -> EmbeddingResponse:
         """文本向量化
 
-        通义千问的向量化模型需要单独调用，这里暂不实现。
-        向量化功能由本地模型提供。
+        DashScope LLM提供者不支持向量化。
+        向量化功能由专用的DashScopeEmbeddingProvider提供。
 
         Args:
             texts: 文本列表
             **kwargs: 额外参数
 
         Raises:
-            NotImplementedError: 通义千问暂不支持向量化
+            NotImplementedError: LLM提供者不支持向量化
         """
         raise NotImplementedError(
-            "Qwen provider does not support embedding. "
-            "Use local embedding model instead."
+            "DashScope LLM provider does not support embedding. "
+            "Use DashScopeEmbeddingProvider instead."
         )
 
     async def health_check(self) -> bool:
@@ -155,7 +161,7 @@ class QwenProvider(BaseModelProvider):
             is_healthy = response.status_code == 200
 
             logger.info(
-                "qwen_health_check",
+                "dashscope_health_check",
                 model_id=self.config.model_id,
                 healthy=is_healthy
             )
@@ -164,41 +170,46 @@ class QwenProvider(BaseModelProvider):
 
         except Exception as e:
             logger.error(
-                "qwen_health_check_failed",
+                "dashscope_health_check_failed",
                 model_id=self.config.model_id,
                 error=str(e)
             )
             return False
 
 
-def create_qwen_provider(
-    model_id: str = "qwen-turbo",
-    model_name: str = "qwen-turbo",
+def create_dashscope_provider(
+    model_id: str = "deepseek-v4.1-flash",
+    model_name: str = "deepseek-v4.1-flash",
     api_key: Optional[str] = None,
     max_tokens: int = 4096,
     temperature: float = 0.7,
-) -> QwenProvider:
-    """创建通义千问提供者
+) -> DashScopeProvider:
+    """创建阿里云DashScope提供者
 
     Args:
         model_id: 模型ID
-        model_name: 模型名称
-        api_key: API Key
+        model_name: 模型名称（如deepseek-v4.1-flash, qwen-turbo等）
+        api_key: DashScope API Key
         max_tokens: 最大token数
         temperature: 温度参数
 
     Returns:
-        通义千问提供者实例
+        DashScope提供者实例
     """
     config = ModelConfig(
         model_id=model_id,
         model_name=model_name,
         model_type=ModelType.LLM,
         deployment_type=DeploymentType.EXTERNAL,
-        provider="qwen",
+        provider="dashscope",
         api_key=api_key,
         max_tokens=max_tokens,
         temperature=temperature,
     )
 
-    return QwenProvider(config)
+    return DashScopeProvider(config)
+
+
+# 兼容性别名
+QwenProvider = DashScopeProvider
+create_qwen_provider = create_dashscope_provider

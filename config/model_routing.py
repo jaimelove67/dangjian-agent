@@ -1,6 +1,7 @@
 """模型路由配置文件
 
 定义数据级别和任务类型到模型的映射关系。
+使用阿里云DashScope服务（DeepSeek和Qwen向量化）。
 """
 
 # 模型路由配置
@@ -8,14 +9,14 @@
 
 ROUTING_RULES = {
     # ==================== 公开数据 ====================
-    # 公开数据优先使用外部模型降低成本
-    ("public", "qa"): "qwen-turbo",
-    ("public", "summarize"): "qwen-turbo",
-    ("public", "extract"): "qwen-turbo",
-    ("public", "rewrite"): "qwen-turbo",
+    # 公开数据使用DeepSeek（通过阿里云DashScope）
+    ("public", "qa"): "deepseek-flash",
+    ("public", "summarize"): "deepseek-flash",
+    ("public", "extract"): "deepseek-flash",
+    ("public", "rewrite"): "deepseek-flash",
 
     # ==================== 内部数据 ====================
-    # 内部数据优先本地模型
+    # 内部数据优先本地模型（如果有）
     ("internal", "qa"): "local-llm",
     ("internal", "summarize"): "local-llm",
     ("internal", "extract"): "local-llm",
@@ -33,14 +34,24 @@ ROUTING_RULES = {
 # 模型配置列表
 MODELS = [
     {
-        "model_id": "qwen-turbo",
-        "model_name": "qwen-turbo",
+        "model_id": "deepseek-flash",
+        "model_name": "deepseek-v4.1-flash",
         "model_type": "llm",
         "deployment_type": "external",
-        "provider": "qwen",
-        "api_key_env": "QWEN_API_KEY",
+        "provider": "dashscope",
+        "api_key_env": "DASHSCOPE_API_KEY",
         "max_tokens": 4096,
         "temperature": 0.7,
+        "description": "DeepSeek V4.1 Flash - 高性价比推理模型",
+    },
+    {
+        "model_id": "qwen-embedding",
+        "model_name": "qwen3.7-text-embedding-flash",
+        "model_type": "embedding",
+        "deployment_type": "external",
+        "provider": "dashscope",
+        "api_key_env": "DASHSCOPE_API_KEY",
+        "description": "Qwen 3.7 Text Embedding Flash - 快速向量化模型",
     },
     {
         "model_id": "local-llm",
@@ -51,14 +62,7 @@ MODELS = [
         "model_path": "/models/Qwen-14B-Chat",
         "max_tokens": 4096,
         "temperature": 0.7,
-    },
-    {
-        "model_id": "bge-large-zh",
-        "model_name": "bge-large-zh-v1.5",
-        "model_type": "embedding",
-        "deployment_type": "local",
-        "provider": "sentence-transformers",
-        "model_path": "/models/bge-large-zh-v1.5",
+        "description": "本地部署的大语言模型（用于敏感数据）",
     },
     {
         "model_id": "bge-reranker",
@@ -67,6 +71,7 @@ MODELS = [
         "deployment_type": "local",
         "provider": "sentence-transformers",
         "model_path": "/models/bge-reranker-large",
+        "description": "本地重排模型",
     },
 ]
 
@@ -74,6 +79,6 @@ MODELS = [
 GATEWAY_CONFIG = {
     "enabled": True,
     "allowed_external_domains": [
-        "dashscope.aliyuncs.com",  # 通义千问
+        "dashscope.aliyuncs.com",  # 阿里云DashScope
     ],
 }
