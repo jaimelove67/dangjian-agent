@@ -1,7 +1,8 @@
 """知识文档表模型"""
 from datetime import datetime
-from sqlalchemy import Column, String, Text, Date, JSON, Integer
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import Column, String, Text, Date, JSON, Integer, Computed
+from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR
+from pgvector.sqlalchemy import Vector
 
 from app.db.base import Base
 
@@ -59,7 +60,18 @@ class KnowledgeDoc(Base):
     file_size = Column(Integer, nullable=True)
 
     # 文档元数据（JSON）
-    metadata = Column(JSON, nullable=True)
+    doc_metadata = Column("metadata", JSON, nullable=True)
+
+    # 中文全文检索向量（生成列，随 title/summary 自动更新；配置见迁移 002）
+    search_vector = Column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('chinese_zh', "
+            "coalesce(title, '') || ' ' || coalesce(summary, ''))",
+            persisted=True,
+        ),
+        nullable=True,
+    )
 
     def __repr__(self) -> str:
         return f"<KnowledgeDoc(id={self.id}, title={self.title}, issuer={self.issuer})>"
@@ -88,10 +100,10 @@ class EmbeddingChunk(Base):
     article = Column(String(50), nullable=True, index=True)
 
     # 向量嵌入（使用 pgvector）
-    # embedding = Column(Vector(1024), nullable=True)  # 需要 pgvector 扩展
+    embedding = Column(Vector(1024), nullable=True)
 
     # 片段元数据（继承文档元数据）
-    metadata = Column(JSON, nullable=True)
+    chunk_metadata = Column("metadata", JSON, nullable=True)
 
     def __repr__(self) -> str:
         return f"<EmbeddingChunk(id={self.id}, doc_id={self.doc_id}, chunk_id={self.chunk_id})>"
