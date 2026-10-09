@@ -13,7 +13,7 @@ from app.core.cache import redis_manager
 from app.core import tenant as _tenant  # noqa: F401  导入即注册租户隔离事件监听
 from app.core.security import SecurityError
 from app.core.tenant import TenantIsolationError
-from app.api.v1 import auth, embeddings, health, knowledge, qa, qa_enhanced
+from app.api.v1 import auth, health, knowledge, member
 from app.schemas.common import ErrorCode
 
 # 设置日志
@@ -99,9 +99,7 @@ async def trace_id_middleware(
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(auth.router, prefix="/api/v1", tags=["鉴权"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库"])
-app.include_router(embeddings.router, prefix="/api/v1", tags=["向量化"])
-app.include_router(qa.router, prefix="/api/v1", tags=["知识问答"])
-app.include_router(qa_enhanced.router, prefix="/api/v1", tags=["知识问答增强"])
+app.include_router(member.router, prefix="/api/v1", tags=["党员发展"])
 
 
 # 全局异常处理
