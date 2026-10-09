@@ -1,0 +1,142 @@
+[
+  {
+    "id": 1,
+    "question": "入党积极分子的培养期是多久？",
+    "expected_answer_contains": ["一年以上", "培养教育"],
+    "should_refuse": false,
+    "category": "政策查询"
+  },
+  {
+    "id": 2,
+    "question": "预备党员的预备期是多长时间？",
+    "expected_answer_contains": ["一年", "预备期"],
+    "should_refuse": false,
+    "category": "政策查询"
+  },
+  {
+    "id": 3,
+    "question": "发展党员必须坚持什么原则？",
+    "expected_answer_contains": ["个别吸收", "成熟一个", "发展一个"],
+    "should_refuse": false,
+    "category": "原则规定"
+  },
+  {
+    "id": 4,
+    "question": "今天天气怎么样？",
+    "expected_answer_contains": ["无法回答", "知识库"],
+    "should_refuse": true,
+    "category": "拒答测试"
+  },
+  {
+    "id": 5,
+    "question": "党员的义务有哪些？",
+    "expected_answer_contains": ["八项", "义务"],
+    "should_refuse": false,
+    "category": "权利义务"
+  },
+  {
+    "id": 6,
+    "question": "如何做红烧肉？",
+    "expected_answer_contains": ["无法回答", "知识库"],
+    "should_refuse": true,
+    "category": "拒答测试"
+  },
+  {
+    "id": 7,
+    "question": "预备党员转正需要哪些程序？",
+    "expected_answer_contains": ["本人申请", "支部大会", "党委审批"],
+    "should_refuse": false,
+    "category": "程序要求"
+  },
+  {
+    "id": 8,
+    "question": "什么是民主集中制？",
+    "expected_answer_contains": ["民主", "集中", "组织原则"],
+    "should_refuse": false,
+    "category": "组织原则"
+  },
+  {
+    "id": 9,
+    "question": "Python如何连接数据库？",
+    "expected_answer_contains": ["无法回答", "知识库"],
+    "should_refuse": true,
+    "category": "拒答测试"
+  },
+  {
+    "id": 10,
+    "question": "党支部的主要任务是什么？",
+    "expected_answer_contains": ["组织", "宣传", "教育", "管理"],
+    "should_refuse": false,
+    "category": "组织建设"
+  },
+  {
+    "id": 11,
+    "question": "入党介绍人有什么责任？",
+    "expected_answer_contains": ["介绍", "培养", "教育"],
+    "should_refuse": false,
+    "category": "程序要求"
+  },
+  {
+    "id": 12,
+    "question": "明天股票会涨吗？",
+    "expected_answer_contains": ["无法回答", "知识库"],
+    "should_refuse": true,
+    "category": "拒答测试"
+  },
+  {
+    "id": 13,
+    "question": "政治审查的主要内容是什么？",
+    "expected_answer_contains": ["政治立场", "历史", "现实表现"],
+    "should_refuse": false,
+    "category": "审查要求"
+  },
+  {
+    "id": 14,
+    "question": "什么情况下可以延长预备期？",
+    "expected_answer_contains": ["不完全具备", "延长预备期"],
+    "should_refuse": false,
+    "category": "特殊情况"
+  },
+  {
+    "id": 15,
+    "question": "如何投资理财？",
+    "expected_answer_contains": ["无法回答", "知识库"],
+    "should_refuse": true,
+    "category": "拒答测试"
+  },
+  {
+    "id": 16,
+    "question": "党委审批预备党员的时限是多久？",
+    "expected_answer_contains": ["三个月"],
+    "should_refuse": false,
+    "category": "时限要求"
+  },
+  {
+    "id": 17,
+    "question": "入党申请书应该包含什么内容？",
+    "expected_answer_contains": ["入党动机", "认识", "态度"],
+    "should_refuse": false,
+    "category": "程序要求"
+  },
+  {
+    "id": 18,
+    "question": "如何制作PPT？",
+    "expected_answer_contains": ["无法回答", "知识库"],
+    "should_refuse": true,
+    "category": "拒答测试"
+  },
+  {
+    "id": 19,
+    "question": "党员发展工作有哪些纪律要求？",
+    "expected_answer_contains": ["严格", "纪律", "违规"],
+    "should_refuse": false,
+    "category": "工作纪律"
+  },
+  {
+    "id": 20,
+    "question": "发展党员档案材料包括哪些？",
+    "expected_answer_contains": ["申请书", "政审", "考察", "决议"],
+    "should_refuse": false,
+    "category": "档案管理"
+  }
+]

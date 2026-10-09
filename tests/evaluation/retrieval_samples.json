@@ -1,0 +1,142 @@
+[
+  {
+    "id": 1,
+    "query": "入党积极分子的培养期是多久？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第十四条"],
+    "category": "政策查询"
+  },
+  {
+    "id": 2,
+    "query": "预备党员的预备期是多长时间？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第三十二条"],
+    "category": "政策查询"
+  },
+  {
+    "id": 3,
+    "query": "发展党员必须坚持哪些原则？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第三条"],
+    "category": "原则规定"
+  },
+  {
+    "id": 4,
+    "query": "入党申请书应该包含哪些内容？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第七条"],
+    "category": "程序要求"
+  },
+  {
+    "id": 5,
+    "query": "党支部如何确定入党积极分子？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第十条"],
+    "category": "程序要求"
+  },
+  {
+    "id": 6,
+    "query": "发展对象的政治审查包括哪些内容？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第十九条"],
+    "category": "审查要求"
+  },
+  {
+    "id": 7,
+    "query": "预备党员转正需要哪些程序？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第三十五条"],
+    "category": "程序要求"
+  },
+  {
+    "id": 8,
+    "query": "党员的权利有哪些？",
+    "expected_docs": ["党章"],
+    "expected_articles": ["第四条"],
+    "category": "权利义务"
+  },
+  {
+    "id": 9,
+    "query": "党员的义务有哪些？",
+    "expected_docs": ["党章"],
+    "expected_articles": ["第三条"],
+    "category": "权利义务"
+  },
+  {
+    "id": 10,
+    "query": "党的组织原则是什么？",
+    "expected_docs": ["党章"],
+    "expected_articles": ["第十条"],
+    "category": "组织原则"
+  },
+  {
+    "id": 11,
+    "query": "党支部的主要任务是什么？",
+    "expected_docs": ["党章"],
+    "expected_articles": ["第三十二条"],
+    "category": "组织建设"
+  },
+  {
+    "id": 12,
+    "query": "如何对入党积极分子进行培养教育？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第十三条"],
+    "category": "培养教育"
+  },
+  {
+    "id": 13,
+    "query": "什么情况下可以取消预备党员资格？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第三十六条"],
+    "category": "处理程序"
+  },
+  {
+    "id": 14,
+    "query": "党员发展工作的领导和纪律要求是什么？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第三十九条"],
+    "category": "工作纪律"
+  },
+  {
+    "id": 15,
+    "query": "入党介绍人的主要任务是什么？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第二十三条"],
+    "category": "程序要求"
+  },
+  {
+    "id": 16,
+    "query": "召开接收预备党员的支部大会有哪些程序？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第二十八条"],
+    "category": "程序要求"
+  },
+  {
+    "id": 17,
+    "query": "党委审批预备党员的时限是多久？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第三十条"],
+    "category": "时限要求"
+  },
+  {
+    "id": 18,
+    "query": "预备党员在预备期内表现突出可以提前转正吗？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第三十二条"],
+    "category": "特殊情况"
+  },
+  {
+    "id": 19,
+    "query": "党组织如何对发展党员工作进行监督检查？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第四十条"],
+    "category": "监督检查"
+  },
+  {
+    "id": 20,
+    "query": "发展党员工作档案材料包括哪些内容？",
+    "expected_docs": ["党员发展规定"],
+    "expected_articles": ["第三十八条"],
+    "category": "档案管理"
+  }
+]
