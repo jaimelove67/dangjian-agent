@@ -27,8 +27,16 @@ class Settings(BaseSettings):
     # ==================== 安全配置 ====================
     SECRET_KEY: str = Field(
         default="dev_secret_key_change_in_production",
-        description="应用密钥"
+        description="应用密钥（用于 JWT 签名等）"
     )
+    JWT_ALGORITHM: str = Field(default="HS256", description="JWT 签名算法")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
+        default=30, description="访问令牌有效期（分钟）"
+    )
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(
+        default=7, description="刷新令牌有效期（天）"
+    )
+    BCRYPT_ROUNDS: int = Field(default=12, description="密码哈希成本因子")
 
     # ==================== 数据库配置 ====================
     DATABASE_URL: str = Field(
