@@ -1,26 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ClaudeCodeEditorTabs">
-    <option name="activeSessionId" value="adf497c7-2777-42d6-b8ae-1c38aea5d3b1" />
+    <option name="activeSessionId" value="e3cb9d73-2b9f-4de4-b8b5-6f54fcb61be9" />
     <option name="openSessionIds">
       <list>
         <option value="1369cff0-0e4b-47f6-8cee-c4d35c432577" />
         <option value="3b4e3aa0-c32a-448c-a7fb-14f443fcbb32" />
         <option value="adf497c7-2777-42d6-b8ae-1c38aea5d3b1" />
+        <option value="148709a9-ced6-444a-91b6-7cfe16ebebc5" />
+        <option value="e3cb9d73-2b9f-4de4-b8b5-6f54fcb61be9" />
       </list>
     </option>
     <option name="sessionPaths">
       <map>
         <entry key="1369cff0-0e4b-47f6-8cee-c4d35c432577" value="/sessions/new" />
+        <entry key="148709a9-ced6-444a-91b6-7cfe16ebebc5" value="/sessions/f2f007bb-aa94-4cac-9077-d941030c988c" />
         <entry key="3b4e3aa0-c32a-448c-a7fb-14f443fcbb32" value="/sessions/76026de8-fcb7-4638-85a6-ad9cb684baaa" />
         <entry key="adf497c7-2777-42d6-b8ae-1c38aea5d3b1" value="/sessions/4ba6b8a9-ea60-4489-baf0-841272bd5b31" />
+        <entry key="e3cb9d73-2b9f-4de4-b8b5-6f54fcb61be9" value="/sessions/ee70159f-6062-4726-89a6-ed507191a5b8" />
       </map>
     </option>
     <option name="sessionTitles">
       <map>
         <entry key="1369cff0-0e4b-47f6-8cee-c4d35c432577" value="Claude Code" />
+        <entry key="148709a9-ced6-444a-91b6-7cfe16ebebc5" value="你检查pr完成issue里所有的任务" />
         <entry key="3b4e3aa0-c32a-448c-a7fb-14f443fcbb32" value="当前的数据库要求使用向量数据库，你现在选择的是postgresql，为什么不选择开源的向量数据库呢" />
         <entry key="adf497c7-2777-42d6-b8ae-1c38aea5d3b1" value="你现在完成b开发者day2的人物" />
+        <entry key="e3cb9d73-2b9f-4de4-b8b5-6f54fcb61be9" value="当前项目完成了前端的设计你现在将前后端进行联调" />
       </map>
     </option>
   </component>
