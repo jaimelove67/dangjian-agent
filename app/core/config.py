@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     REDIS_POOL_SIZE: int = Field(default=10, description="Redis 连接池大小")
     REDIS_CACHE_TTL: int = Field(default=3600, description="缓存默认过期时间（秒）")
 
+    # ==================== 会话配置 ====================
+    SESSION_TTL_SECONDS: int = Field(default=3600, description="问答会话有效期（秒）")
+    SESSION_MAX_TURNS: int = Field(default=5, description="会话保留的最大轮次")
+
     # ==================== 日志配置 ====================
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
     LOG_FORMAT: str = Field(default="json", description="日志格式: json/text")
