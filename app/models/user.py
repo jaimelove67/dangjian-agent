@@ -1,5 +1,5 @@
 """用户表模型"""
-from sqlalchemy import Column, String, Enum as SQLEnum
+from sqlalchemy import Column, String, Enum as SQLEnum, Boolean
 import enum
 
 from app.db.base import Base
@@ -42,7 +42,7 @@ class User(Base):
     org_unit_id = Column(String(36), nullable=True, index=True)
 
     # 是否启用
-    is_active = Column(String(10), nullable=False, default="true")
+    is_active = Column(Boolean, nullable=False, default=True)
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, username={self.username}, role={self.role})>"
