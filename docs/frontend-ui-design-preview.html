@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>党建工作智能助手 · 前端 UI 设计稿</title>
+<style>
+  :root{
+    --bg-primary:#ffffff;
+    --bg-secondary:#f7f7f5;
+    --bg-tertiary:#fbfbfa;
+    --text-primary:#1a1a19;
+    --text-secondary:#6b6b68;
+    --text-tertiary:#9b9b97;
+    --border-tertiary:rgba(0,0,0,.15);
+    --border-secondary:rgba(0,0,0,.3);
+    --border-info:#378ADD;
+    --party-red:#A32D2D;
+    --party-red-deep:#791F1F;
+    --party-red-light:#FCEBEB;
+    --party-red-border:#F09595;
+    --party-red-accent:#E24B4A;
+    --ok-text:#3B6D11; --ok-bg:#EAF3DE; --ok-border:#639922;
+    --warn-text:#633806; --warn-bg:#FAEEDA; --warn-border:#EF9F27;
+    --radius-md:8px; --radius-lg:12px;
+    --font-sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;padding:32px 24px 64px;background:var(--bg-tertiary);
+    font-family:var(--font-sans);color:var(--text-primary);
+    font-size:13px;line-height:1.6;
+  }
+  .wrap{max-width:880px;margin:0 auto;}
+  h1{font-size:19px;font-weight:500;margin:0 0 6px;}
+  .sub{font-size:12px;color:var(--text-tertiary);margin:0 0 28px;}
+  h2{font-size:15px;font-weight:500;margin:34px 0 4px;}
+  .sec-note{font-size:12px;color:var(--text-secondary);margin:0 0 12px;line-height:1.7;}
+  .swatches{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;}
+  .sw{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-secondary);}
+  .sw i{width:26px;height:26px;border-radius:6px;display:inline-block;border:0.5px solid var(--border-tertiary);}
+  code{font-family:ui-monospace,Consolas,monospace;font-size:11px;background:var(--bg-secondary);padding:1px 5px;border-radius:4px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>党建工作智能助手 · 前端 UI 设计稿</h1>
+  <p class="sub">vben-admin 5.7.0（Element Plus 版）基座 · 党建红主题 · 三个核心页面</p>
+
+  <h2>设计令牌</h2>
+  <p class="sec-note">主色走党建红，通过组件库主题变量覆盖实现，不重画组件。</p>
+  <div class="swatches">
+    <span class="sw"><i style="background:#A32D2D"></i>主色 #A32D2D</span>
+    <span class="sw"><i style="background:#791F1F"></i>深 #791F1F</span>
+    <span class="sw"><i style="background:#FCEBEB"></i>浅底 #FCEBEB</span>
+    <span class="sw"><i style="background:#F09595"></i>描边 #F09595</span>
+    <span class="sw"><i style="background:#EAF3DE"></i>通过 #EAF3DE</span>
+    <span class="sw"><i style="background:#FAEEDA"></i>警示 #FAEEDA</span>
+  </div>
+  <p class="sec-note">字号：正文 <code>13px</code> · 次级 <code>12px</code> · 辅助 <code>11px</code>；圆角 <code>8–12px</code>；边框 <code>0.5px</code>。</p>
+
+  <h2>一、智能问答主界面</h2>
+  <p class="sec-note">左侧菜单由后端配置下发，与后端「菜单由配置生成」的设计对齐。回答内嵌引用溯源块，底部明示「无依据时直接拒答」。</p>
+
+  <div style="border:0.5px solid var(--border-tertiary);border-radius:var(--radius-lg);overflow:hidden;background:var(--bg-primary);">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 14px;height:46px;border-bottom:0.5px solid var(--border-tertiary);">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="width:15px;height:15px;border-radius:3px;background:#A32D2D;display:inline-block;"></span>
+        <span style="font-size:14px;font-weight:500;">党建工作智能助手</span>
+        <span style="font-size:11px;color:#791F1F;background:#FCEBEB;border-radius:999px;padding:2px 7px;">校党委组织部</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:12px;color:var(--text-secondary);">张明 · 组织委员</span>
+        <span style="width:26px;height:26px;border-radius:50%;background:#FCEBEB;color:#791F1F;font-size:11px;display:inline-flex;align-items:center;justify-content:center;">张</span>
+      </div>
+    </div>
+
+    <div style="display:flex;min-height:430px;">
+
+      <div style="width:146px;flex:none;background:var(--bg-secondary);border-right:0.5px solid var(--border-tertiary);padding:10px 8px;display:flex;flex-direction:column;gap:2px;">
+        <div style="font-size:11px;color:var(--text-tertiary);padding:6px 8px 4px;">业务模块</div>
+        <div style="font-size:12px;font-weight:500;color:#791F1F;background:#FCEBEB;border-radius:6px;padding:7px 8px;display:flex;align-items:center;gap:6px;">
+          <span style="width:5px;height:5px;border-radius:50%;background:#A32D2D;"></span>智能问答
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary);padding:7px 8px;">知识库管理</div>
+        <div style="font-size:12px;color:var(--text-secondary);padding:7px 8px;">党员发展</div>
+        <div style="font-size:12px;color:var(--text-secondary);padding:7px 8px;">组织生活</div>
+        <div style="font-size:12px;color:var(--text-secondary);padding:7px 8px;">学习与考核</div>
+        <div style="font-size:12px;color:var(--text-secondary);padding:7px 8px;">系统管理</div>
+        <div style="margin-top:auto;font-size:11px;color:var(--text-tertiary);padding:8px;border-top:0.5px solid var(--border-tertiary);">菜单由后端配置下发</div>
+      </div>
+
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;">
+
+        <div style="flex:1;padding:14px 16px;display:flex;flex-direction:column;gap:14px;">
+
+          <div style="display:flex;justify-content:flex-end;">
+            <div style="max-width:76%;background:var(--bg-secondary);border-radius:10px;padding:9px 12px;font-size:13px;">发展对象的确定需要经过哪些程序？</div>
+          </div>
+
+          <div style="display:flex;gap:9px;">
+            <span style="width:24px;height:24px;flex:none;border-radius:50%;background:#A32D2D;color:#fff;font-size:11px;display:inline-flex;align-items:center;justify-content:center;">党</span>
+            <div style="min-width:0;flex:1;">
+              <div style="font-size:13px;line-height:1.75;">
+                根据《中国共产党发展党员工作细则》第十三条<span style="color:#A32D2D;font-size:11px;">[1]</span>，确定发展对象须履行以下程序：<br>
+                一、党支部听取党小组、培养联系人、党员和群众意见；<br>
+                二、支部委员会讨论同意后，报上级党委备案；<br>
+                三、上级党委审查同意，确定为发展对象<span style="color:#A32D2D;font-size:11px;">[2]</span>。
+              </div>
+
+              <div style="margin-top:10px;border:0.5px solid var(--border-tertiary);border-left:2px solid #A32D2D;border-radius:8px;background:var(--bg-primary);">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:0.5px solid var(--border-tertiary);">
+                  <span style="font-size:12px;font-weight:500;">引用溯源 · 2 条依据</span>
+                  <span style="font-size:11px;color:var(--ok-text);background:var(--ok-bg);border-radius:999px;padding:2px 7px;">核验 5/5 通过</span>
+                </div>
+                <div style="padding:9px 12px;display:flex;flex-direction:column;gap:8px;">
+                  <div style="display:flex;gap:8px;align-items:flex-start;">
+                    <span style="font-size:11px;color:#A32D2D;background:#FCEBEB;border-radius:4px;padding:1px 5px;flex:none;">[1]</span>
+                    <div style="min-width:0;">
+                      <div style="font-size:12px;line-height:1.5;">中国共产党发展党员工作细则 · 第十三条</div>
+                      <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px;">中组部 · 现行有效 · 2014-06-10 施行</div>
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:8px;align-items:flex-start;">
+                    <span style="font-size:11px;color:#A32D2D;background:#FCEBEB;border-radius:4px;padding:1px 5px;flex:none;">[2]</span>
+                    <div style="min-width:0;">
+                      <div style="font-size:12px;line-height:1.5;">发展党员工作手册 · 第三章</div>
+                      <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px;">校党委组织部 · 现行有效</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+
+        <div style="border-top:0.5px solid var(--border-tertiary);padding:10px 14px;">
+          <div style="border:0.5px solid var(--border-secondary);border-radius:10px;padding:9px 11px;display:flex;align-items:flex-end;gap:10px;">
+            <span style="flex:1;font-size:13px;color:var(--text-tertiary);">请输入您的问题，例如「入党积极分子的培养联系人如何确定」</span>
+            <span style="font-size:12px;color:#fff;background:#A32D2D;border-radius:6px;padding:5px 13px;flex:none;">发送</span>
+          </div>
+          <div style="display:flex;gap:14px;margin-top:7px;font-size:11px;color:var(--text-tertiary);">
+            <span>回答均附引用出处，可点击核验</span>
+            <span>无依据时系统将直接拒答</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <h2>二、引用溯源卡与拒答态</h2>
+  <p class="sec-note">这是本项目区别于普通聊天机器人的核心界面。把后端五大核验项（引用编号有效性、条款真实性、文件时效、引用完整性、无依据长回答检测）可视化出来，用户才看得到价值。拒答态必须单独设计，不能只做「正常回答」一种状态。</p>
+
+  <div style="border:0.5px solid var(--border-tertiary);border-radius:var(--radius-lg);background:var(--bg-primary);overflow:hidden;">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:0.5px solid var(--border-tertiary);">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+        <span style="font-size:11px;color:#A32D2D;background:#FCEBEB;border-radius:4px;padding:2px 6px;flex:none;">[1]</span>
+        <span style="font-size:13px;font-weight:500;">中国共产党发展党员工作细则 · 第十三条</span>
+      </div>
+      <span style="font-size:11px;color:var(--ok-text);background:var(--ok-bg);border-radius:999px;padding:3px 8px;flex:none;">现行有效</span>
+    </div>
+
+    <div style="padding:12px 14px;display:flex;flex-direction:column;gap:12px;">
+
+      <div style="display:flex;gap:16px;font-size:11px;color:var(--text-tertiary);flex-wrap:wrap;">
+        <span>发布机关 中组部</span>
+        <span>发文字号 中组发〔2014〕6 号</span>
+        <span>施行 2014-06-10</span>
+      </div>
+
+      <div style="border-left:2px solid #F09595;background:var(--bg-secondary);border-radius:0 6px 6px 0;padding:10px 12px;">
+        <div style="font-size:12px;line-height:1.75;color:var(--text-secondary);">第十三条　党支部应当听取党小组、培养联系人和党员、群众的意见，支部委员会讨论同意并报上级党委备案后，方可确定为发展对象……</div>
+        <div style="font-size:11px;color:var(--text-tertiary);margin-top:7px;">原文片段 · 命中段落 3 / 12</div>
+      </div>
+
+      <div>
+        <div style="font-size:12px;font-weight:500;margin-bottom:8px;">引用核验明细</div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid var(--border-tertiary);">
+          <span style="font-size:12px;">引用编号有效性</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ok-text);"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.5" fill="#EAF3DE" stroke="#639922" stroke-width="0.5"/><path d="M3.5 6.2L5.2 8L8.6 4.3" fill="none" stroke="#3B6D11" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>通过</span>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid var(--border-tertiary);">
+          <span style="font-size:12px;">条款真实性</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ok-text);"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.5" fill="#EAF3DE" stroke="#639922" stroke-width="0.5"/><path d="M3.5 6.2L5.2 8L8.6 4.3" fill="none" stroke="#3B6D11" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>通过</span>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid var(--border-tertiary);">
+          <span style="font-size:12px;">文件时效</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ok-text);"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.5" fill="#EAF3DE" stroke="#639922" stroke-width="0.5"/><path d="M3.5 6.2L5.2 8L8.6 4.3" fill="none" stroke="#3B6D11" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>通过</span>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid var(--border-tertiary);">
+          <span style="font-size:12px;">引用完整性</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ok-text);"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.5" fill="#EAF3DE" stroke="#639922" stroke-width="0.5"/><path d="M3.5 6.2L5.2 8L8.6 4.3" fill="none" stroke="#3B6D11" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>通过</span>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;">
+          <span style="font-size:12px;">无依据长回答检测</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ok-text);"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.5" fill="#EAF3DE" stroke="#639922" stroke-width="0.5"/><path d="M3.5 6.2L5.2 8L8.6 4.3" fill="none" stroke="#3B6D11" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>通过</span>
+        </div>
+
+      </div>
+
+      <div style="display:flex;gap:10px;font-size:11px;color:var(--text-tertiary);border-top:0.5px solid var(--border-tertiary);padding-top:10px;flex-wrap:wrap;">
+        <span>点击条款号可跳转原文</span>
+        <span>核验不通过的引用会被自动剔除，并在下方标注</span>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="margin-top:12px;border:0.5px solid var(--border-tertiary);border-left:2px solid #EF9F27;border-radius:8px;background:var(--bg-primary);padding:12px 14px;">
+    <div style="display:flex;align-items:center;gap:7px;">
+      <svg width="13" height="13" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.5" fill="#FAEEDA" stroke="#EF9F27" stroke-width="0.5"/><path d="M6 3.2V6.6" fill="none" stroke="#854F0B" stroke-width="1.3" stroke-linecap="round"/><circle cx="6" cy="8.6" r="0.7" fill="#854F0B"/></svg>
+      <span style="font-size:12px;font-weight:500;color:#633806;">拒答状态 · 未检索到可靠依据</span>
+    </div>
+    <div style="font-size:12px;line-height:1.7;color:var(--text-secondary);margin-top:7px;">知识库中未找到与「本次发展对象的群众意见征求期限」直接相关的现行条款，为避免给出错误结论，本次不作回答。建议补充问题范围，或联系校党委组织部核实。</div>
+    <div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;">
+      <span style="font-size:11px;color:var(--text-secondary);border:0.5px solid var(--border-secondary);border-radius:6px;padding:3px 9px;">换一种问法</span>
+      <span style="font-size:11px;color:var(--text-secondary);border:0.5px solid var(--border-secondary);border-radius:6px;padding:3px 9px;">查看检索到的相近条款</span>
+    </div>
+  </div>
+
+  <h2>三、知识库文档入库页</h2>
+  <p class="sec-note">重点不是表单本身，而是把后端硬业务规则前置到界面：中央级文件必须公开密级、涉密材料不入向量库、失效日期校验。校验不通过直接禁用提交。</p>
+
+  <div style="border:0.5px solid var(--border-tertiary);border-radius:var(--radius-lg);background:var(--bg-primary);overflow:hidden;">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:0.5px solid var(--border-tertiary);">
+      <div>
+        <div style="font-size:14px;font-weight:500;">文档入库</div>
+        <div style="font-size:11px;color:var(--text-tertiary);margin-top:3px;">知识库管理 / 文档入库</div>
+      </div>
+      <span style="font-size:11px;color:#791F1F;background:#FCEBEB;border-radius:999px;padding:3px 9px;">校党委组织部 · 本级</span>
+    </div>
+
+    <div style="padding:14px 16px;display:flex;flex-direction:column;gap:14px;">
+
+      <div style="display:flex;align-items:center;gap:12px;background:var(--bg-secondary);border-radius:8px;padding:11px 13px;">
+        <span style="width:30px;height:36px;flex:none;border:0.5px solid var(--border-secondary);border-radius:4px;background:var(--bg-primary);display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:#A32D2D;">PDF</span>
+        <div style="min-width:0;flex:1;">
+          <div style="font-size:13px;">中国共产党发展党员工作细则.pdf</div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-top:3px;">1.2 MB · 解析完成 · 识别到章—条结构 4 章 32 条，将生成 68 个向量片段</div>
+        </div>
+        <span style="font-size:11px;color:var(--ok-text);background:var(--ok-bg);border-radius:999px;padding:3px 9px;flex:none;">解析通过</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;">
+
+        <div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:5px;">文件标题 <span style="color:#A32D2D;">*</span></div>
+          <div style="border:0.5px solid var(--border-secondary);border-radius:6px;padding:7px 10px;font-size:13px;">中国共产党发展党员工作细则</div>
+        </div>
+
+        <div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:5px;">发布机关 <span style="color:#A32D2D;">*</span></div>
+          <div style="border:0.5px solid var(--border-secondary);border-radius:6px;padding:7px 10px;font-size:13px;">中共中央组织部</div>
+        </div>
+
+        <div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:5px;">发文字号</div>
+          <div style="border:0.5px solid var(--border-secondary);border-radius:6px;padding:7px 10px;font-size:13px;">中组发〔2014〕6 号</div>
+        </div>
+
+        <div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:5px;">生效日期 <span style="color:#A32D2D;">*</span></div>
+          <div style="border:0.5px solid var(--border-secondary);border-radius:6px;padding:7px 10px;font-size:13px;">2014-06-10</div>
+        </div>
+
+        <div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:5px;">文件层级 <span style="color:#A32D2D;">*</span></div>
+          <div style="border:0.5px solid var(--border-info);border-radius:6px;padding:7px 10px;font-size:13px;display:flex;align-items:center;justify-content:space-between;"><span>中央级</span><span style="font-size:9px;color:var(--text-tertiary);">▼</span></div>
+        </div>
+
+        <div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:5px;">密级 <span style="color:#A32D2D;">*</span></div>
+          <div style="border:0.5px solid #E24B4A;border-radius:6px;padding:7px 10px;font-size:13px;display:flex;align-items:center;justify-content:space-between;"><span>内部</span><span style="font-size:9px;color:var(--text-tertiary);">▼</span></div>
+          <div style="font-size:11px;color:#A32D2D;margin-top:5px;line-height:1.5;">中央级文件的密级必须为「公开」，当前选择不符合业务规则</div>
+        </div>
+
+        <div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:5px;">公开属性 <span style="color:#A32D2D;">*</span></div>
+          <div style="border:0.5px solid var(--border-secondary);border-radius:6px;padding:7px 10px;font-size:13px;display:flex;align-items:center;justify-content:space-between;"><span>主动公开</span><span style="font-size:9px;color:var(--text-tertiary);">▼</span></div>
+        </div>
+
+        <div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:5px;">失效日期</div>
+          <div style="border:0.5px solid var(--border-secondary);border-radius:6px;padding:7px 10px;font-size:13px;color:var(--text-tertiary);">未设置（长期有效）</div>
+        </div>
+
+      </div>
+
+      <div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">标签</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;">
+          <span style="font-size:11px;color:var(--text-secondary);background:var(--bg-secondary);border-radius:999px;padding:3px 10px;">发展党员</span>
+          <span style="font-size:11px;color:var(--text-secondary);background:var(--bg-secondary);border-radius:999px;padding:3px 10px;">党员管理</span>
+          <span style="font-size:11px;color:var(--text-tertiary);border:0.5px dashed var(--border-secondary);border-radius:999px;padding:3px 10px;">+ 添加标签</span>
+        </div>
+      </div>
+
+      <div style="border:0.5px solid var(--border-tertiary);border-left:2px solid #EF9F27;border-radius:6px;padding:10px 12px;">
+        <div style="font-size:12px;font-weight:500;color:#633806;">入库前强制规则</div>
+        <div style="font-size:12px;line-height:1.7;color:var(--text-secondary);margin-top:5px;">
+          密级为「秘密」及以上的材料不会进入向量库，仅存档不参与检索问答；<br>
+          失效日期早于生效日期、或已过期的文件将被拒绝入库。
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;border-top:0.5px solid var(--border-tertiary);padding-top:12px;">
+        <span style="font-size:11px;color:#A32D2D;">1 项校验未通过，无法提交</span>
+        <div style="display:flex;gap:9px;">
+          <span style="font-size:12px;color:var(--text-secondary);border:0.5px solid var(--border-secondary);border-radius:6px;padding:6px 15px;">取消</span>
+          <span style="font-size:12px;color:var(--text-tertiary);background:var(--bg-secondary);border-radius:6px;padding:6px 15px;">提交入库</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <h2>落代码时的对应关系</h2>
+  <p class="sec-note">
+    页面组件放入 <code>frontend/apps/web-ele/src/views/</code>；路由写入 <code>src/router/routes/modules/</code>（该目录被自动 glob 合并）；Mock 数据走 <code>apps/backend-mock</code> 的 Nitro 文件路由。<br>
+    请求层无需改造：vben 的响应拦截器已是 <code>codeField:'code' / dataField:'data' / successCode:0</code>，与后端 <code>APIResponse</code> 完全一致。
+  </p>
+
+</div>
+</body>
+</html>

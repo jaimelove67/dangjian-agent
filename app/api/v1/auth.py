@@ -85,3 +85,107 @@ async def read_me(
 ) -> APIResponse[UserInfo]:
     """获取当前用户信息"""
     return APIResponse(data=UserInfo.from_user(user), trace_id=_trace_id(request))
+
+
+@router.post(
+    "/auth/refresh",
+    response_model=APIResponse[TokenResponse],
+    summary="刷新令牌",
+    description="使用刷新令牌获取新的访问令牌",
+    tags=["鉴权"],
+)
+async def refresh_token(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[TokenResponse]:
+    """刷新访问令牌"""
+    # 从Authorization header获取refresh token
+    from fastapi import Header
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的授权头"
+        )
+
+    refresh_token_str = auth_header.replace("Bearer ", "")
+
+    try:
+        from app.core.security import decode_token, TokenType
+        payload = decode_token(refresh_token_str, expected_type=TokenType.REFRESH)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="刷新令牌无效或已过期"
+        )
+
+    # 验证用户是否存在且活跃
+    user_id = payload.get("sub")
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户不存在或已被禁用"
+        )
+
+    # 签发新的访问令牌和刷新令牌
+    access_token = create_access_token(
+        subject=str(user.id), tenant_id=user.tenant_id, role=user.role
+    )
+    new_refresh_token = create_refresh_token(
+        subject=str(user.id), tenant_id=user.tenant_id, role=user.role
+    )
+
+    return APIResponse(
+        data=TokenResponse(
+            access_token=access_token,
+            refresh_token=new_refresh_token,
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        ),
+        trace_id=_trace_id(request),
+    )
+
+
+@router.post(
+    "/auth/logout",
+    response_model=APIResponse[dict],
+    summary="退出登录",
+    description="退出当前登录状态",
+    tags=["鉴权"],
+)
+async def logout(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> APIResponse[dict]:
+    """退出登录"""
+    # TODO: 将token加入黑名单（需要Redis支持）
+    return APIResponse(
+        data={"message": "退出成功"},
+        trace_id=_trace_id(request),
+    )
+
+
+@router.get(
+    "/auth/codes",
+    response_model=APIResponse[list[str]],
+    summary="获取用户权限码",
+    description="返回当前用户的权限码列表",
+    tags=["鉴权"],
+)
+async def get_access_codes(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> APIResponse[list[str]]:
+    """获取用户权限码"""
+    from app.core.security import get_role_profile
+
+    # 获取用户角色的权限列表
+    profile = get_role_profile(user.role)
+    codes = [perm.value for perm in profile.permissions]
+
+    return APIResponse(
+        data=codes,
+        trace_id=_trace_id(request),
+    )
