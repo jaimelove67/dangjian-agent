@@ -36,7 +36,19 @@ class User(Base):
     phone = Column(String(20), nullable=True)
 
     # 角色
-    role = Column(SQLEnum(UserRole), nullable=False, default=UserRole.MEMBER)
+    # 存储角色 *值*（如 branch_secretary）为 VARCHAR(50)，与迁移 001 的列定义保持一致，
+    # 不创建原生 PG 枚举类型（避免 userrole 类型不存在 / 存储枚举名的问题）。
+    role = Column(
+        SQLEnum(
+            UserRole,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            native_enum=False,
+            length=50,
+            create_constraint=False,
+        ),
+        nullable=False,
+        default=UserRole.MEMBER,
+    )
 
     # 所属组织ID
     org_unit_id = Column(String(36), nullable=True, index=True)
