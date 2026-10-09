@@ -1,0 +1,126 @@
+# 业务规则配置
+
+# 党员发展阶段时限（天）
+member_development:
+  # 入党积极分子培养期
+  activist_training_days: 365
+  activist_training_min_days: 365
+
+  # 发展对象培训期
+  candidate_training_days: 90
+
+  # 预备党员预备期
+  probationary_period_days: 365
+  probationary_period_min_days: 365
+
+  # 提醒提前量（天）
+  reminder_advance_days: 30
+
+# 材料要求配置
+material_requirements:
+  # 入党申请人 -> 入党积极分子
+  applicant_to_activist:
+    - 入党申请书
+    - 党组织谈话记录
+
+  # 入党积极分子 -> 发展对象
+  activist_to_candidate:
+    - 思想汇报
+    - 培养考察记录
+    - 群众评议材料
+    - 党课培训证明
+
+  # 发展对象 -> 预备党员
+  candidate_to_probationary:
+    - 政治审查材料
+    - 公示情况报告
+    - 支部大会决议
+    - 上级审批意见
+
+  # 预备党员 -> 正式党员
+  probationary_to_member:
+    - 转正申请书
+    - 预备期考察记录
+    - 支部大会决议
+
+# 评分规则配置
+scoring_rules:
+  # 维度权重（可按租户覆盖）
+  weights:
+    theory_test: 0.2      # 理论测试成绩
+    volunteer_service: 0.2 # 志愿服务时长
+    academic: 0.2          # 学业表现
+    public_review: 0.2     # 群众评议
+    party_review: 0.2      # 党员意见
+
+  # 硬性风险项（出现即标记）
+  risk_items:
+    - 挂科
+    - 处分
+    - 群众评议不满意率超过30%
+
+# 提醒规则配置
+reminder_rules:
+  # 培养期满提醒
+  training_period:
+    enabled: true
+    advance_days: 30
+    recipients:
+      - 培养联系人
+      - 支部书记
+
+  # 材料提交提醒
+  material_submission:
+    enabled: true
+    advance_days: 15
+    recipients:
+      - 本人
+      - 培养联系人
+
+  # 会议讨论提醒
+  meeting_discussion:
+    enabled: true
+    advance_days: 7
+    recipients:
+      - 支部书记
+
+  # 转正提醒
+  probationary_expiration:
+    enabled: true
+    advance_days: 30
+    recipients:
+      - 本人
+      - 支部书记
+
+# 考核指标配置
+assessment_indicators:
+  # 组织建设类
+  organization:
+    - code: ORG_001
+      name: 支部设置规范率
+      formula: 规范支部数 / 总支部数 * 100
+      target: 100
+
+  # 党员发展类
+  development:
+    - code: DEV_001
+      name: 年度发展党员人数
+      formula: 发展党员数
+      target: 按计划
+
+    - code: DEV_002
+      name: 材料完整率
+      formula: 材料齐全人数 / 总人数 * 100
+      target: 100
+
+  # 组织生活类
+  organization_life:
+    - code: LIFE_001
+      name: 三会一课完成率
+      formula: 实际次数 / 要求次数 * 100
+      target: 100
+
+    - code: LIFE_002
+      name: 会议记录完整率
+      formula: 有记录会议数 / 总会议数 * 100
+      target: 100

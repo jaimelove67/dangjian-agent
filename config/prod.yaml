@@ -1,0 +1,40 @@
+# 生产环境配置（仅用于参考，实际配置从环境变量读取）
+
+# 此文件仅作为配置项的文档说明，不会被应用直接读取
+# 实际配置通过 .env 文件或环境变量提供
+
+database:
+  url: postgresql+asyncpg://party_user:password@postgres:5432/party_agent
+  pool_size: 50
+  max_overflow: 20
+  pool_recycle: 3600
+
+redis:
+  url: redis://:password@redis:6379/0
+  pool_size: 20
+  cache_ttl: 3600
+
+logging:
+  level: INFO
+  format: json
+
+security:
+  secret_key: MUST_CHANGE_IN_PRODUCTION
+  enable_data_level_gateway: true
+  allowed_external_models:
+    - dashscope.aliyuncs.com
+
+models:
+  qwen_api_key: sk-production-api-key
+  embedding_model_path: /models/bge-large-zh-v1.5
+  reranker_model_path: /models/bge-reranker-large
+
+retrieval:
+  top_k: 10
+  rerank_top_k: 5
+  no_evidence_threshold: 0.5
+  exclude_expired_by_default: true
+
+business:
+  activist_training_days: 365
+  probationary_period_days: 365

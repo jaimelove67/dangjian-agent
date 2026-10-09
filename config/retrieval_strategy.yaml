@@ -1,0 +1,55 @@
+# 检索策略配置
+
+# 混合检索配置
+hybrid_retrieval:
+  # 向量检索配置
+  vector:
+    enabled: true
+    top_k: 20
+    score_threshold: 0.0
+
+  # 关键词检索配置
+  keyword:
+    enabled: true
+    top_k: 20
+    min_score: 0.0
+
+  # 融合配置
+  fusion:
+    algorithm: rrf  # 可选: rrf (Reciprocal Rank Fusion), weighted
+    weights:
+      vector: 0.7
+      keyword: 0.3
+
+# 重排配置
+reranking:
+  enabled: true
+  model: bge-reranker-large
+  top_k: 5
+  score_threshold: 0.5
+
+# 无依据判定
+no_evidence:
+  threshold: 0.5
+  fallback_message: "知识库中未找到直接依据，建议向上一级党组织确认"
+
+# 时效过滤
+time_filter:
+  exclude_expired_by_default: true
+  warn_expiring_days: 30
+
+# 租户过滤（强制，不可配置关闭）
+tenant_filter:
+  enabled: true
+  force: true
+
+# 可见范围过滤（强制，不可配置关闭）
+visibility_filter:
+  enabled: true
+  force: true
+
+# 缓存配置
+cache:
+  enabled: true
+  ttl: 3600  # 秒
+  key_prefix: "retrieval:"

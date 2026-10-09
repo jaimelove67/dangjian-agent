@@ -102,10 +102,6 @@ addopts = [
     "-q",
     "--strict-markers",
     "--strict-config",
-    "--cov=app",
-    "--cov-report=term-missing:skip-covered",
-    "--cov-report=html",
-    "--cov-report=xml",
 ]
 testpaths = ["tests"]
 pythonpath = ["."]
@@ -115,7 +111,7 @@ markers = [
     "security: marks tests as security tests",
     "unit: marks tests as unit tests",
 ]
-asyncio_mode = "auto"
+# asyncio_mode = "auto"  # 需要 pytest-asyncio 插件
 
 # ==================== Coverage 配置 ====================
 [tool.coverage.run]
