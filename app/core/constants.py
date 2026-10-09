@@ -39,3 +39,27 @@ class AuditResult(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
     DENIED = "denied"
+
+
+class DocumentLevel(str, Enum):
+    """知识文档层级（见框架文档 5.2.1）"""
+    CENTRAL = "central"          # 中央
+    PROVINCIAL = "provincial"    # 省级
+    SCHOOL = "school"            # 校级
+    DEPARTMENT = "department"    # 院系级
+
+
+class DocumentVisibility(str, Enum):
+    """知识文档可见范围"""
+    PUBLIC = "public"            # 公开
+    SCHOOL = "school"            # 校级
+    DEPARTMENT = "department"    # 院系级
+    BRANCH = "branch"            # 支部级
+
+
+class DocumentStatus(str, Enum):
+    """知识文档状态（有效 / 已失效 / 已废止）"""
+    EFFECTIVE = "effective"
+    EXPIRED = "expired"
+    ABOLISHED = "abolished"
+
