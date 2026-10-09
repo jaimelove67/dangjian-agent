@@ -1,4 +1,6 @@
 """数据模型基类"""
+import re
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -15,11 +17,11 @@ class Base:
 
     @declared_attr
     def __tablename__(cls) -> str:
-        """自动生成表名（类名转下划线）"""
-        return cls.__name__.lower()
+        """自动生成表名（驼峰转下划线）"""
+        return re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__).lower()
 
     # 所有表的公共字段
-    id = Column(String(36), primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime,
