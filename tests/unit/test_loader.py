@@ -3,12 +3,12 @@ import io
 
 import pytest
 
+from app.rag.exceptions import ParseError, UnsupportedFormatError
 from app.rag.loader import (
     ParsedDocument,
     PdfParser,
     PlainTextParser,
     ParserRegistry,
-    UnsupportedFormatError,
     build_default_registry,
 )
 

@@ -13,10 +13,12 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.security import Permission
 from app.db.session import get_db
 from app.deps import get_current_tenant, require_permissions
 from app.models.user import User
+from app.rag.exceptions import ParseError, UnsupportedFormatError
 from app.rules.document_metadata import MetadataValidationError
 from app.schemas.common import APIResponse, ErrorCode
 from app.schemas.knowledge import (
@@ -52,7 +54,7 @@ def _split_tags(raw: str) -> list[str]:
     "/knowledge-docs",
     response_model=APIResponse[DocumentCreateResponse],
     summary="文档入库",
-    description="上传文档并携带完整元数据；必填项缺失将拒绝入库。",
+    description="上传文档并携带完整元数据；必填项缺失将拒绝入库。文件大小限制：10MB。",
     tags=["知识库"],
 )
 async def create_knowledge_document(
@@ -78,6 +80,17 @@ async def create_knowledge_document(
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[DocumentCreateResponse]:
     """文档入库"""
+    # 文件大小限制
+    content = await file.read()
+    if len(content) > settings.MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "code": ErrorCode.BUSINESS_ERROR,
+                "message": f"文件大小超过限制（最大 {settings.MAX_UPLOAD_SIZE // 1024 // 1024}MB）",
+            },
+        )
+
     metadata: dict[str, Any] = {
         "doc_id": doc_id,
         "file_name": file_name,
@@ -93,10 +106,9 @@ async def create_knowledge_document(
         "tags": _split_tags(tags),
         "summary": summary,
     }
-    content = await file.read()
 
     try:
-        document, chunk_count = await create_document(
+        document, chunk_count, page_count = await create_document(
             db,
             metadata=metadata,
             content=content,
@@ -113,11 +125,32 @@ async def create_knowledge_document(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": ErrorCode.CONFLICT, "message": str(exc)},
         ) from exc
+    except UnsupportedFormatError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail={"code": ErrorCode.BUSINESS_ERROR, "message": str(exc)},
+        ) from exc
+    except ParseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": ErrorCode.BUSINESS_ERROR, "message": f"文档解析失败: {str(exc)}"},
+        ) from exc
+    except Exception as exc:
+        # 捕获其他未预期的错误
+        logger.exception("document_creation_failed", extra={"doc_id": doc_id})
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": ErrorCode.BUSINESS_ERROR,
+                "message": f"文档入库失败: {str(exc)}",
+            },
+        ) from exc
 
     await db.commit()
     return APIResponse(
         data=DocumentCreateResponse(
-            document=DocumentResponse.from_document(document),
+            document=DocumentResponse.from_document(document, page_count=page_count),
             chunk_count=chunk_count,
         ),
         trace_id=_trace_id(request),
@@ -165,7 +198,13 @@ async def update_knowledge_document_status(
 ) -> APIResponse[DocumentResponse]:
     """变更文档状态"""
     try:
-        document = await change_document_status(db, doc_id=doc_id, new_status=body.status)
+        document = await change_document_status(
+            db,
+            doc_id=doc_id,
+            new_status=body.status,
+            changed_by=user.username,
+            reason=getattr(body, "reason", None),
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
