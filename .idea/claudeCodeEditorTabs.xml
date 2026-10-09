@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ClaudeCodeEditorTabs">
+    <option name="activeSessionId" value="2d853e4b-c5bc-4fb2-84bf-8f787b33f853" />
+    <option name="openSessionIds">
+      <list>
+        <option value="1369cff0-0e4b-47f6-8cee-c4d35c432577" />
+        <option value="4f86872b-61c0-4f3e-80a7-68e72b51f52a" />
+        <option value="2d853e4b-c5bc-4fb2-84bf-8f787b33f853" />
+      </list>
+    </option>
+    <option name="sessionPaths">
+      <map>
+        <entry key="1369cff0-0e4b-47f6-8cee-c4d35c432577" value="/sessions/new" />
+        <entry key="2d853e4b-c5bc-4fb2-84bf-8f787b33f853" value="/sessions/b4136065-0450-4f41-8436-bb3a0a82f237" />
+        <entry key="4f86872b-61c0-4f3e-80a7-68e72b51f52a" value="/sessions/11133eb0-b669-4308-82e1-0aade8e26496" />
+      </map>
+    </option>
+    <option name="sessionTitles">
+      <map>
+        <entry key="1369cff0-0e4b-47f6-8cee-c4d35c432577" value="Claude Code" />
+        <entry key="2d853e4b-c5bc-4fb2-84bf-8f787b33f853" value="你现在使用本地的gh。cli将此项目上传到我的仓库里" />
+        <entry key="4f86872b-61c0-4f3e-80a7-68e72b51f52a" value="你现在根据文件夹里的require。txt文件的要求写一个项目文档" />
+      </map>
+    </option>
+  </component>
+</project>
