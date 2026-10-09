@@ -1,0 +1,148 @@
+/* ============================================================================
+ * 设计令牌（Design Tokens）
+ * ----------------------------------------------------------------------------
+ * 调性：编辑式浅色（editorial light）。参考锚点为「排版严谨的党内正式文件」，
+ *      而非营销落地页。因此：无渐变、无玻璃拟态、无投影堆叠、无纯黑纯白。
+ *
+ * 三条硬锁（taste-skill Section 4）：
+ *   4.2  COLOR CONSISTENCY LOCK —— 全站仅一个强调色，饱和度 < 80%
+ *   4.4  SHAPE CONSISTENCY LOCK —— 全站仅一套圆角体系（4 / 6 / 8 / 999）
+ *   4.11 PAGE THEME LOCK      —— 全站单一浅色主题，任何区块不得中途反色
+ * ========================================================================= */
+
+:root {
+  color-scheme: light;
+
+  /* --- 中性阶：暖调灰，刻意避开偏蓝的 slate，避免"AI 感" ------------------ */
+  /* 极值不取 #000 / #fff：正文用 --ink，最深底色用 --paper-dim */
+  --paper: #fbfaf7; /* 页面底：极浅暖白，像未涂布纸 */
+  --paper-raised: #ffffff; /* 卡片面：允许纯白，因为它是"抬升"，不是页面底 */
+  --paper-dim: #f2f0ea; /* 次级区块底：表头、代码块、引用条 */
+  --paper-sunken: #eae7df; /* 三级底：输入框内槽、进度条轨道 */
+
+  --ink: #1c1b19; /* 正文主色：近黑但带暖，非 #000 */
+  --ink-soft: #4a4843; /* 次级正文 */
+  --ink-muted: #6f6c65; /* 辅助文字、说明 */
+  --ink-faint: #9a968d; /* 占位符、禁用态、极弱标注 */
+
+  --rule: #e3e0d8; /* 常规分隔线 */
+  --rule-strong: #cec9bd; /* 强调分隔线、输入框边 */
+
+  /* --- 强调色：唯一的暖砖红，饱和度 44%（远低于 80% 上限） ----------------
+   * 语义对应「党内正式文件」的红头，但被压暗压灰，避免政务大红的高饱和刺目。
+   * 全站仅此一个彩色，不外扩第二强调色。 */
+  --accent: #a03230;
+  --accent-deep: #7d2624; /* hover / active 加深 */
+  --accent-wash: #f7ece9; /* 极浅底：选中行、引用角标底 */
+  --accent-edge: #e0c4bf; /* 强调描边 */
+
+  /* --- 语义色：仅用于状态，不作为装饰色，饱和度均 < 55% ------------------ */
+  /* 提示 / 依据充分 */
+  --ok-ink: #3d6350;
+  --ok-wash: #eaf1ec;
+  --ok-edge: #c3d6c9;
+
+  /* 注意 / 时效提醒 / 依据不充分 */
+  --warn-ink: #7d5a1e;
+  --warn-wash: #f9f1e0;
+  --warn-edge: #e6d3ac;
+
+  /* 危险 / 已废止 / 请求失败 */
+  --bad-ink: #8b3a34;
+  --bad-wash: #f9eae8;
+  --bad-edge: #e5c2bd;
+
+  /* --- 字体 -------------------------------------------------------------
+   * 中文正文优先系统思源/苹方，衬线用于标题，营造"文件感"。 */
+  --font-serif: 'Source Han Serif SC', 'Noto Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
+  --font-sans: 'Inter var', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo,
+    monospace;
+
+  /* 字阶：1.200 的克制比例，编辑式排版不需要跳级夸张 */
+  --text-2xs: 0.6875rem; /* 11px 仅限角标 */
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.8125rem; /* 13px */
+  --text-base: 0.875rem; /* 14px 界面正文基准 */
+  --text-md: 0.9375rem; /* 15px 阅读正文 */
+  --text-lg: 1.0625rem; /* 17px 小标题 */
+  --text-xl: 1.3125rem; /* 21px 段标题 */
+  --text-2xl: 1.625rem; /* 26px 页标题 */
+  --text-3xl: 2.0625rem; /* 33px 登录页主标题 */
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.45;
+  --leading-normal: 1.65; /* 中文长文阅读的舒适行高 */
+  --leading-loose: 1.85; /* 问答正文，逐字读 */
+
+  --tracking-tight: -0.011em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.06em; /* 眉标、栏头的大写间距 */
+
+  /* --- 间距：4px 基准 --------------------------------------------------- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+
+  /* --- 圆角：SHAPE CONSISTENCY LOCK，仅四档 ------------------------------ */
+  --radius-xs: 4px; /* 角标、tag、小徽标 */
+  --radius-sm: 6px; /* 按钮、输入框 */
+  --radius-md: 8px; /* 卡片、面板 */
+  --radius-full: 999px; /* 药丸、头像 */
+
+  /* --- 描边与阴影 -------------------------------------------------------
+   * 编辑式风格以「边框」而非「投影」建立层级。阴影仅用于浮层。 */
+  --border: 1px solid var(--rule);
+  --border-strong: 1px solid var(--rule-strong);
+  --shadow-pop: 0 1px 2px rgb(28 27 25 / 0.06), 0 8px 24px -8px rgb(28 27 25 / 0.14);
+  --focus-ring: 0 0 0 3px rgb(160 50 48 / 0.16);
+
+  /* --- 尺寸与图层 ------------------------------------------------------- */
+  --nav-h: 56px; /* 顶栏高度，控制在 80px 以内 */
+  --rail-w: 232px; /* 侧栏宽度 */
+  --measure: 72ch; /* 阅读区最大行宽 */
+  --z-nav: 40;
+  --z-pop: 60;
+  --z-toast: 80;
+
+  /* --- 动效：MOTION_INTENSITY = 3，仅功能性过渡 ------------------------- */
+  --ease: cubic-bezier(0.2, 0.6, 0.3, 1);
+  --dur-fast: 110ms;
+  --dur: 170ms;
+
+  /* 表格密度（知识库页面可切换） */
+  --row-h: 44px;
+
+  --aside-w: 320px;
+}
+
+[data-density='compact'] {
+  --row-h: 34px;
+  --text-base: 0.8125rem;
+}
+
+/* 减弱动效偏好：全站统一关停过渡（taste-skill Section 4.6） */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
