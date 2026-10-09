@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
 from typing import Any, Mapping, Optional
 
 from sqlalchemy import select
@@ -19,6 +18,7 @@ from app.models.knowledge import EmbeddingChunk, KnowledgeDoc
 from app.rag.loader import ParserRegistry, default_registry
 from app.rag.splitter import ChapterArticleSplitter
 from app.rules.document_metadata import validate_document_metadata
+from app.utils.datetime import to_date
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +29,6 @@ class DocumentNotFoundError(Exception):
 
 class DocumentConflictError(Exception):
     """文档标识冲突"""
-
-
-def _to_date(value: Any) -> Optional[date]:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, str):
-        return date.fromisoformat(value.strip())
-    raise ValueError(f"无法解析日期: {value!r}")
 
 
 async def get_document(db: AsyncSession, *, doc_id: str) -> Optional[KnowledgeDoc]:
@@ -60,7 +48,7 @@ async def create_document(
     tenant_id: Optional[str] = None,
     parser_registry: Optional[ParserRegistry] = None,
     splitter: Optional[ChapterArticleSplitter] = None,
-) -> tuple[KnowledgeDoc, int]:
+) -> tuple[KnowledgeDoc, int, Optional[int]]:
     """文档入库
 
     流程：元数据校验 → 文件解析 → 章条切分 → 落库。
@@ -74,7 +62,7 @@ async def create_document(
         splitter: 切分策略
 
     Returns:
-        (文档对象, 生成的片段数)
+        (文档对象, 生成的片段数, 页数)
 
     Raises:
         MetadataValidationError: 元数据校验失败
@@ -92,9 +80,22 @@ async def create_document(
     parsed_text = ""
     page_count: Optional[int] = None
     if content is not None and file_name:
-        parsed = registry.parse(content, file_name=file_name)
+        parser = registry.get(file_name)
+        logger.debug(
+            "document_parsing_started",
+            extra={"doc_id": doc_id, "parser": parser.name, "file_name": file_name},
+        )
+        parsed = parser.parse(content, file_name=file_name)
         parsed_text = parsed.text
         page_count = parsed.page_count
+        logger.debug(
+            "document_parsed",
+            extra={
+                "doc_id": doc_id,
+                "text_length": len(parsed_text),
+                "page_count": page_count,
+            },
+        )
 
     # 3. 落库文档
     document = KnowledgeDoc(
@@ -107,8 +108,8 @@ async def create_document(
         level=str(metadata["level"]),
         visibility=str(metadata["visibility"]),
         security_level=str(metadata["security_level"]),
-        effective_date=_to_date(metadata["effective_date"]),
-        expiration_date=_to_date(metadata.get("expiration_date")),
+        effective_date=to_date(metadata["effective_date"]),
+        expiration_date=to_date(metadata.get("expiration_date")),
         status=str(metadata.get("status") or DocumentStatus.EFFECTIVE.value),
         summary=metadata.get("summary"),
         file_path=metadata.get("file_path"),
@@ -124,18 +125,27 @@ async def create_document(
     chunk_count = 0
     if validation.embedding_allowed and parsed_text.strip():
         active_splitter = splitter or ChapterArticleSplitter()
-        for chunk in active_splitter.split(parsed_text):
-            db.add(
-                EmbeddingChunk(
-                    tenant_id=tenant_id or document.tenant_id,
-                    doc_id=document.id,
-                    chunk_id=f"{doc_id}-{chunk.sequence}",
-                    content=chunk.content,
-                    sequence=chunk.sequence,
-                    article=chunk.article,
-                )
+        chunks = active_splitter.split(parsed_text)
+        chunk_count = len(chunks)
+
+        logger.debug(
+            "document_chunks_generated",
+            extra={"doc_id": doc_id, "chunk_count": chunk_count},
+        )
+
+        # 批量插入优化（避免逐条add）
+        chunk_records = [
+            EmbeddingChunk(
+                tenant_id=tenant_id or document.tenant_id,
+                doc_id=document.id,
+                chunk_id=f"{doc_id}-{chunk.sequence}",
+                content=chunk.content,
+                sequence=chunk.sequence,
+                article=chunk.article,
             )
-            chunk_count += 1
+            for chunk in chunks
+        ]
+        db.add_all(chunk_records)
         await db.flush()
 
     logger.info(
@@ -148,7 +158,7 @@ async def create_document(
             "page_count": page_count,
         },
     )
-    return document, chunk_count
+    return document, chunk_count, page_count
 
 
 async def change_document_status(
@@ -156,8 +166,25 @@ async def change_document_status(
     *,
     doc_id: str,
     new_status: str,
+    changed_by: Optional[str] = None,
+    reason: Optional[str] = None,
 ) -> KnowledgeDoc:
-    """变更文档状态（有效 / 已失效 / 已废止）"""
+    """变更文档状态（有效 / 已失效 / 已废止）
+
+    Args:
+        db: 数据库会话
+        doc_id: 文档标识
+        new_status: 新状态
+        changed_by: 操作人（可选，用于审计）
+        reason: 变更原因（可选，用于审计）
+
+    Returns:
+        更新后的文档对象
+
+    Raises:
+        ValueError: 状态值非法
+        DocumentNotFoundError: 文档不存在
+    """
     valid = {status.value for status in DocumentStatus}
     if new_status not in valid:
         raise ValueError(f"非法状态: {new_status}（应为 {'/'.join(sorted(valid))}）")
@@ -166,10 +193,17 @@ async def change_document_status(
     if document is None:
         raise DocumentNotFoundError(f"文档不存在: {doc_id}")
 
+    old_status = document.status
     document.status = new_status
     await db.flush()
+
     logger.info(
         "knowledge_document_status_changed",
-        extra={"doc_id": doc_id, "status": new_status},
+        extra={
+            "doc_id": doc_id,
+            "old_status": old_status,
+            "new_status": new_status,
+            "changed_by": changed_by,
+        },
     )
     return document

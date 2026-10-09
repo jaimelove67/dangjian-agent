@@ -187,6 +187,7 @@ def decode_token(token: str, expected_type: Optional[TokenType] = None) -> dict[
 class Permission(str, Enum):
     """接口权限点（对应开发规范 8.3 接口权限要求）"""
     QA_ASK = "qa.ask"                           # 知识问答：登录用户
+    KNOWLEDGE_QUERY = "knowledge.query"         # 知识检索：登录用户
     KNOWLEDGE_MANAGE = "knowledge.manage"       # 知识库维护：院系级及以上管理员
     MEMBER_QUERY = "member.query"               # 党员发展查询：支部书记及以上
     STAGE_TRANSITION = "member.stage_transition"  # 阶段流转：支部书记及以上
@@ -225,6 +226,7 @@ _BUSINESS_SCOPE_ORDER = {BS_SELF: 0, BS_BRANCH: 1, BS_DEPARTMENT: 2, BS_SCHOOL: 
 _ALL_PERMISSIONS = frozenset(Permission)
 _MANAGER_PERMISSIONS = frozenset({
     Permission.QA_ASK,
+    Permission.KNOWLEDGE_QUERY,
     Permission.KNOWLEDGE_MANAGE,
     Permission.MEMBER_QUERY,
     Permission.STAGE_TRANSITION,
@@ -233,12 +235,13 @@ _MANAGER_PERMISSIONS = frozenset({
 })
 _BRANCH_PERMISSIONS = frozenset({
     Permission.QA_ASK,
+    Permission.KNOWLEDGE_QUERY,
     Permission.MEMBER_QUERY,
     Permission.STAGE_TRANSITION,
     Permission.SCORING,
     Permission.MEETING_ARCHIVE,
 })
-_MEMBER_PERMISSIONS = frozenset({Permission.QA_ASK})
+_MEMBER_PERMISSIONS = frozenset({Permission.QA_ASK, Permission.KNOWLEDGE_QUERY})
 
 # 角色画像（对应框架文档 9.1 角色与数据范围表）
 ROLE_PROFILES: dict[UserRole, RoleProfile] = {

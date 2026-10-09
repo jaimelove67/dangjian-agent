@@ -8,6 +8,7 @@ Create Date: 2026-01-04
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from pgvector.sqlalchemy import Vector
 
 # revision identifiers, used by Alembic.
 revision = '001'
@@ -81,7 +82,7 @@ def upgrade():
         sa.Column('phone', sa.String(20), nullable=True),
         sa.Column('role', sa.String(50), nullable=False),
         sa.Column('org_unit_id', sa.String(36), nullable=True),
-        sa.Column('is_active', sa.String(10), nullable=False, default='true'),
+        sa.Column('is_active', sa.Boolean(), nullable=False, server_default=sa.true()),
     )
     op.create_index('ix_users_id', 'users', ['id'])
     op.create_index('ix_users_tenant_id', 'users', ['tenant_id'])
@@ -121,9 +122,69 @@ def upgrade():
     op.create_index('ix_audit_logs_request_id', 'audit_logs', ['request_id'])
     op.create_index('ix_audit_logs_result', 'audit_logs', ['result'])
 
+    # 创建知识文档表
+    op.create_table(
+        'knowledge_docs',
+        sa.Column('id', sa.String(36), primary_key=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column('is_deleted', sa.Boolean(), default=False, nullable=False),
+        sa.Column('tenant_id', sa.String(36), nullable=False),
+        sa.Column('doc_id', sa.String(100), nullable=False),
+        sa.Column('file_name', sa.String(255), nullable=False),
+        sa.Column('title', sa.String(500), nullable=False),
+        sa.Column('issuer', sa.String(200), nullable=False),
+        sa.Column('doc_number', sa.String(100), nullable=True),
+        sa.Column('level', sa.String(20), nullable=False),
+        sa.Column('visibility', sa.String(20), nullable=False),
+        sa.Column('security_level', sa.String(20), nullable=False),
+        sa.Column('effective_date', sa.Date(), nullable=False),
+        sa.Column('expiration_date', sa.Date(), nullable=True),
+        sa.Column('status', sa.String(20), nullable=False, server_default='effective'),
+        sa.Column('tags', postgresql.ARRAY(sa.String()), nullable=True),
+        sa.Column('summary', sa.Text(), nullable=True),
+        sa.Column('file_path', sa.String(500), nullable=True),
+        sa.Column('file_size', sa.Integer(), nullable=True),
+        sa.Column('metadata', postgresql.JSON(), nullable=True),
+    )
+    op.create_index('ix_knowledge_docs_id', 'knowledge_docs', ['id'])
+    op.create_index('ix_knowledge_docs_tenant_id', 'knowledge_docs', ['tenant_id'])
+    op.create_index('ix_knowledge_docs_doc_id', 'knowledge_docs', ['doc_id'], unique=True)
+    op.create_index('ix_knowledge_docs_doc_number', 'knowledge_docs', ['doc_number'])
+    op.create_index('ix_knowledge_docs_level', 'knowledge_docs', ['level'])
+    op.create_index('ix_knowledge_docs_visibility', 'knowledge_docs', ['visibility'])
+    op.create_index('ix_knowledge_docs_security_level', 'knowledge_docs', ['security_level'])
+    op.create_index('ix_knowledge_docs_effective_date', 'knowledge_docs', ['effective_date'])
+    op.create_index('ix_knowledge_docs_expiration_date', 'knowledge_docs', ['expiration_date'])
+    op.create_index('ix_knowledge_docs_status', 'knowledge_docs', ['status'])
+
+    # 创建向量化片段表
+    op.create_table(
+        'embedding_chunks',
+        sa.Column('id', sa.String(36), primary_key=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column('is_deleted', sa.Boolean(), default=False, nullable=False),
+        sa.Column('tenant_id', sa.String(36), nullable=False),
+        sa.Column('doc_id', sa.String(36), nullable=False),
+        sa.Column('chunk_id', sa.String(100), nullable=False),
+        sa.Column('content', sa.Text(), nullable=False),
+        sa.Column('sequence', sa.Integer(), nullable=False),
+        sa.Column('article', sa.String(50), nullable=True),
+        sa.Column('embedding', Vector(1024), nullable=True),
+        sa.Column('metadata', postgresql.JSON(), nullable=True),
+    )
+    op.create_index('ix_embedding_chunks_id', 'embedding_chunks', ['id'])
+    op.create_index('ix_embedding_chunks_tenant_id', 'embedding_chunks', ['tenant_id'])
+    op.create_index('ix_embedding_chunks_doc_id', 'embedding_chunks', ['doc_id'])
+    op.create_index('ix_embedding_chunks_chunk_id', 'embedding_chunks', ['chunk_id'])
+    op.create_index('ix_embedding_chunks_article', 'embedding_chunks', ['article'])
+
 
 def downgrade():
     """回滚数据库"""
+    op.drop_table('embedding_chunks')
+    op.drop_table('knowledge_docs')
     op.drop_table('audit_logs')
     op.drop_table('users')
     op.drop_table('org_units')
