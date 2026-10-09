@@ -42,4 +42,5 @@
 - **本会话 node 无法创建任何子进程（EBUSY errno -4082）**，跑不了 vite / vue-tsc / pnpm run；`pnpm install` 会在 esbuild postinstall 中断。前端构建需在用户自己终端执行。
 - 本仓库存在**并行工作流**，曾清空 `frontend/` 并回退记忆文件。**产出后立即提交**，不留未提交成果。
 - 提交用平铺分支名（本机 git 无法保存嵌套引用，见用户级记忆）。
+- **判定提交是否还在历史中，只信 `git rev-list HEAD | grep <sha>`**。本仓库 `git branch --contains` / `git merge-base --is-ancestor` 会给出错误答案（实测：`--contains` 声称包含某提交，而 `rev-list` 计数为 0）。
 
