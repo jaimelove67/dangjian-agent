@@ -28,9 +28,10 @@ class DocumentResponse(BaseModel):
     expiration_date: Optional[date] = None
     tags: List[str] = Field(default_factory=list)
     summary: Optional[str] = None
+    page_count: Optional[int] = Field(None, description="文档页数（PDF等有页码的文档）")
 
     @classmethod
-    def from_document(cls, document: Any) -> "DocumentResponse":
+    def from_document(cls, document: Any, page_count: Optional[int] = None) -> "DocumentResponse":
         return cls(
             id=str(document.id),
             doc_id=document.doc_id,
@@ -46,6 +47,7 @@ class DocumentResponse(BaseModel):
             expiration_date=document.expiration_date,
             tags=list(document.tags or []),
             summary=document.summary,
+            page_count=page_count or getattr(document, "page_count", None),
         )
 
 

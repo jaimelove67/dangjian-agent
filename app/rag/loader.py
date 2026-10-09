@@ -17,15 +17,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from app.rag.exceptions import ParseError, UnsupportedFormatError
+
 logger = logging.getLogger(__name__)
-
-
-class UnsupportedFormatError(Exception):
-    """不支持的文件格式"""
-
-
-class ParseError(Exception):
-    """文件解析失败"""
 
 
 @dataclass

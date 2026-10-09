@@ -1,156 +1,238 @@
-"""混合检索模块
+"""混合检索器
 
-融合向量检索和关键词检索结果。
+融合向量检索和关键词检索的结果，使用 Reciprocal Rank Fusion (RRF) 算法。
+支持集成重排模型进一步优化结果。
 """
-from typing import List, Dict
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
-from app.rag.retrieval.vector import VectorRetriever
+from app.llm.base import DataLevel
+from app.llm.service import get_model_service
+from app.rag.retrieval.base import RetrievalResult, Retriever
 from app.rag.retrieval.keyword import KeywordRetriever
-from app.schemas.retrieval import RetrievalFilters, RetrievalResult
+from app.rag.retrieval.vector import VectorRetriever
 
-logger = structlog.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
-class HybridRetriever:
-    """混合检索器
-
-    使用RRF（Reciprocal Rank Fusion）算法融合多路检索结果。
-    """
+class HybridRetriever(Retriever):
+    """混合检索器（向量 + 关键词 + 可选重排）"""
 
     def __init__(
         self,
-        vector_retriever: VectorRetriever,
-        keyword_retriever: KeywordRetriever,
-        k: int = 60,  # RRF参数
-    ):
-        """初始化
-
-        Args:
-            vector_retriever: 向量检索器
-            keyword_retriever: 关键词检索器
-            k: RRF常数，通常取60
+        db: AsyncSession,
+        *,
+        data_level: DataLevel = DataLevel.PUBLIC,
+        vector_weight: float = 0.5,
+        keyword_weight: float = 0.5,
+        use_reranker: bool = True,
+        rrf_k: int = 60,
+    ) -> None:
         """
-        self.vector_retriever = vector_retriever
-        self.keyword_retriever = keyword_retriever
-        self.k = k
+        Args:
+            db: 数据库会话
+            data_level: 数据级别（用于模型路由）
+            vector_weight: 向量检索权重
+            keyword_weight: 关键词检索权重
+            use_reranker: 是否使用重排模型
+            rrf_k: RRF 算法的 k 参数（默认 60）
+        """
+        self.db = db
+        self.data_level = data_level
+        self.vector_weight = vector_weight
+        self.keyword_weight = keyword_weight
+        self.use_reranker = use_reranker
+        self.rrf_k = rrf_k
+
+        # 初始化子检索器
+        self.vector_retriever = VectorRetriever(db, data_level=data_level)
+        self.keyword_retriever = KeywordRetriever(db)
+        self._model_service = get_model_service()
 
     async def retrieve(
         self,
-        db: AsyncSession,
         query: str,
-        filters: RetrievalFilters,
+        *,
         top_k: int = 10,
-        vector_weight: float = 0.7,
-        keyword_weight: float = 0.3,
-    ) -> List[RetrievalResult]:
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[RetrievalResult]:
         """混合检索
 
+        流程：
+        1. 并行执行向量检索和关键词检索
+        2. 使用 RRF 算法融合结果
+        3. 可选：使用重排模型优化排序
+        4. 返回 top_k 结果
+
         Args:
-            db: 数据库会话
             query: 查询文本
-            filters: 过滤条件
             top_k: 返回结果数量
-            vector_weight: 向量检索权重
-            keyword_weight: 关键词检索权重
+            filters: 过滤条件
 
         Returns:
-            融合后的检索结果列表
+            检索结果列表，按相关度降序排列
         """
-        # 1. 并行执行向量检索和关键词检索
-        # 注意：这里先后执行，如果需要真正并行可以用asyncio.gather
+        if not query.strip():
+            return []
+
+        # 1. 并行执行两种检索（各取 top_k * 2 保证融合后有足够候选）
+        retrieval_top_k = top_k * 2
+
         vector_results = await self.vector_retriever.retrieve(
-            db=db,
-            query=query,
-            filters=filters,
-            top_k=top_k * 2,  # 多取一些，融合后再截断
+            query, top_k=retrieval_top_k, filters=filters
         )
-
         keyword_results = await self.keyword_retriever.retrieve(
-            db=db,
-            query=query,
-            filters=filters,
-            top_k=top_k * 2,
+            query, top_k=retrieval_top_k, filters=filters
         )
 
-        # 2. 使用RRF融合
-        fused_results = self._rrf_fusion(
-            vector_results=vector_results,
-            keyword_results=keyword_results,
-            vector_weight=vector_weight,
-            keyword_weight=keyword_weight,
+        logger.debug(
+            "retrieval_results_collected",
+            extra={
+                "query": query[:50],
+                "vector_count": len(vector_results),
+                "keyword_count": len(keyword_results),
+            },
         )
 
-        # 3. 取top_k
-        final_results = fused_results[:top_k]
-
-        logger.info(
-            "hybrid_retrieval_completed",
-            query_length=len(query),
-            vector_count=len(vector_results),
-            keyword_count=len(keyword_results),
-            fused_count=len(fused_results),
-            final_count=len(final_results),
-            tenant_id=filters.tenant_id,
+        # 2. RRF 融合
+        fused_results = self._reciprocal_rank_fusion(
+            vector_results, keyword_results, top_k=top_k * 3
         )
 
-        return final_results
+        logger.debug(
+            "rrf_fusion_completed",
+            extra={
+                "query": query[:50],
+                "fused_count": len(fused_results),
+            },
+        )
 
-    def _rrf_fusion(
+        # 3. 可选：重排序
+        if self.use_reranker and fused_results:
+            try:
+                reranked_results = await self._rerank(
+                    query, fused_results, top_k=top_k
+                )
+                logger.debug(
+                    "reranking_completed",
+                    extra={
+                        "query": query[:50],
+                        "reranked_count": len(reranked_results),
+                    },
+                )
+                return reranked_results
+            except Exception as exc:
+                logger.warning(
+                    "reranking_failed_fallback_to_fused",
+                    extra={"query": query[:50], "error": str(exc)},
+                )
+                # 重排失败时降级到融合结果
+                return fused_results[:top_k]
+
+        return fused_results[:top_k]
+
+    def _reciprocal_rank_fusion(
         self,
-        vector_results: List[RetrievalResult],
-        keyword_results: List[RetrievalResult],
-        vector_weight: float = 0.7,
-        keyword_weight: float = 0.3,
-    ) -> List[RetrievalResult]:
-        """RRF融合算法
+        vector_results: list[RetrievalResult],
+        keyword_results: list[RetrievalResult],
+        top_k: int,
+    ) -> list[RetrievalResult]:
+        """Reciprocal Rank Fusion (RRF) 算法融合检索结果
 
-        RRF score = Σ weight / (k + rank)
+        RRF 公式：score(d) = Σ 1 / (k + rank(d))
+        其中 k 是常数（默认 60），rank(d) 是文档在列表中的排名（从1开始）
 
         Args:
             vector_results: 向量检索结果
             keyword_results: 关键词检索结果
-            vector_weight: 向量权重
-            keyword_weight: 关键词权重
+            top_k: 返回结果数量
 
         Returns:
-            融合后的结果列表
+            融合后的结果列表，按 RRF 分数降序排列
         """
-        # 构建chunk_id到结果的映射
-        chunk_map: Dict[str, RetrievalResult] = {}
-        scores: Dict[str, float] = {}
+        # 构建 chunk_id -> result 的映射
+        chunk_map: dict[str, RetrievalResult] = {}
 
-        # 处理向量检索结果
-        for rank, result in enumerate(vector_results):
+        # 向量检索结果的排名分数
+        for rank, result in enumerate(vector_results, start=1):
             chunk_id = result.chunk_id
-            chunk_map[chunk_id] = result
-
-            # RRF分数
-            rrf_score = vector_weight / (self.k + rank + 1)
-            scores[chunk_id] = scores.get(chunk_id, 0.0) + rrf_score
-
-        # 处理关键词检索结果
-        for rank, result in enumerate(keyword_results):
-            chunk_id = result.chunk_id
-
-            # 如果已存在，使用向量检索的结果（包含更完整的metadata）
+            rrf_score = self.vector_weight / (self.rrf_k + rank)
             if chunk_id not in chunk_map:
                 chunk_map[chunk_id] = result
+                chunk_map[chunk_id].score = rrf_score
+                chunk_map[chunk_id].metadata["rrf_score"] = rrf_score
+            else:
+                chunk_map[chunk_id].score += rrf_score
+                chunk_map[chunk_id].metadata["rrf_score"] += rrf_score
 
-            # 累加RRF分数
-            rrf_score = keyword_weight / (self.k + rank + 1)
-            scores[chunk_id] = scores.get(chunk_id, 0.0) + rrf_score
+        # 关键词检索结果的排名分数
+        for rank, result in enumerate(keyword_results, start=1):
+            chunk_id = result.chunk_id
+            rrf_score = self.keyword_weight / (self.rrf_k + rank)
+            if chunk_id not in chunk_map:
+                chunk_map[chunk_id] = result
+                chunk_map[chunk_id].score = rrf_score
+                chunk_map[chunk_id].metadata["rrf_score"] = rrf_score
+            else:
+                chunk_map[chunk_id].score += rrf_score
+                chunk_map[chunk_id].metadata["rrf_score"] += rrf_score
 
-        # 按融合分数排序
-        sorted_chunk_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+        # 按 RRF 分数排序
+        fused = sorted(
+            chunk_map.values(),
+            key=lambda r: r.score,
+            reverse=True,
+        )
 
-        # 构建最终结果
-        fused_results: List[RetrievalResult] = []
-        for chunk_id in sorted_chunk_ids:
-            result = chunk_map[chunk_id]
-            # 更新分数为融合分数
-            result.score = scores[chunk_id]
-            fused_results.append(result)
+        # 更新元数据标记为混合检索
+        for result in fused:
+            result.metadata["retrieval_method"] = "hybrid"
 
-        return fused_results
+        return fused[:top_k]
+
+    async def _rerank(
+        self,
+        query: str,
+        candidates: list[RetrievalResult],
+        top_k: int,
+    ) -> list[RetrievalResult]:
+        """使用重排模型优化排序
+
+        Args:
+            query: 查询文本
+            candidates: 候选结果列表
+            top_k: 返回结果数量
+
+        Returns:
+            重排后的结果列表
+        """
+        if not candidates:
+            return []
+
+        # 准备文档列表
+        documents = [result.content for result in candidates]
+
+        # 调用重排模型
+        rerank_response = await self._model_service.rerank(
+            query=query,
+            documents=documents,
+            top_k=top_k,
+            data_level=self.data_level,
+        )
+
+        # 根据重排结果重新排序
+        reranked_results = []
+        for rerank_result in rerank_response.results:
+            original_result = candidates[rerank_result.index]
+            # 保留原始分数，添加重排分数
+            original_result.metadata["original_score"] = original_result.score
+            original_result.score = rerank_result.relevance_score
+            original_result.metadata["rerank_score"] = rerank_result.relevance_score
+            original_result.metadata["retrieval_method"] = "hybrid_reranked"
+            reranked_results.append(original_result)
+
+        return reranked_results

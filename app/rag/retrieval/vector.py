@@ -1,145 +1,151 @@
-"""向量检索模块
+"""向量检索器
 
-使用pgvector进行语义相似度检索。
+基于 pgvector 的语义相似度检索。使用余弦相似度（<=>）。
 """
-from typing import List, Optional
-from sqlalchemy import select, and_, or_
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
-from app.models.knowledge import EmbeddingChunk, KnowledgeDoc
-from app.schemas.retrieval import RetrievalFilters, RetrievalResult
-from app.llm.service import ModelService
 from app.llm.base import DataLevel
+from app.llm.service import get_model_service
+from app.models.knowledge import EmbeddingChunk, KnowledgeDoc
+from app.rag.retrieval.base import RetrievalResult, Retriever
 
-logger = structlog.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
-class VectorRetriever:
-    """向量检索器
+class VectorRetriever(Retriever):
+    """向量检索器（基于语义相似度）"""
 
-    使用pgvector余弦相似度进行语义检索。
-    """
-
-    def __init__(self, model_service: Optional[ModelService] = None):
-        """初始化
-
-        Args:
-            model_service: 模型服务（用于向量化查询）
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        data_level: DataLevel = DataLevel.PUBLIC,
+    ) -> None:
         """
-        from app.llm.service import get_model_service
-        self.model_service = model_service or get_model_service()
+        Args:
+            db: 数据库会话
+            data_level: 数据级别（用于模型路由）
+        """
+        self.db = db
+        self.data_level = data_level
+        self._model_service = get_model_service()
 
     async def retrieve(
         self,
-        db: AsyncSession,
         query: str,
-        filters: RetrievalFilters,
+        *,
         top_k: int = 10,
-    ) -> List[RetrievalResult]:
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[RetrievalResult]:
         """向量检索
 
         Args:
-            db: 数据库会话
             query: 查询文本
-            filters: 过滤条件
             top_k: 返回结果数量
+            filters: 过滤条件
+                - tenant_id: 租户ID
+                - doc_ids: 文档ID列表
+                - security_level: 保密级别
+                - status: 文档状态
 
         Returns:
-            检索结果列表（按相似度降序）
+            检索结果列表，按相似度降序排列
         """
-        # 1. 查询向量化
-        try:
-            embedding_response = await self.model_service.embed(
-                texts=[query],
-                data_level=filters.data_level,
-                context={"action": "retrieval", "tenant_id": filters.tenant_id},
-            )
-            query_embedding = embedding_response.embeddings[0]
-        except Exception as e:
-            logger.error(
-                "query_embedding_failed",
-                error=str(e),
-                query=query[:50],
-            )
+        if not query.strip():
             return []
 
-        # 2. 构建查询
-        # 使用pgvector的余弦相似度运算符 <=>
+        # 1. 查询文本向量化
+        embed_response = await self._model_service.embed(
+            texts=[query],
+            data_level=self.data_level,
+        )
+        query_vector = embed_response.embeddings[0]
+
+        # 2. 构建查询条件
+        filters = filters or {}
+        tenant_id = filters.get("tenant_id")
+        doc_ids = filters.get("doc_ids")
+        security_level = filters.get("security_level")
+        doc_status = filters.get("status", "effective")
+
+        # 3. 向量相似度检索（使用余弦距离 <=>）
+        # 注意：<=> 返回距离（越小越相似），需要转换为分数（1 - distance）
         stmt = (
             select(
-                EmbeddingChunk,
-                KnowledgeDoc,
-                EmbeddingChunk.embedding.cosine_distance(query_embedding).label("distance"),
+                EmbeddingChunk.chunk_id,
+                EmbeddingChunk.content,
+                EmbeddingChunk.doc_id,
+                EmbeddingChunk.article,
+                EmbeddingChunk.sequence,
+                KnowledgeDoc.title,
+                KnowledgeDoc.issuer,
+                KnowledgeDoc.doc_number,
+                KnowledgeDoc.level,
+                KnowledgeDoc.security_level,
+                # 余弦距离
+                text(f"embedding <=> ARRAY{query_vector}::vector AS distance"),
             )
-            .join(KnowledgeDoc, KnowledgeDoc.id == EmbeddingChunk.doc_id)
-            .where(
-                and_(
-                    # 租户隔离
-                    EmbeddingChunk.tenant_id == filters.tenant_id,
-                    KnowledgeDoc.tenant_id == filters.tenant_id,
-
-                    # 可见范围过滤
-                    KnowledgeDoc.visibility.in_(filters.visibility_levels),
-
-                    # 向量不为空
-                    EmbeddingChunk.embedding.isnot(None),
-                )
-            )
+            .join(KnowledgeDoc, EmbeddingChunk.doc_id == KnowledgeDoc.doc_id)
+            .where(EmbeddingChunk.embedding.isnot(None))  # 只检索已向量化的片段
+            .where(KnowledgeDoc.status == doc_status)
         )
 
-        # 时效过滤
-        if filters.exclude_expired:
-            stmt = stmt.where(KnowledgeDoc.status == "effective")
+        # 应用过滤条件
+        if tenant_id:
+            stmt = stmt.where(EmbeddingChunk.tenant_id == tenant_id)
+        if doc_ids:
+            stmt = stmt.where(EmbeddingChunk.doc_id.in_(doc_ids))
+        if security_level:
+            stmt = stmt.where(KnowledgeDoc.security_level == security_level)
 
-        # 保密级别过滤
-        if filters.security_levels:
-            stmt = stmt.where(KnowledgeDoc.security_level.in_(filters.security_levels))
+        # 按距离排序并限制结果数量
+        stmt = stmt.order_by(text("distance")).limit(top_k)
 
-        # 文档层级过滤
-        if filters.doc_levels:
-            stmt = stmt.where(KnowledgeDoc.level.in_(filters.doc_levels))
+        result = await self.db.execute(stmt)
+        rows = result.fetchall()
 
-        # 按相似度排序，取top_k
-        stmt = stmt.order_by("distance").limit(top_k)
-
-        # 3. 执行查询
-        result = await db.execute(stmt)
-        rows = result.all()
-
-        # 4. 转换为RetrievalResult
-        results: List[RetrievalResult] = []
-        for chunk, doc, distance in rows:
-            # 将distance转换为score (0-1之间，越大越相似)
-            score = 1.0 - float(distance) if distance is not None else 0.0
+        # 4. 转换为检索结果
+        results = []
+        for row in rows:
+            # 余弦距离转换为相似度分数（1 - distance）
+            distance = float(row.distance)
+            score = max(0.0, 1.0 - distance)
 
             results.append(
                 RetrievalResult(
-                    chunk_id=chunk.chunk_id,
-                    doc_id=doc.doc_id,
-                    content=chunk.content,
+                    chunk_id=row.chunk_id,
+                    content=row.content,
                     score=score,
-                    article=chunk.article,
-                    sequence=chunk.sequence,
-                    doc_title=doc.title,
-                    doc_number=doc.doc_number,
-                    issuer=doc.issuer,
-                    effective_date=str(doc.effective_date) if doc.effective_date else None,
+                    doc_id=row.doc_id,
+                    article=row.article,
+                    sequence=row.sequence,
                     metadata={
-                        "level": doc.level,
-                        "visibility": doc.visibility,
-                        "security_level": doc.security_level,
-                        "tags": list(doc.tags or []),
+                        "title": row.title,
+                        "issuer": row.issuer,
+                        "doc_number": row.doc_number,
+                        "level": row.level,
+                        "security_level": row.security_level,
+                        "retrieval_method": "vector",
                     },
                 )
             )
 
-        logger.info(
+        logger.debug(
             "vector_retrieval_completed",
-            query_length=len(query),
-            top_k=top_k,
-            results_count=len(results),
-            tenant_id=filters.tenant_id,
+            extra={
+                "query": query[:50],
+                "top_k": top_k,
+                "result_count": len(results),
+                "avg_score": sum(r.score for r in results) / len(results)
+                if results
+                else 0.0,
+            },
         )
 
         return results
