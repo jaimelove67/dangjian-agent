@@ -110,8 +110,9 @@ markers = [
     "integration: marks tests as integration tests",
     "security: marks tests as security tests",
     "unit: marks tests as unit tests",
+    "asyncio: marks tests as asyncio tests",
 ]
-# asyncio_mode = "auto"  # 需要 pytest-asyncio 插件
+asyncio_mode = "auto"  # 需要 pytest-asyncio 插件
 
 # ==================== Coverage 配置 ====================
 [tool.coverage.run]
