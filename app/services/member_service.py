@@ -58,7 +58,11 @@ def _load_scoring_rules() -> dict[str, Any]:
     rules = data.get("scoring_rules") or {}
     weights = rules.get("weights") or {}
     return {
-        "weights": {str(key): float(value) for key, value in weights.items() if isinstance(value, (int, float))},
+        "weights": {
+            str(key): float(value)
+            for key, value in weights.items()
+            if isinstance(value, (int, float))
+        },
         "risk_items": list(rules.get("risk_items") or []),
     }
 
@@ -96,7 +100,9 @@ class MemberDevelopment:
         ]
 
     async def profile(self, profile_id: str, *, lock: bool = False) -> MemberProfile:
-        stmt = select(MemberProfile).where(*self._scope(MemberProfile), MemberProfile.id == profile_id)
+        stmt = select(MemberProfile).where(
+            *self._scope(MemberProfile), MemberProfile.id == profile_id
+        )
         if lock:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
         profile = (await self.db.execute(stmt)).scalar_one_or_none()
@@ -159,8 +165,7 @@ class MemberDevelopment:
         for batch in batches:
             count = await self.db.scalar(
                 select(func.count(MemberProfile.id)).where(
-                    MemberProfile.tenant_id == self.tenant_id,
-                    MemberProfile.is_deleted.is_(False),
+                    *self._scope(MemberProfile),
                     MemberProfile.batch_no == batch.batch_no,
                     MemberProfile.year == batch.year,
                 )
@@ -253,6 +258,29 @@ class MemberDevelopment:
             .all()
         )
         items = [row_data(record) for record in records]
+        if records:
+            revisions = (
+                (
+                    await self.db.execute(
+                        select(ContentRevision)
+                        .where(
+                            ContentRevision.tenant_id == self.tenant_id,
+                            ContentRevision.resource_type == "member_material",
+                            ContentRevision.resource_id.in_([str(record.id) for record in records]),
+                            ContentRevision.is_deleted.is_(False),
+                        )
+                        .order_by(ContentRevision.revision)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for item in items:
+                item["review_history"] = [
+                    row_data(revision)
+                    for revision in revisions
+                    if revision.resource_id == item["id"]
+                ]
         # 旧材料名称升级为“待核验”，不虚构原始文件或通过状态。
         for legacy in profile.materials or []:
             if not any(item["material_type"] == legacy for item in items):
@@ -269,15 +297,50 @@ class MemberDevelopment:
     async def review_material(self, material_id: str, body: MaterialReview) -> MemberMaterial:
         material = (
             await self.db.execute(
-                select(MemberMaterial).where(
-                    *self._scope(MemberMaterial), MemberMaterial.id == material_id
-                )
+                select(MemberMaterial)
+                .where(*self._scope(MemberMaterial), MemberMaterial.id == material_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
         if material is None:
             raise HTTPException(404, "材料记录不存在或无权访问")
+        latest = await self.db.scalar(
+            select(func.max(ContentRevision.revision)).where(
+                ContentRevision.tenant_id == self.tenant_id,
+                ContentRevision.resource_type == "member_material",
+                ContentRevision.resource_id == material_id,
+            )
+        )
+        if latest is None:
+            latest = 1
+            self.db.add(
+                ContentRevision(
+                    tenant_id=self.tenant_id,
+                    resource_type="member_material",
+                    resource_id=material_id,
+                    revision=latest,
+                    action="baseline",
+                    actor_id=str(self.user.id),
+                    reason="保存首次审核前状态，既往审核来源待核验",
+                    snapshot=row_data(material),
+                )
+            )
         material.review_status = body.review_status
         material.note = body.note
+        self.db.add(
+            ContentRevision(
+                tenant_id=self.tenant_id,
+                resource_type="member_material",
+                resource_id=material_id,
+                revision=latest + 1,
+                action="review",
+                actor_id=str(self.user.id),
+                reason=body.reason,
+                snapshot=row_data(material),
+            )
+        )
+        await self.db.flush()
         return material
 
     # ==================== 人工阶段流转 ====================
@@ -293,6 +356,8 @@ class MemberDevelopment:
             )
         if body.decision_date < profile.stage_joined_on:
             raise HTTPException(422, "决策日期不能早于进入当前阶段日期")
+        if body.decision_date > date.today():
+            raise HTTPException(422, "决策日期不能晚于今天")
         approved = set(
             (
                 await self.db.execute(
@@ -313,9 +378,7 @@ class MemberDevelopment:
         if rule.min_days > 0:
             stayed = (body.decision_date - profile.stage_joined_on).days
             if stayed < rule.min_days:
-                raise HTTPException(
-                    422, f"未满足最短时限：需 {rule.min_days} 天，当前 {stayed} 天"
-                )
+                raise HTTPException(422, f"未满足最短时限：需 {rule.min_days} 天，当前 {stayed} 天")
         history = MemberStageHistory(
             tenant_id=self.tenant_id,
             profile_id=str(profile.id),
@@ -411,11 +474,7 @@ class MemberDevelopment:
     async def scan_all_reminders(self) -> int:
         """调度扫描：为范围内全部培养对象补齐提醒，重复运行不去重不重复写入。"""
         profiles = (
-            (
-                await self.db.execute(
-                    select(MemberProfile).where(*self._scope(MemberProfile))
-                )
-            )
+            (await self.db.execute(select(MemberProfile).where(*self._scope(MemberProfile))))
             .scalars()
             .all()
         )
@@ -475,7 +534,9 @@ class MemberDevelopment:
 
     # ==================== 培养与表现数据 ====================
 
-    async def add_cultivation(self, body: CultivationCreate, profile_id: str | None = None) -> MemberCultivation:
+    async def add_cultivation(
+        self, body: CultivationCreate, profile_id: str | None = None
+    ) -> MemberCultivation:
         target_id = profile_id or body.profile_id
         profile = await self.profile(target_id)
         record = MemberCultivation(
@@ -551,7 +612,9 @@ class MemberDevelopment:
             (
                 await self.db.execute(
                     select(MemberVote)
+                    .join(MemberProfile, MemberVote.profile_id == MemberProfile.id)
                     .where(
+                        *self._scope(MemberProfile),
                         MemberVote.tenant_id == self.tenant_id,
                         MemberVote.batch_no == batch_no,
                         MemberVote.round_no == round_no,
@@ -592,6 +655,8 @@ class MemberDevelopment:
             MemberCultivation.is_deleted.is_(False),
             MemberCultivation.is_risk.is_(False),
         ]
+        if body.year is not None:
+            conditions.append(MemberCultivation.period == str(body.year))
         rows = (
             (
                 await self.db.execute(
@@ -609,6 +674,11 @@ class MemberDevelopment:
                         MemberCultivation.profile_id == str(profile.id),
                         MemberCultivation.is_deleted.is_(False),
                         MemberCultivation.is_risk.is_(True),
+                        *(
+                            [MemberCultivation.period == str(body.year)]
+                            if body.year is not None
+                            else []
+                        ),
                     )
                 )
             )
@@ -620,14 +690,25 @@ class MemberDevelopment:
             dim = dimensions.setdefault(row.category, {"scores": [], "evidence": []})
             if row.score is not None:
                 dim["scores"].append(float(row.score))
-            dim["evidence"].append({"source_id": "member_cultivation:" + str(row.id), "period": row.period, "note": row.source_note})
+            dim["evidence"].append(
+                {
+                    "source_id": "member_cultivation:" + str(row.id),
+                    "period": row.period,
+                    "note": row.source_note,
+                }
+            )
         weighted_total = 0.0
         weight_sum = 0.0
         output: dict[str, dict[str, Any]] = {}
         for category, weight in sorted(weights.items()):
             dim = dimensions.get(category)
             if not dim or not dim["scores"]:
-                output[category] = {"value": None, "status": "no_evidence", "weight": weight, "evidence": []}
+                output[category] = {
+                    "value": None,
+                    "status": "no_evidence",
+                    "weight": weight,
+                    "evidence": [],
+                }
                 continue
             value = sum(dim["scores"]) / len(dim["scores"])
             output[category] = {
@@ -645,6 +726,7 @@ class MemberDevelopment:
         ]
         return {
             "profile_id": body.profile_id,
+            "year": body.year,
             "rule_version": "business_rules.yaml:scoring_rules",
             "weights": weights,
             "dimensions": output,
@@ -674,7 +756,9 @@ class MemberDevelopment:
         history = await self.stage_history(str(profile.id))
         for earlier, later in zip(history, history[1:], strict=False):
             if earlier["decision_date"] > later["decision_date"]:
-                irregular.append(f"阶段时间顺序异常：{earlier['to_stage']} 晚于 {later['to_stage']} 的决策日期")
+                irregular.append(
+                    f"阶段时间顺序异常：{earlier['to_stage']} 晚于 {later['to_stage']} 的决策日期"
+                )
         risks: list[str] = []
         for name, text in body.materials_note.items():
             if name not in missing and self._checkable(name):
@@ -715,8 +799,7 @@ class MemberDevelopment:
 
     async def roster_stats(self, *, year: int | None, batch_no: str | None) -> dict[str, Any]:
         conditions = [
-            MemberProfile.tenant_id == self.tenant_id,
-            MemberProfile.is_deleted.is_(False),
+            *self._scope(MemberProfile),
             MemberProfile.is_active.is_(True),
         ]
         if year:
@@ -724,15 +807,12 @@ class MemberDevelopment:
         if batch_no:
             conditions.append(MemberProfile.batch_no == batch_no)
         stages = (
-            (
-                await self.db.execute(
-                    select(MemberProfile.current_stage, func.count(MemberProfile.id))
-                    .where(*conditions)
-                    .group_by(MemberProfile.current_stage)
-                )
+            await self.db.execute(
+                select(MemberProfile.current_stage, func.count(MemberProfile.id))
+                .where(*conditions)
+                .group_by(MemberProfile.current_stage)
             )
-            .all()
-        )
+        ).all()
         return {
             "year": year,
             "batch_no": batch_no,

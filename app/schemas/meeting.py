@@ -78,8 +78,6 @@ class ActivityCreate(MeetingInput):
         ids = [person.participant_id for person in self.participants]
         if len(ids) != len(set(ids)):
             raise ValueError("参会人员编号不能重复")
-        if self.scheduled_on > date.today():
-            raise ValueError("计划日期不能晚于今天")
         return self
 
 

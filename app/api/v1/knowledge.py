@@ -48,7 +48,7 @@ from app.rag.retrieval.access import (
     knowledge_filters,
 )
 from app.rag.retrieval.hybrid import HybridRetriever
-from app.rules.document_metadata import MetadataValidationError
+from app.rules.document_metadata import MetadataValidationError, validate_document_metadata
 from app.schemas.common import APIResponse, ErrorCode
 from app.schemas.knowledge import (
     DocumentCreateResponse,
@@ -56,7 +56,7 @@ from app.schemas.knowledge import (
     DocumentResponse,
     DocumentStatusUpdate,
 )
-from app.services.file_store import read_original, remove_originals, save_original
+from app.services.file_store import read_original, save_original, validate_identifier
 from app.services.knowledge_service import (
     DocumentConflictError,
     DocumentNotFoundError,
@@ -165,6 +165,10 @@ async def create_knowledge_document(
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[DocumentCreateResponse]:
     """文档入库"""
+    try:
+        validate_identifier(doc_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     # 文件大小限制
     content = await file.read(settings.MAX_UPLOAD_SIZE + 1)
     if len(content) > settings.MAX_UPLOAD_SIZE:
@@ -261,9 +265,7 @@ async def create_knowledge_document(
     # 留存原始文件与完整性标识；存储不可用时不阻断入库，下载时明确提示。
     try:
         original_version = (document.doc_metadata or {}).get("content_revision", 1)
-        stored = save_original(
-            str(tenant_id), doc_id, original_version, content, file_name
-        )
+        stored = save_original(str(tenant_id), doc_id, original_version, content, file_name)
         document.doc_metadata = {**(document.doc_metadata or {}), "original_file": stored}
     except OSError:
         logger.warning("original_file_save_failed", extra={"doc_id": doc_id})
@@ -335,12 +337,16 @@ async def list_knowledge_documents(
     )
 
 
-async def _readable_document(db: AsyncSession, user: User, doc_id: str) -> KnowledgeDoc | None:
+async def _readable_document(
+    db: AsyncSession, user: User, doc_id: str, *, lock: bool = False
+) -> KnowledgeDoc | None:
     filters = knowledge_filters(user, include_expired=True)
     filters["include_future"] = has_permission(user.role, Permission.KNOWLEDGE_MANAGE)
     stmt = apply_knowledge_access(select(KnowledgeDoc), filters, chunks=False).where(
         KnowledgeDoc.doc_id == doc_id
     )
+    if lock:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     return (await execute_knowledge_query(db, stmt)).scalar_one_or_none()
 
 
@@ -399,9 +405,7 @@ async def replace_knowledge_content(
         new_value={"revision": old_revision + 1, "chunk_count": count},
     )
     try:
-        stored = save_original(
-            str(tenant_id), doc_id, old_revision + 1, content, file.filename
-        )
+        stored = save_original(str(tenant_id), doc_id, old_revision + 1, content, file.filename)
         document.doc_metadata = {**(document.doc_metadata or {}), "original_file": stored}
     except OSError:
         logger.warning("original_file_save_failed", extra={"doc_id": doc_id})
@@ -531,7 +535,6 @@ async def delete_knowledge_document(
         old_value={"status": old_status},
         new_value={"is_deleted": True, "status": document.status},
     )
-    remove_originals(str(user.tenant_id), doc_id)
     await db.commit()
     return APIResponse(data=DocumentResponse.from_document(document), trace_id=_trace_id(request))
 
@@ -605,7 +608,7 @@ async def patch_knowledge_document_metadata(
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[DocumentResponse]:
     """修正元数据并保留变更审计；不重建片段（检索时实时应用文档级属性）。"""
-    document = await _readable_document(db, user, doc_id)
+    document = await _readable_document(db, user, doc_id, lock=True)
     if document is None or str(document.tenant_id) != str(user.tenant_id):
         raise HTTPException(status_code=404, detail="文档不存在")
     changes = body.model_dump(exclude_unset=True, exclude={"reason"})
@@ -619,7 +622,9 @@ async def patch_knowledge_document_metadata(
         "visibility": document.visibility,
         "security_level": document.security_level,
         "effective_date": document.effective_date.isoformat() if document.effective_date else None,
-        "expiration_date": document.expiration_date.isoformat() if document.expiration_date else None,
+        "expiration_date": (
+            document.expiration_date.isoformat() if document.expiration_date else None
+        ),
         "tags": list(document.tags or []),
         "summary": document.summary,
     }
@@ -632,11 +637,54 @@ async def patch_knowledge_document_metadata(
             new_value[key] = _split_tags(value) if value else []
             continue
         new_value[key] = value
+    try:
+        validate_document_metadata(
+            {
+                "doc_id": document.doc_id,
+                "file_name": document.file_name,
+                "status": document.status,
+                **new_value,
+            }
+        )
+    except MetadataValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors) from exc
+    if (
+        new_value["level"] in ("central", "provincial")
+        and new_value["visibility"] == "public"
+        and user.role != UserRole.SYSTEM_ADMIN
+    ):
+        raise HTTPException(status_code=403, detail="共享公共库只能由系统管理员维护")
+    if new_value["visibility"] in ("department", "branch") and not (
+        document.doc_metadata or {}
+    ).get("org_unit_id"):
+        raise HTTPException(status_code=422, detail="此可见范围需要文档关联组织单元")
+    # 下载旧版本也使用当前密级，因此改动分级或描述时检查所有留存版本的正文。
+    declared_level = DataLevel(new_value["security_level"])
+    chunks = (
+        (
+            await db.execute(
+                select(EmbeddingChunk.content).where(
+                    EmbeddingChunk.doc_id == document.id,
+                    EmbeddingChunk.tenant_id == document.tenant_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    inspected = "\n".join(
+        [str(text) for text in chunks]
+        + [document.file_name]
+        + [str(new_value.get(key) or "") for key in ("title", "issuer", "doc_number", "summary")]
+    )
+    detected_level = content_level(inspected, minimum=declared_level)
+    if detected_level != declared_level:
+        raise HTTPException(
+            status_code=422, detail=f"文件内容至少需要标注为 {detected_level.value}"
+        )
     for key, value in new_value.items():
         if key in ("effective_date", "expiration_date"):
-            setattr(
-                document, key, date_type.fromisoformat(value) if value else None
-            )
+            setattr(document, key, date_type.fromisoformat(value) if value else None)
         elif key == "tags":
             setattr(document, key, value)
         else:
@@ -676,12 +724,10 @@ async def knowledge_processing_status(
     document = await _readable_document(db, user, doc_id)
     if document is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    count_stmt = (
-        select(
-            func.count(EmbeddingChunk.id),
-            func.count(EmbeddingChunk.id).filter(EmbeddingChunk.embedding.is_not(None)),
-        ).where(EmbeddingChunk.doc_id == document.id, EmbeddingChunk.is_deleted.is_(False))
-    )
+    count_stmt = select(
+        func.count(EmbeddingChunk.id),
+        func.count(EmbeddingChunk.id).filter(EmbeddingChunk.embedding.is_not(None)),
+    ).where(EmbeddingChunk.doc_id == document.id, EmbeddingChunk.is_deleted.is_(False))
     total, embedded = (await execute_knowledge_query(db, count_stmt)).one()
     total, embedded = int(total or 0), int(embedded or 0)
     error = (document.doc_metadata or {}).get("vector_error")
@@ -713,7 +759,9 @@ async def knowledge_processing_status(
             "pending_chunks": total - embedded,
             "error": error,
             "content_revision": (document.doc_metadata or {}).get("content_revision", 1),
-            "retry_endpoint": "/embeddings/embed" if status_label in ("pending", "partial", "failed") else None,
+            "retry_endpoint": (
+                "/embeddings/embed" if status_label in ("pending", "partial", "failed") else None
+            ),
         },
         trace_id=_trace_id(request),
     )
@@ -743,9 +791,12 @@ async def download_original_file(
         raise HTTPException(status_code=404, detail="原始文件未留存，暂无版本可下载")
     import asyncio
 
-    content = await asyncio.to_thread(
-        read_original, str(user.tenant_id), doc_id, int(target_revision)
-    )
+    try:
+        content = await asyncio.to_thread(
+            read_original, str(document.tenant_id), doc_id, int(target_revision)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="原始文件标识无效") from exc
     if content is None:
         raise HTTPException(status_code=404, detail="原始文件未留存，暂无版本可下载")
     file_name = stored.get("file_name") or document.file_name

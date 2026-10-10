@@ -139,7 +139,45 @@ class ActivityService:
         task = (await self.db.execute(stmt)).scalar_one_or_none()
         if task is None:
             raise HTTPException(404, "会议任务不存在或无权访问")
+        record = await self.record(task.record_id)
+        await self.require_visible_content(record)
         return task
+
+    async def require_visible_content(self, record: MeetingRecord) -> None:
+        """任务摘录沿用母记录关联资料的当前权限。"""
+        _, _, restricted = await visible_sources(
+            self.db, self.user, record.org_unit_id, await self.content_sources(record)
+        )
+        if restricted:
+            raise HTTPException(403, "关联资料权限已变化，内容暂不可访问")
+
+    async def content_sources(self, record: MeetingRecord) -> list[dict[str, Any]]:
+        """删改当前材料选择不能解除旧正文及任务的来源权限。"""
+        context = record.context or {}
+        sources = list(record.sources or []) + list(context.get("content_sources", []))
+        # 旧记录从不可覆盖的历史版本补全来源，避免此前清空关联资料绕过检查。
+        if "content_sources" not in context:
+            snapshots = (
+                (
+                    await self.db.execute(
+                        select(ContentRevision.snapshot).where(
+                            ContentRevision.tenant_id == self.tenant_id,
+                            ContentRevision.resource_type == "meeting",
+                            ContentRevision.resource_id == str(record.id),
+                            ContentRevision.is_deleted.is_(False),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for snapshot in snapshots:
+                sources.extend(snapshot.get("sources", []))
+                sources.extend((snapshot.get("context") or {}).get("content_sources", []))
+        distinct = {}
+        for source in sources:
+            distinct[(source.get("doc_id"), source.get("content_revision"))] = source
+        return list(distinct.values())
 
     async def tasks_of(self, record: MeetingRecord) -> list[MeetingTask]:
         return list(
@@ -216,7 +254,7 @@ class ActivityService:
             participants=[person.model_dump() for person in body.participants],
             source_doc_ids=list(dict.fromkeys(body.source_doc_ids)),
             sources=sources,
-            context={"agenda": body.agenda, "notice": body.notice},
+            context={"agenda": body.agenda, "notice": body.notice, "content_sources": sources},
         )
         self.db.add(record)
         await self.db.flush()
@@ -229,9 +267,8 @@ class ActivityService:
         self.check_revision(record, body.expected_revision)
         if record.archived_at:
             raise HTTPException(409, "已归档活动不能覆盖，请保留正式版本")
+        derived_sources = await self.content_sources(record)
         if body.scheduled_on is not None:
-            if body.scheduled_on > date.today():
-                raise HTTPException(422, "计划日期不能晚于今天")
             record.scheduled_on = body.scheduled_on
         if body.held_on is not None:
             record.held_on = body.held_on
@@ -257,6 +294,7 @@ class ActivityService:
             )
             record.sources, record.source_doc_ids = chosen, list(dict.fromkeys(body.source_doc_ids))
         context = dict(record.context or {})
+        context["content_sources"] = derived_sources + list(record.sources or [])
         if body.agenda is not None:
             context["agenda"] = body.agenda
         if body.notice is not None:
@@ -266,11 +304,10 @@ class ActivityService:
         await self.save_revision(record, "meeting", "revise", body.reason)
         return record
 
-    async def recommendations(
-        self, record_id: str, query: str | None = None
-    ) -> dict[str, Any]:
+    async def recommendations(self, record_id: str, query: str | None = None) -> dict[str, Any]:
         """从授权知识库推荐议题材料，不补写虚构文件。"""
         record = await self.record(record_id)
+        await self.require_visible_content(record)
         sources = await recommend_sources(
             self.db,
             self.user,
@@ -339,6 +376,7 @@ class ActivityService:
             raise HTTPException(409, "已归档纪要不能覆盖")
         if not record.transcript:
             raise HTTPException(422, "原始会议文本待补")
+        await self.require_visible_content(record)
         record.minutes = extract_minutes(record.transcript)
         reset_review(record)
         await self.save_revision(record, "meeting", "generate_minutes", body.reason)
@@ -350,7 +388,7 @@ class ActivityService:
             raise HTTPException(422, "；".join(missing))
         validate_minutes(record.transcript, record.minutes)
         _, _, restricted = await visible_sources(
-            self.db, self.user, record.org_unit_id, record.sources
+            self.db, self.user, record.org_unit_id, await self.content_sources(record)
         )
         if restricted:
             raise HTTPException(409, "关联材料权限已变化，请重新选择材料后送审")
@@ -383,6 +421,7 @@ class ActivityService:
     async def create_task(self, record_id: str, body: TaskCreate) -> MeetingTask:
         """原文摘录必须与会议文本逐字一致；责任人或期限缺省待人工补齐。"""
         record = await self.record(record_id, lock=True)
+        await self.require_visible_content(record)
         if (
             body.source_end > len(record.transcript)
             or record.transcript[body.source_start : body.source_end] != body.task_text
@@ -470,8 +509,19 @@ class ActivityService:
             .scalars()
             .all()
         )
+        items = []
+        for task in tasks:
+            try:
+                record = await self.record(task.record_id)
+                await self.require_visible_content(record)
+            except HTTPException as exc:
+                if exc.status_code not in (403, 404):
+                    raise
+                items.append({"id": str(task.id), "restricted": True})
+            else:
+                items.append({**row_data(task), "restricted": False})
         return {
-            "items": [row_data(task) for task in tasks],
+            "items": items,
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -492,7 +542,7 @@ class ActivityService:
         if missing:
             raise HTTPException(422, "；".join(missing))
         _, _, restricted = await visible_sources(
-            self.db, self.user, record.org_unit_id, record.sources
+            self.db, self.user, record.org_unit_id, await self.content_sources(record)
         )
         if restricted:
             raise HTTPException(403, "关联材料当前不可访问，不能归档")
@@ -504,7 +554,7 @@ class ActivityService:
         """生成当前授权的活动响应，缺项明确待补。"""
         data = row_data(record)
         data["sources"], warnings, restricted = await visible_sources(
-            self.db, self.user, record.org_unit_id, record.sources
+            self.db, self.user, record.org_unit_id, await self.content_sources(record)
         )
         data["tasks"] = [row_data(task) for task in await self.tasks_of(record)]
         data.update(
@@ -523,7 +573,15 @@ class ActivityService:
                 source_doc_ids=[],
                 participants=[],
                 review_comment="",
+                context={},
+                tasks=[],
             )
+        else:
+            data["context"] = {
+                key: value
+                for key, value in (record.context or {}).items()
+                if key != "content_sources"
+            }
         return data
 
     async def list_records(
@@ -629,11 +687,12 @@ class ActivityService:
             .all()
         )
         result = []
+        current_sources = await self.content_sources(record)
         for revision in revisions:
             snapshot = revision.snapshot
             all_sources = snapshot.get("sources", []) if isinstance(snapshot, dict) else []
             _, _, restricted = await visible_sources(
-                self.db, self.user, record.org_unit_id, all_sources
+                self.db, self.user, record.org_unit_id, all_sources + current_sources
             )
             result.append(
                 {
@@ -761,9 +820,7 @@ class ActivityService:
                 await require_archive_policy(self.db, self.tenant_id)
             data = await self.record_data(record)
             if record.review_status != "approved" or data["restricted"]:
-                missing.append(
-                    "存在未审核或资料待核验活动，未计入正式次数与参学统计"
-                )
+                missing.append("存在未审核或资料待核验活动，未计入正式次数与参学统计")
                 continue
             formal.append(record)
             evidence.append(
@@ -807,7 +864,7 @@ class ActivityService:
         for key in ACTIVITY_TYPES:
             held_reviewed = [
                 record
-                for record in records
+                for record in formal
                 if record.activity_type == key and record.review_status == "approved"
             ]
             by_type[key] = {
