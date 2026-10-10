@@ -18,6 +18,18 @@ export interface ApiSurfaceItem {
 }
 
 export const API_SURFACE: ApiSurfaceItem[] = [
+  { label: '文件处理状态', method: 'GET', path: '/api/v1/knowledge-docs/{doc_id}/processing-status', purpose: '查看正文片段处理状态与待处理数量', available: true },
+  { label: '元数据维护', method: 'PATCH', path: '/api/v1/knowledge-docs/{doc_id}/metadata', purpose: '修正来源、时效与可见范围并保留理由', available: true },
+  { label: '授权原件下载', method: 'GET', path: '/api/v1/knowledge-docs/{doc_id}/file', purpose: '按当前权限下载指定版本原件', available: true },
+  { label: '年度发展批次', method: 'GET', path: '/api/v1/member-full/batches', purpose: '查询授权范围内的年度批次及人数', available: true },
+  { label: '培养对象档案', method: 'GET', path: '/api/v1/member-full/profiles/{id}', purpose: '回看材料、培养证据与人工流转记录', available: true },
+  { label: '阶段提醒', method: 'GET', path: '/api/v1/member-full/reminders', purpose: '查看阶段节点提醒及处理状态', available: true },
+  { label: '辅助评分', method: 'POST', path: '/api/v1/member-full/scoring', purpose: '按年度证据生成待人工核验的评分', available: true },
+  { label: '多轮投票记录', method: 'POST', path: '/api/v1/member-full/votes', purpose: '记录组织人员人工核对后的本轮投票', available: true },
+  { label: '组织生活记录', method: 'GET', path: '/api/v1/meeting/records', purpose: '查看活动安排、参会、纪要和任务', available: true },
+  { label: '活动资料保存', method: 'PATCH', path: '/api/v1/meeting/records/{id}', purpose: '保存实际日期、参会和原文并核对版本', available: true },
+  { label: '组织生活人工审核', method: 'POST', path: '/api/v1/meeting/records/{id}/review', purpose: '由有权限且非提交人的人员审核纪要', available: true },
+  { label: '组织生活电子归档', method: 'POST', path: '/api/v1/meeting/records/{id}/archive', purpose: '学校确认电子效力后归档审核通过的记录', available: true },
   { label: '年度考核工作台', method: 'GET', path: '/api/v1/assessment/workspace', purpose: '查看授权年度指标、任务进度、佐证缺项与人工计划草案', available: true },
   { label: '指标归集', method: 'POST', path: '/api/v1/assessment/recalculate', purpose: '复用业务源记录，保存规则和归集版本', available: true },
   { label: '考核材料导出', method: 'POST', path: '/api/v1/assessment/runs/{run_id}/export', purpose: '按当前权限导出指标表、任务与佐证目录', available: true },
@@ -153,9 +165,9 @@ export const API_SURFACE: ApiSurfaceItem[] = [
   {
     label: '阶段流转提交',
     method: 'POST',
-    path: '/api/v1/member/transition',
+    path: '/api/v1/member-full/profiles/{id}/transition',
     purpose: '由具备权限的人员提交阶段流转（人工途径）',
-    available: false,
+    available: true,
   },
   {
     label: '文字向量化',

@@ -105,6 +105,7 @@
   --border-strong: 1px solid var(--rule-strong);
   --shadow-pop: 0 1px 2px rgb(28 27 25 / 0.06), 0 8px 24px -8px rgb(28 27 25 / 0.14);
   --focus-ring: 0 0 0 3px rgb(160 50 48 / 0.16);
+  --overlay-bg: rgb(28 27 25 / 0.32);
 
   /* --- 尺寸与图层 ------------------------------------------------------- */
   --nav-h: 56px; /* 顶栏高度，控制在 80px 以内 */

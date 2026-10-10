@@ -343,6 +343,8 @@ export interface MemberRosterItem {
   days_in_stage: number
   materials: string[]
   pending: number
+  year?: number | null
+  batch_no?: string | null
 }
 
 export interface MemberRosterResponse {

@@ -1,0 +1,264 @@
+/* 正式业务工作区。DESIGN_VARIANCE=3 / MOTION_INTENSITY=2 / VISUAL_DENSITY=5。
+ * 复用既有原生 Vue 设计系统；taste-skill 的营销布局不适用于业务表格与表单。 */
+.wb {
+  min-width: 0;
+}
+.wb-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.wb-toolbar,
+.wb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.wb-toolbar {
+  justify-content: space-between;
+}
+.wb-actions .btn {
+  white-space: nowrap;
+}
+.wb-section {
+  padding: var(--space-5);
+  border: var(--border);
+  border-radius: var(--radius-md);
+  background: var(--paper-raised);
+  min-width: 0;
+}
+.wb-section h3,
+.wb-section h2 {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+.wb-section > h3 {
+  margin-bottom: var(--space-3);
+}
+.wb-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+.wb-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+}
+.wb-field > span {
+  font-weight: 600;
+}
+.wb-field .input,
+.wb-field .select,
+.wb-field .textarea {
+  width: 100%;
+  min-width: 0;
+}
+.wb-field input::placeholder,
+.wb-field textarea::placeholder {
+  color: var(--ink-muted);
+}
+.wb-field small {
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+.wb-check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+.wb-check input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.wb-note {
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--accent-edge);
+  background: var(--accent-wash);
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.wb-success {
+  color: var(--ok-ink);
+  font-size: var(--text-sm);
+}
+.wb-tabs {
+  min-width: 0;
+}
+.wb-tabs__nav {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  border-bottom: var(--border);
+}
+.wb-tabs__nav button {
+  flex: none;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  border-bottom: 2px solid transparent;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.wb-tabs__nav button:hover {
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+.wb-tabs__nav button.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.wb-tabs__body {
+  padding-top: var(--space-5);
+  min-width: 0;
+}
+.wb-table-wrap {
+  overflow-x: auto;
+  border: var(--border);
+  border-radius: var(--radius-sm);
+}
+.wb-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: var(--text-sm);
+}
+.wb-table th {
+  background: var(--paper-dim);
+  color: var(--ink-soft);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.wb-table td,
+.wb-table th {
+  padding: var(--space-3);
+  vertical-align: top;
+}
+.wb-table tbody tr + tr {
+  border-top: var(--border);
+}
+.wb-table td {
+  overflow-wrap: anywhere;
+}
+.wb-table input,
+.wb-table select {
+  min-width: 120px;
+}
+.wb-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+.wb-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+.wb-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.wb-facts dt {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+.wb-facts dd {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.wb-facts--small dd {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.wb-disclosure {
+  border-top: var(--border);
+  padding-top: var(--space-4);
+}
+.wb-disclosure summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.wb-disclosure[open] > summary {
+  margin-bottom: var(--space-4);
+}
+.wb-log {
+  padding: var(--space-3) 0;
+}
+.wb-log + .wb-log {
+  border-top: var(--border);
+}
+.wb-log p {
+  margin-top: var(--space-2);
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+.wb-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  background: var(--paper-dim);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+}
+.wb-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+.wb-dialog {
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  margin: auto;
+  padding: var(--space-5);
+  border: var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+}
+.wb-dialog--wide {
+  width: min(1000px, calc(100vw - 32px));
+}
+.wb-dialog::backdrop {
+  background: var(--overlay-bg);
+}
+.wb-dialog__body {
+  padding-top: var(--space-5);
+}
+@media (max-width: 767px) {
+  .wb-grid,
+  .wb-facts {
+    grid-template-columns: 1fr;
+  }
+  .wb-section {
+    padding: var(--space-4);
+  }
+  .wb-toolbar {
+    align-items: flex-start;
+  }
+  .wb-tabs__nav button {
+    padding: var(--space-3);
+  }
+  .wb-dialog {
+    padding: var(--space-4);
+  }
+}

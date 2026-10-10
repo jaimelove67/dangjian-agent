@@ -5,5 +5,6 @@ import { router } from './router'
 
 import './styles/tokens.css'
 import './styles/base.css'
+import './styles/workbench.css'
 
 createApp(App).use(router).mount('#app')

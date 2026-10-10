@@ -18,6 +18,9 @@ import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
+import MemberFilePanel from '@/components/members/MemberFilePanel.vue'
+import MemberProcessWorkspace from '@/components/members/MemberProcessWorkspace.vue'
 import { session } from '@/stores/session'
 
 /**
@@ -26,7 +29,7 @@ import { session } from '@/stores/session'
  * 本页是全项目**合规红线最密集**的界面，因此版面也最克制：
  *   - 顶部常驻决策边界声明（对应 app/schemas/member.py::DECISION_BOUNDARY_NOTE 的语义）
  *   - 所有校验结果都标注为"建议 / 待人工确认"，绝不出现"通过""不通过"这类结论性动词
- *   - 阶段性动作按钮一律不可用，只给"生成建议"，把操作权明确留在人工途径
+ *   - 人工办理必须记录依据、日期和意见，规则分析不触发阶段流转
  *
  * 名册与人工登记按登录组织范围查询，规则分析不修改人员阶段。
  */
@@ -40,6 +43,11 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 40
 const selectedId = ref<string | null>(null)
+const workspace = ref('profiles')
+const flowBusy = ref(false)
+const rosterYear = ref('')
+const rosterBatch = ref('')
+const workspaces = [{ key: 'profiles', label: '人员档案' }, { key: 'batches', label: '年度批次' }, { key: 'reminders', label: '提醒待办' }, { key: 'votes', label: '多轮选优' }]
 const panelTab = ref<PanelTab>('qualification')
 
 const qualification = ref<QualificationResult | null>(null)
@@ -101,7 +109,7 @@ async function load(): Promise<void> {
   loading.value = true
   rosterError.value = null
   try {
-    const response = await listMembers({ page: page.value, page_size: pageSize })
+    const response = await listMembers({ page: page.value, page_size: pageSize, year: rosterYear.value ? Number(rosterYear.value) : undefined, batch_no: rosterBatch.value.trim() || undefined })
     if (sequence !== rosterSequence) return
     members.value = response.items
     total.value = response.total
@@ -133,6 +141,14 @@ onMounted(() => { void load(); void loadOrganizations() })
 
 function turnPage(delta: number): void {
   page.value += delta
+  void load()
+}
+
+function selectBatch(year: number, batch: string): void {
+  rosterYear.value = String(year)
+  rosterBatch.value = batch
+  page.value = 1
+  workspace.value = 'profiles'
   void load()
 }
 
@@ -258,7 +274,7 @@ const todoTone: Record<TodoItem['category'], string> = {
   <div class="mem">
     <PageHeader
       title="党员发展"
-      description="对照各阶段材料与时限要求，辅助核对培养进度。所有结果均为待人工确认的提示。"
+      description="登记年度批次、材料和培养记录，依组织决定完成人工办理。规则建议与评分需人工核对。"
     >
       <template #actions>
         <button v-if="canCreate" class="btn btn--primary" type="button" :disabled="creating || busy !== null" @click="createOpen = !createOpen">
@@ -277,11 +293,19 @@ const todoTone: Record<TodoItem['category'], string> = {
       <div>
         <p class="boundary__title">决策边界</p>
         <p class="boundary__text">
-          阶段流转仅可通过人工接口，由具备权限的组织人员依规操作；本页结果不构成任何组织认定或选拔结论。
+          阶段决定须由具备权限的组织人员依规登记。规则建议与评分不构成组织认定或选拔结论。
         </p>
       </div>
     </section>
 
+    <WorkspaceTabs v-model="workspace" :items="workspaces" label="党员发展工作区" :disabled="flowBusy || creating || busy !== null">
+    <div v-if="workspace === 'profiles'" class="wb-stack">
+    <form class="wb-actions" @submit.prevent="page = 1; load()">
+      <label class="wb-field"><span>名册年度</span><input v-model="rosterYear" class="input" type="number" min="2000" max="2100" placeholder="全部年度" /></label>
+      <label class="wb-field"><span>批次号</span><input v-model="rosterBatch" class="input" maxlength="20" placeholder="全部批次" /></label>
+      <button class="btn btn--ghost" type="submit" :disabled="loading || flowBusy">查询名册</button>
+      <button v-if="rosterYear || rosterBatch" class="btn btn--quiet" type="button" :disabled="loading || flowBusy" @click="rosterYear = ''; rosterBatch = ''; page = 1; load()">清除筛选</button>
+    </form>
     <p v-if="createSuccess" role="status">{{ createSuccess }}</p>
     <section v-if="createOpen && canCreate" class="u-card registration">
       <header class="u-panel-head"><h2 class="roster__title">人工登记培养对象</h2></header>
@@ -329,7 +353,7 @@ const todoTone: Record<TodoItem['category'], string> = {
               :class="{ 'is-active': selectedId === m.id }"
               type="button"
               :aria-pressed="selectedId === m.id"
-              :disabled="busy !== null || creating"
+              :disabled="busy !== null || creating || flowBusy"
               @click="select(m.id)"
             >
               <span class="roster__row">
@@ -389,6 +413,8 @@ const todoTone: Record<TodoItem['category'], string> = {
             </ol>
           </header>
 
+          <MemberFilePanel :key="selected.id" :profile-id="selected.id" @updated="load" @busy="flowBusy = $event" />
+          <details class="wb-disclosure"><summary>材料与时限辅助核对</summary>
           <!-- 校验输入 -->
           <div class="form-grid">
             <div class="field">
@@ -635,9 +661,13 @@ const todoTone: Record<TodoItem['category'], string> = {
               </template>
             </div>
           </div>
+          </details>
         </template>
       </section>
     </div>
+    </div>
+    <MemberProcessWorkspace v-else :mode="workspace" :organizations="organizations" @select-batch="selectBatch" @busy="flowBusy = $event" />
+    </WorkspaceTabs>
   </div>
 </template>
 
@@ -774,6 +804,11 @@ const todoTone: Record<TodoItem['category'], string> = {
 .work {
   min-width: 0;
   overflow: hidden;
+}
+
+.work > .wb,
+.work > .wb-disclosure {
+  padding: var(--space-5);
 }
 
 .work__empty {

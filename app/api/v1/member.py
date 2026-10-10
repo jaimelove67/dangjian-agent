@@ -106,6 +106,8 @@ async def member_roster(
     request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(40, ge=1, le=100),
+    year: int | None = Query(None, ge=2000, le=2100),
+    batch_no: str | None = Query(None, min_length=1, max_length=20),
     user: User = Depends(_require_member),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[MemberRosterResponse]:
@@ -114,6 +116,10 @@ async def member_roster(
         MemberProfile.is_deleted.is_(False),
         MemberProfile.is_active.is_(True),
     ]
+    if year is not None:
+        conditions.append(MemberProfile.year == year)
+    if batch_no is not None:
+        conditions.append(MemberProfile.batch_no == batch_no)
     if get_role_profile(user.role).business_scope != BS_ALL:
         organizations = await accessible_org_units(db, user)
         conditions.append(MemberProfile.org_unit_id.in_([org.id for org in organizations]))

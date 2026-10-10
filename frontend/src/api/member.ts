@@ -19,7 +19,7 @@ import type {
  *
  */
 
-export function listMembers(params: { page?: number; page_size?: number } = {}): Promise<MemberRosterResponse> {
+export function listMembers(params: { page?: number; page_size?: number; year?: number; batch_no?: string } = {}): Promise<MemberRosterResponse> {
   return http.get('/member/roster', { params })
 }
 

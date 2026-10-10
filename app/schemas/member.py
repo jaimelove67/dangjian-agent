@@ -89,6 +89,9 @@ class MemberRosterItem(BaseModel):
     materials: List[str] = Field(default_factory=list)
     pending: int = 0
 
+    year: Optional[int] = None
+    batch_no: Optional[str] = None
+
     @classmethod
     def from_profile(cls, profile: Any) -> "MemberRosterItem":
         return cls(
@@ -101,6 +104,8 @@ class MemberRosterItem(BaseModel):
             days_in_stage=max(0, (date.today() - profile.stage_joined_on).days),
             materials=list(profile.materials or []),
             pending=profile.pending or 0,
+            year=profile.year,
+            batch_no=profile.batch_no,
         )
 
 

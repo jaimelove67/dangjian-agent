@@ -60,3 +60,44 @@ export function createDocument(form: DocumentUploadForm): Promise<DocumentCreate
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }
+
+export interface DocumentProcessing {
+  doc_id: string
+  status: 'pending' | 'partial' | 'ready' | 'failed' | 'no_chunks'
+  total_chunks: number
+  embedded_chunks: number
+  pending_chunks: number
+  error: string | null
+  content_revision: number
+  retry_endpoint: string | null
+}
+
+export interface DocumentMetadataInput {
+  title: string
+  issuer: string
+  doc_number: string | null
+  level: DocumentResponse['level']
+  visibility: DocumentResponse['visibility']
+  security_level: DocumentResponse['security_level']
+  effective_date: string
+  expiration_date: string | null
+  tags: string
+  summary: string | null
+  reason: string
+}
+
+export function getProcessingStatus(docId: string): Promise<DocumentProcessing> {
+  return http.get(`/knowledge-docs/${encodeURIComponent(docId)}/processing-status`)
+}
+
+export function processDocument(docId: string): Promise<{ embedded_count: number }> {
+  return http.post('/embeddings/embed', { doc_id: docId, force_update: false })
+}
+
+export function updateDocumentMetadata(docId: string, input: DocumentMetadataInput): Promise<DocumentResponse> {
+  return http.patch(`/knowledge-docs/${encodeURIComponent(docId)}/metadata`, input)
+}
+
+export function getOriginalFile(docId: string, revision: number): Promise<Blob> {
+  return http.get(`/knowledge-docs/${encodeURIComponent(docId)}/file`, { params: { revision }, responseType: 'blob' })
+}

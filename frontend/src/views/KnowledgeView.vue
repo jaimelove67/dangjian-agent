@@ -16,6 +16,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import DocumentTools from '@/components/knowledge/DocumentTools.vue'
 
 /**
  * 知识库管理。
@@ -441,7 +442,7 @@ async function submitUpload(): Promise<void> {
       </button>
     </EmptyState>
 
-    <div v-else class="table-wrap u-card">
+    <div v-else class="table-wrap u-card" role="region" aria-label="文件列表，可左右滚动" tabindex="0">
       <table class="table">
         <thead>
           <tr>
@@ -525,6 +526,9 @@ async function submitUpload(): Promise<void> {
           <span>关闭</span>
         </button>
       </header>
+      <DocumentTools :key="selected.doc_id" :document="selected" @updated="selected = $event; load()" />
+      <details class="detail__info">
+      <summary>文件信息与来源</summary>
       <dl class="detail__list">
         <div class="detail__row">
           <dt>标题</dt>
@@ -566,16 +570,19 @@ async function submitUpload(): Promise<void> {
           <dd class="detail__summary">{{ selected.summary ?? '未填写' }}</dd>
         </div>
       </dl>
+      </details>
       <footer class="detail__foot">
-        <p class="u-meta">状态变更会直接影响该文件是否被问答环节检索到。</p>
-        <label class="field">
-          <span>更新文件内容（当前版本 {{ selected.content_revision ?? 1 }}）</span>
+        <details>
+        <summary>更新正文原件（当前版本 {{ selected.content_revision ?? 1 }}）</summary>
+        <label class="wb-field">
+          <span>上传已核对的新版原件</span>
           <input :key="selected.id + ':' + selected.content_revision" type="file" accept=".txt,.md,.pdf,.docx" @change="chooseReplacement" />
         </label>
         <button class="btn btn--ghost" type="button" :disabled="!replacement || replacementBusy" @click="replaceContent">
           {{ replacementBusy ? '保存中' : '保存新版本' }}
         </button>
         <p v-if="replacementMessage" role="status">{{ replacementMessage }}</p>
+        </details>
       </footer>
     </aside>
   </div>
@@ -783,14 +790,18 @@ async function submitUpload(): Promise<void> {
 
 /* ---------------------------- 表格 -------------------------------- */
 .table-wrap {
-  overflow: hidden;
+  overflow: auto;
   max-height: calc(100dvh - 320px);
+}
+.table-wrap .table {
+  min-width: 960px;
 }
 
 .cell-title {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  min-width: 180px;
 }
 
 .cell-title__id {
@@ -861,6 +872,17 @@ async function submitUpload(): Promise<void> {
   background: var(--paper-dim);
   border-top: var(--border);
 }
+
+.detail__info > summary,
+.detail__foot summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+}
+.detail__info > summary { padding: var(--space-4) var(--space-5); border-top: var(--border); }
+.detail__foot details[open] > summary { margin-bottom: var(--space-4); }
+.detail__foot .wb-field { margin-bottom: var(--space-3); }
 
 @media (max-width: 900px) {
   .kb {
