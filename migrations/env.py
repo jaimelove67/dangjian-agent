@@ -23,8 +23,17 @@ from app.models.assessment import (  # noqa: F401
 )
 from app.models.audit import AuditLog  # noqa: F401 - 注册迁移元数据
 from app.models.knowledge import EmbeddingChunk, KnowledgeDoc  # noqa: F401
-from app.models.meeting import ContentRevision, MeetingRecord  # noqa: F401
-from app.models.member import MemberProfile  # noqa: F401
+from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask  # noqa: F401
+from app.models.member import (  # noqa: F401
+    MemberArchiveCheck,
+    MemberBatch,
+    MemberCultivation,
+    MemberMaterial,
+    MemberProfile,
+    MemberReminder,
+    MemberStageHistory,
+    MemberVote,
+)
 from app.models.org import OrgUnit  # noqa: F401
 from app.models.qa_session import QASession  # noqa: F401
 from app.models.study import StudyPlan, StudyPlanItem  # noqa: F401
