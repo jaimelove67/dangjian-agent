@@ -3,8 +3,8 @@
 import asyncio
 import re
 import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
-from typing import AsyncGenerator, Awaitable, Callable
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -18,7 +18,9 @@ from app.api.v1 import (
     embeddings,
     health,
     knowledge,
+    meeting,
     member,
+    member_full,
     qa,
     study,
     user,
@@ -69,14 +71,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     init_models()
 
     from app.services.assessment_scheduler import assessment_reminder_loop
+    from app.services.member_scheduler import member_reminder_loop
 
     reminder_task = asyncio.create_task(assessment_reminder_loop())
+    member_task = asyncio.create_task(member_reminder_loop())
     try:
         yield
     finally:
-        reminder_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await reminder_task
+        for task in (reminder_task, member_task):
+            task.cancel()
+        for task in (reminder_task, member_task):
+            with suppress(asyncio.CancelledError):
+                await task
 
     # 关闭时执行
     logger.info("Application shutting down...")
@@ -137,6 +143,8 @@ app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库"])
 app.include_router(embeddings.router, prefix="/api/v1", tags=["向量化"])
 app.include_router(qa.router, prefix="/api/v1", tags=["知识问答"])
 app.include_router(member.router, prefix="/api/v1", tags=["党员发展"])
+app.include_router(member_full.router, prefix="/api/v1", tags=["党员发展全流程"])
+app.include_router(meeting.router, prefix="/api/v1", tags=["组织生活"])
 app.include_router(assessment.router, prefix="/api/v1", tags=["年度考核"])
 app.include_router(user.router, prefix="/api/v1", tags=["兼容用户接口"])
 app.include_router(admin.router, prefix="/api/v1", tags=["管理"])

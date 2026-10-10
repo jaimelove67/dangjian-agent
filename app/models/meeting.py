@@ -34,6 +34,30 @@ class MeetingRecord(Base):
     archive_policy_version = Column(Integer, nullable=True)
 
 
+class MeetingTask(Base):
+    """会议任务台账；原文未明确责任人或期限时留空，人工确认后进入台账。"""
+
+    __tablename__ = "meeting_tasks"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        Index("ix_meeting_tasks_scope_status", "tenant_id", "org_unit_id", "status"),
+        Index("ix_meeting_tasks_record", "tenant_id", "record_id"),
+    )
+
+    record_id = Column(String(36), nullable=False)
+    org_unit_id = Column(String(36), nullable=False)
+    task_text = Column(Text, nullable=False)
+    source_start = Column(Integer, nullable=False)
+    source_end = Column(Integer, nullable=False)
+    owner_name = Column(String(100), nullable=False, default="")
+    due_on = Column(Date, nullable=True)
+    status = Column(String(20), nullable=False, default="pending")  # pending/active/done/cancelled
+    confirmed_by = Column(String(36), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    handled_at = Column(DateTime, nullable=True)
+    handle_note = Column(Text, nullable=False, default="")
+
+
 class ContentRevision(Base):
     """业务修订与人工审核证据；服务只追加，不覆盖旧内容。"""
 

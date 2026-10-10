@@ -98,6 +98,9 @@ export type PermissionCode =
   | 'member.query'
   | 'member.stage_transition'
   | 'member.scoring'
+  | 'meeting.query'
+  | 'meeting.manage'
+  | 'meeting.review'
   | 'meeting.archive'
   | 'assessment.query'
   | 'assessment.manage'
@@ -118,6 +121,9 @@ export const PERM = {
   MEMBER_QUERY: 'member.query',
   STAGE_TRANSITION: 'member.stage_transition',
   SCORING: 'member.scoring',
+  MEETING_QUERY: 'meeting.query',
+  MEETING_MANAGE: 'meeting.manage',
+  MEETING_REVIEW: 'meeting.review',
   MEETING_ARCHIVE: 'meeting.archive',
   ASSESSMENT_QUERY: 'assessment.query',
   ASSESSMENT_MANAGE: 'assessment.manage',

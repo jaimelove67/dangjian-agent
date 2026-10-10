@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import bcrypt
 from jose import JWTError, jwt
@@ -54,7 +54,7 @@ def _to_bcrypt_bytes(password: str) -> bytes:
     return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
 
 
-def hash_password(password: str, rounds: Optional[int] = None) -> str:
+def hash_password(password: str, rounds: int | None = None) -> str:
     """生成密码哈希
 
     Args:
@@ -97,7 +97,7 @@ class TokenType(str, Enum):
 
 
 def _encode(subject: str, token_type: TokenType, expires: timedelta, **claims: Any) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload: dict[str, Any] = {
         "sub": str(subject),
         "type": token_type.value,
@@ -114,10 +114,10 @@ def _encode(subject: str, token_type: TokenType, expires: timedelta, **claims: A
 
 def create_access_token(
     subject: str,
-    tenant_id: Optional[str] = None,
-    role: Optional[UserRole] = None,
-    expires_minutes: Optional[int] = None,
-    extra_claims: Optional[dict[str, Any]] = None,
+    tenant_id: str | None = None,
+    role: UserRole | None = None,
+    expires_minutes: int | None = None,
+    extra_claims: dict[str, Any] | None = None,
 ) -> str:
     """签发访问令牌
 
@@ -140,9 +140,9 @@ def create_access_token(
 
 def create_refresh_token(
     subject: str,
-    tenant_id: Optional[str] = None,
-    role: Optional[UserRole] = None,
-    extra_claims: Optional[dict[str, Any]] = None,
+    tenant_id: str | None = None,
+    role: UserRole | None = None,
+    extra_claims: dict[str, Any] | None = None,
 ) -> str:
     """签发刷新令牌"""
     return _encode(
@@ -155,7 +155,7 @@ def create_refresh_token(
     )
 
 
-def decode_token(token: str, expected_type: Optional[TokenType] = None) -> dict[str, Any]:
+def decode_token(token: str, expected_type: TokenType | None = None) -> dict[str, Any]:
     """解码并校验令牌
 
     Args:
@@ -193,6 +193,9 @@ class Permission(str, Enum):
     MEMBER_QUERY = "member.query"  # 党员发展查询：支部书记及以上
     STAGE_TRANSITION = "member.stage_transition"  # 阶段流转：支部书记及以上
     SCORING = "member.scoring"  # 辅助评分：支部书记及以上
+    MEETING_QUERY = "meeting.query"  # 组织生活查询：支部书记及以上
+    MEETING_MANAGE = "meeting.manage"  # 组织生活登记与纪要维护：支部书记及以上
+    MEETING_REVIEW = "meeting.review"  # 组织生活纪要审核：支部书记及以上
     MEETING_ARCHIVE = "meeting.archive"  # 会议归档：支部书记及以上
     ASSESSMENT_QUERY = "assessment.query"
     ASSESSMENT_MANAGE = "assessment.manage"
@@ -243,6 +246,9 @@ _MANAGER_PERMISSIONS = frozenset(
         Permission.MEMBER_QUERY,
         Permission.STAGE_TRANSITION,
         Permission.SCORING,
+        Permission.MEETING_QUERY,
+        Permission.MEETING_MANAGE,
+        Permission.MEETING_REVIEW,
         Permission.MEETING_ARCHIVE,
         Permission.STUDY_QUERY,
         Permission.STUDY_MANAGE,
@@ -260,6 +266,9 @@ _BRANCH_PERMISSIONS = frozenset(
         Permission.MEMBER_QUERY,
         Permission.STAGE_TRANSITION,
         Permission.SCORING,
+        Permission.MEETING_QUERY,
+        Permission.MEETING_MANAGE,
+        Permission.MEETING_REVIEW,
         Permission.MEETING_ARCHIVE,
         Permission.ASSESSMENT_QUERY,
         Permission.ASSESSMENT_MANAGE,

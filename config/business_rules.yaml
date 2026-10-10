@@ -124,3 +124,24 @@ assessment_indicators:
       name: 会议记录完整率
       formula: 有记录会议数 / 总会议数 * 100
       target: 100
+
+# 组织生活（三会一课）年度规定频次与应办事项提示（模块3）
+# 仅作为工作台提示与考核参照，不由模型自行认定"完成"；
+# 完成认定以人工审核通过的会议记录为准。
+activity_requirements:
+  branch_member_meeting:      # 支部大会
+    annual_required: 4
+    reminders:
+      - 支部大会每季度至少召开 1 次（以支部记录为准）
+  branch_committee_meeting:   # 支委会
+    annual_required: 4
+    reminders:
+      - 支委会每季度至少召开 1 次
+  party_group_meeting:        # 党小组会
+    annual_required: 6
+    reminders:
+      - 党小组会每半年至少召开 1 次，年度要求以支部安排为准
+  party_lecture:              # 党课
+    annual_required: 2
+    reminders:
+      - 党课每年至少 1-2 次，其中支部书记至少讲 1 次

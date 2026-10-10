@@ -69,6 +69,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '中心组学习', group: '业务', perm: PERM.STUDY_QUERY },
       },
       {
+        path: 'meeting',
+        name: 'meeting',
+        component: () => import('@/views/MeetingView.vue'),
+        meta: { title: '组织生活', group: '业务', perm: PERM.MEETING_QUERY },
+      },
+      {
         path: 'system',
         name: 'system',
         component: () => import('@/views/SystemView.vue'),
