@@ -80,8 +80,9 @@ class Settings(BaseSettings):
     DASHSCOPE_API_KEY: Optional[str] = Field(default=None, description="阿里云 DashScope API Key")
 
     # LLM 模型配置
+    # 默认用 DashScope 实测可用的 deepseek-v3（deepseek-v4.1-flash 在 DashScope 不存在）
     LLM_MODEL_NAME: str = Field(
-        default="deepseek-v4.1-flash",
+        default="deepseek-v3",
         description="LLM 模型名称"
     )
     LLM_MAX_TOKENS: int = Field(default=4096, description="LLM 最大token数")
