@@ -13,7 +13,9 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import write_audit_safe
 from app.core.config import settings
+from app.core.constants import AuditAction, AuditResult
 from app.core.security import Permission
 from app.db.session import get_db
 from app.deps import get_current_tenant, require_permissions
@@ -152,6 +154,22 @@ async def create_knowledge_document(
             },
         ) from exc
 
+    await write_audit_safe(
+        db,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        user_name=user.username,
+        action=AuditAction.CREATE,
+        resource_type="knowledge_doc",
+        resource_id=doc_id,
+        request_id=getattr(request.state, "trace_id", "-"),
+        result=AuditResult.SUCCESS,
+        new_value={
+            "title": title,
+            "status": doc_status,
+            "chunk_count": chunk_count,
+        },
+    )
     await db.commit()
     return APIResponse(
         data=DocumentCreateResponse(

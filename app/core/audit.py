@@ -136,6 +136,18 @@ async def write_audit(
     return log
 
 
+async def write_audit_safe(session: AsyncSession, **kwargs: Any) -> None:
+    """写入审计日志（安全版）：失败仅告警，不影响主业务流程
+
+    注意：与业务共用请求会话，随请求事务提交；失败用例（HTTPException 导致
+    回滚）不应在此写入。仅用于成功的关键操作留痕。
+    """
+    try:
+        await write_audit(session, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - 审计不可影响主流程
+        logger.warning("audit_write_failed: %s", exc)
+
+
 def query_audit_logs(
     *,
     tenant_id: Optional[str] = None,

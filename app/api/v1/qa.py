@@ -57,6 +57,7 @@ class QuestionResponse(BaseModel):
     retrieved_count: int = Field(..., description="检索到的片段数量")
     used_count: int = Field(..., description="用于生成答案的片段数量")
     has_sufficient_evidence: bool = Field(..., description="是否有足够的依据")
+    warnings: list[str] = Field(default_factory=list, description="引用核验风险提示")
 
 
 def _trace_id(request: Request) -> Optional[str]:
@@ -137,6 +138,7 @@ async def ask_question(
             retrieved_count=rag_response.retrieved_count,
             used_count=rag_response.used_count,
             has_sufficient_evidence=rag_response.has_sufficient_evidence,
+            warnings=rag_response.warnings,
         ),
         trace_id=_trace_id(request),
     )

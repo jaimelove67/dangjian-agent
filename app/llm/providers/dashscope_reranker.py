@@ -1,11 +1,17 @@
 """阿里云 DashScope 重排模型提供者
 
-使用阿里云 DashScope 的文本重排服务。
-支持 Qwen 系列重排模型。
+使用 DashScope 文本重排 HTTP 接口（``qwen3.7-text-rerank`` 系列）。
+说明：dashscope SDK 1.14.1 不含 TextRerank，故直连 HTTP 端点；
+返回结构与 ``app/rag/retrieval/hybrid.py::_rerank`` 消费方对齐
+（``results[n].index`` / ``results[n].relevance_score``）。
 """
+from __future__ import annotations
 
-from typing import List, Tuple
-import dashscope
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
+
+import httpx
+import structlog
 
 from app.llm.base import (
     BaseModelProvider,
@@ -15,9 +21,26 @@ from app.llm.base import (
     DeploymentType,
     ModelType,
 )
-import structlog
 
 logger = structlog.get_logger(__name__)
+
+# DashScope 文本重排服务端点
+RERANK_URL = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+
+
+@dataclass
+class RerankResult:
+    """单条重排结果"""
+    index: int
+    relevance_score: float
+    text: str = ""
+
+
+@dataclass
+class RerankResponse:
+    """重排响应（与 hybrid._rerank 消费的 response.results 形状一致）"""
+    results: List[RerankResult] = field(default_factory=list)
+    usage: Optional[dict] = None
 
 
 class DashScopeRerankerProvider(BaseModelProvider):
@@ -30,17 +53,12 @@ class DashScopeRerankerProvider(BaseModelProvider):
             config: 模型配置
         """
         super().__init__(config)
-
-        # 设置 API Key
-        if config.api_key:
-            dashscope.api_key = config.api_key
-        else:
+        if not config.api_key:
             raise ValueError("DashScope API Key is required")
-
         logger.info(
             "dashscope_reranker_provider_initialized",
             model_id=config.model_id,
-            model_name=config.model_name
+            model_name=config.model_name,
         )
 
     async def generate(
@@ -48,17 +66,7 @@ class DashScopeRerankerProvider(BaseModelProvider):
         prompt: str,
         **kwargs
     ) -> ModelResponse:
-        """生成文本
-
-        重排模型不支持文本生成。
-
-        Args:
-            prompt: 输入提示词
-            **kwargs: 额外参数
-
-        Raises:
-            NotImplementedError: 不支持文本生成
-        """
+        """重排模型不支持文本生成"""
         raise NotImplementedError(
             "Reranker model does not support text generation"
         )
@@ -68,17 +76,7 @@ class DashScopeRerankerProvider(BaseModelProvider):
         texts: List[str],
         **kwargs
     ) -> EmbeddingResponse:
-        """文本向量化
-
-        重排模型不支持向量化。
-
-        Args:
-            texts: 文本列表
-            **kwargs: 额外参数
-
-        Raises:
-            NotImplementedError: 不支持向量化
-        """
+        """重排模型不支持向量化"""
         raise NotImplementedError(
             "Reranker model does not support embedding"
         )
@@ -87,99 +85,94 @@ class DashScopeRerankerProvider(BaseModelProvider):
         self,
         query: str,
         documents: List[str],
-        top_n: int = None,
+        top_n: Optional[int] = None,
         **kwargs
-    ) -> List[Tuple[int, float]]:
+    ) -> RerankResponse:
         """文本重排
 
         Args:
             query: 查询文本
             documents: 候选文档列表
-            top_n: 返回前N个结果
-            **kwargs: 额外参数
+            top_n: 返回前 N 条（缺省为全部）
 
         Returns:
-            [(文档索引, 分数), ...] 按分数降序排列
+            RerankResponse（results 含 index / relevance_score）
         """
+        if not documents:
+            return RerankResponse()
+
+        # 调用方（ModelService.rerank）传的是 top_k，此处兼容 top_n / top_k
+        limit = top_n or kwargs.get("top_k") or len(documents)
+
+        payload = {
+            "model": self.config.model_name,
+            "input": {"query": query, "documents": documents},
+            "parameters": {
+                "top_n": limit,
+                "return_documents": True,
+            },
+        }
+
         try:
-            # 调用 DashScope 重排 API
-            # 注意：需要根据实际API调整
-            from dashscope import TextRerank
-
-            response = TextRerank.call(
-                model=self.config.model_name,
-                query=query,
-                documents=documents,
-                top_n=top_n,
-                **kwargs
-            )
-
-            if response.status_code == 200:
-                output = response.output
-                results = output.get('results', [])
-
-                # 提取索引和分数
-                reranked = [
-                    (item['index'], item['relevance_score'])
-                    for item in results
-                ]
-
-                logger.info(
-                    "dashscope_rerank_success",
-                    model_id=self.config.model_id,
-                    query_length=len(query),
-                    num_documents=len(documents),
-                    num_results=len(reranked)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    RERANK_URL,
+                    headers={"Authorization": f"Bearer {self.config.api_key}"},
+                    json=payload,
                 )
-
-                return reranked
-            else:
-                error_msg = f"DashScope Rerank API error: {response.code} - {response.message}"
-                logger.error(
-                    "dashscope_rerank_error",
-                    model_id=self.config.model_id,
-                    error=error_msg
-                )
-                raise RuntimeError(error_msg)
-
-        except Exception as e:
+        except httpx.HTTPError as exc:
             logger.error(
-                "dashscope_rerank_exception",
+                "dashscope_rerank_http_error",
                 model_id=self.config.model_id,
-                num_documents=len(documents),
-                error=str(e)
+                error=str(exc),
             )
-            raise
+            raise RuntimeError(f"DashScope Rerank 请求失败: {exc}") from exc
+
+        if resp.status_code != 200:
+            logger.error(
+                "dashscope_rerank_error",
+                model_id=self.config.model_id,
+                status=resp.status_code,
+                body=resp.text[:200],
+            )
+            raise RuntimeError(
+                f"DashScope Rerank API error: {resp.status_code} - {resp.text[:200]}"
+            )
+
+        data = resp.json()
+        output = data.get("output") or {}
+        results = [
+            RerankResult(
+                index=int(item.get("index", 0)),
+                relevance_score=float(item.get("relevance_score", 0.0)),
+                text=(item.get("document") or {}).get("text", ""),
+            )
+            for item in (output.get("results") or [])
+        ]
+
+        logger.info(
+            "dashscope_rerank_success",
+            model_id=self.config.model_id,
+            query_length=len(query),
+            num_documents=len(documents),
+            num_results=len(results),
+        )
+        return RerankResponse(results=results, usage=data.get("usage"))
 
     async def health_check(self) -> bool:
-        """健康检查
-
-        Returns:
-            是否健康
-        """
+        """健康检查"""
         try:
-            # 发送一个简单的请求测试连接
-            result = await self.rerank(
+            response = await self.rerank(
                 query="健康检查",
                 documents=["测试文档"],
-                top_n=1
+                top_n=1,
             )
-
-            is_healthy = len(result) > 0
-
-            logger.info(
-                "dashscope_reranker_health_check",
-                model_id=self.config.model_id,
-                healthy=is_healthy
-            )
-
-            return is_healthy
-
-        except Exception as e:
+            return len(response.results) > 0
+        except Exception as exc:
             logger.error(
                 "dashscope_reranker_health_check_failed",
                 model_id=self.config.model_id,
-                error=str(e)
+                error=str(exc),
             )
             return False
 
@@ -187,13 +180,13 @@ class DashScopeRerankerProvider(BaseModelProvider):
 def create_dashscope_reranker_provider(
     model_id: str = "qwen-reranker",
     model_name: str = "qwen3.7-text-rerank",
-    api_key: str = None,
+    api_key: Optional[str] = None,
 ) -> DashScopeRerankerProvider:
     """创建阿里云DashScope重排提供者
 
     Args:
         model_id: 模型ID
-        model_name: 模型名称（如qwen3.7-text-rerank）
+        model_name: 模型名称（如 qwen3.7-text-rerank）
         api_key: DashScope API Key
 
     Returns:

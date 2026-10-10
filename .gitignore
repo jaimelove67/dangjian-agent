@@ -164,3 +164,6 @@ htmlcov/
 
 # Browser automation artifacts (Playwright MCP snapshots)
 .playwright-mcp/
+
+# Agent tooling state
+.sisyphus/

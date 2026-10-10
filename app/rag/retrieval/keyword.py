@@ -86,6 +86,9 @@ class KeywordRetriever(Retriever):
                 KnowledgeDoc.doc_number,
                 KnowledgeDoc.level,
                 KnowledgeDoc.security_level,
+                KnowledgeDoc.status.label("doc_status"),
+                KnowledgeDoc.effective_date,
+                KnowledgeDoc.expiration_date,
             )
             .join(KnowledgeDoc, EmbeddingChunk.doc_id == KnowledgeDoc.id)
             .where(KnowledgeDoc.status == doc_status)
@@ -141,6 +144,9 @@ class KeywordRetriever(Retriever):
                     doc_id=row.doc_id,
                     article=row.article,
                     sequence=row.sequence,
+                    doc_status=row.doc_status,
+                    effective_date=row.effective_date,
+                    expiration_date=row.expiration_date,
                     metadata={
                         "title": row.title,
                         "issuer": row.issuer,

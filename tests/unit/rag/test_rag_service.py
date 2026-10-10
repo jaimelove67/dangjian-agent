@@ -79,9 +79,9 @@ class TestRAGService:
         ]
         mock_retriever.retrieve.return_value = retrieval_results
 
-        # 模拟 LLM 响应
+        # 模拟 LLM 响应（按提示词约定带 [1] 角标，供引用核验保留）
         mock_llm_response = MagicMock()
-        mock_llm_response.content = "这是生成的答案"
+        mock_llm_response.content = "这是生成的答案 [1]"
         mock_model_service.generate.return_value = mock_llm_response
 
         with patch("app.rag.rag_service.get_model_service", return_value=mock_model_service):
@@ -90,7 +90,7 @@ class TestRAGService:
 
             response = await service.ask("测试问题")
 
-        assert response.answer == "这是生成的答案"
+        assert response.answer == "这是生成的答案 [1]"
         assert response.retrieved_count == 1
         assert response.used_count == 1
         assert len(response.citations) == 1

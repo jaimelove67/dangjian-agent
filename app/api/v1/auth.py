@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import write_audit_safe
 from app.core.config import settings
+from app.core.constants import AuditAction, AuditResult
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -61,6 +63,16 @@ async def login(
     )
     refresh_token = create_refresh_token(
         subject=str(user.id), tenant_id=user.tenant_id, role=user.role
+    )
+    await write_audit_safe(
+        db,
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        user_name=user.username,
+        action=AuditAction.LOGIN,
+        resource_type="auth",
+        request_id=getattr(request.state, "trace_id", "-"),
+        result=AuditResult.SUCCESS,
     )
     return APIResponse(
         data=TokenResponse(
@@ -158,9 +170,20 @@ async def refresh_token(
 async def logout(
     request: Request,
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
     """退出登录"""
     # TODO: 将token加入黑名单（需要Redis支持）
+    await write_audit_safe(
+        db,
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        user_name=user.username,
+        action=AuditAction.LOGOUT,
+        resource_type="auth",
+        request_id=getattr(request.state, "trace_id", "-"),
+        result=AuditResult.SUCCESS,
+    )
     return APIResponse(
         data={"message": "退出成功"},
         trace_id=_trace_id(request),

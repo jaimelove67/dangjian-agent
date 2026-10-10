@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from app.llm.base import DataLevel, TaskType
 from app.llm.service import get_model_service
 from app.rag.retrieval.base import RetrievalResult
 from app.rag.retrieval.hybrid import HybridRetriever
+from app.rag.verifier import CitationVerifier, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,9 @@ class RAGResponse:
     # 元数据
     metadata: dict[str, Any]
 
+    # 引用核验风险提示
+    warnings: list[str] = field(default_factory=list)
+
 
 class RAGService:
     """RAG 问答服务"""
@@ -97,6 +101,7 @@ class RAGService:
             db, data_level=data_level, use_reranker=use_reranker
         )
         self._model_service = get_model_service()
+        self.verifier = CitationVerifier()
 
     async def ask(
         self,
@@ -180,13 +185,46 @@ class RAGService:
                 metadata={"error": str(exc)},
             )
 
-        # 6. 构建引用列表
-        citations = self._build_citations(context_results)
+        # 6. 引用核验：清洗无效引用，逐条核验条款真伪与文件时效，产出风险提示
+        chunks = [
+            RetrievedChunk(
+                index=i + 1,
+                doc_id=r.doc_id,
+                doc_name=r.metadata.get("title", "未知文档"),
+                content=r.content,
+                article=r.article,
+                doc_number=r.metadata.get("doc_number"),
+                issuer=r.metadata.get("issuer"),
+                effective_date=r.effective_date,
+                expiration_date=r.expiration_date,
+                status=r.doc_status or "effective",
+                score=r.score,
+            )
+            for i, r in enumerate(context_results)
+        ]
+        verification = self.verifier.verify(answer, chunks)
 
-        # 7. 判断是否有足够依据
+        # 用核验后的答案与引用（无效编号已清洗）
+        answer = verification.answer
+        citations = [
+            Citation(
+                title=c.doc_name,
+                issuer=c.issuer or "",
+                doc_number=c.doc_number,
+                article=c.article,
+                content=(c.content[:200] + "..." if len(c.content) > 200 else c.content),
+                score=chunks[c.index - 1].score,
+            )
+            for c in verification.citations
+        ]
+        warnings = verification.warnings
+
+        # 7. 判断是否有足够依据（引用编号无效时不下"依据充分"结论）
         has_sufficient_evidence = self._check_evidence_sufficiency(
             answer, context_results
         )
+        if not verification.valid:
+            has_sufficient_evidence = False
 
         logger.info(
             "rag_answer_generated",
@@ -195,6 +233,7 @@ class RAGService:
                 "retrieved_count": len(retrieved_results),
                 "used_count": len(context_results),
                 "citations_count": len(citations),
+                "warnings_count": len(warnings),
                 "has_sufficient_evidence": has_sufficient_evidence,
             },
         )
@@ -205,6 +244,7 @@ class RAGService:
             retrieved_count=len(retrieved_results),
             used_count=len(context_results),
             has_sufficient_evidence=has_sufficient_evidence,
+            warnings=warnings,
             metadata={
                 "retrieval_method": context_results[0].metadata.get("retrieval_method")
                 if context_results

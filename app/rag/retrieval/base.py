@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Optional
 
 
@@ -27,6 +28,13 @@ class RetrievalResult:
 
     # 片段序号
     sequence: Optional[int] = None
+
+    # 所属文档状态（引用核验/时效提示用）
+    doc_status: Optional[str] = None
+
+    # 所属文档生效/失效日期（引用核验/时效提示用）
+    effective_date: Optional[date] = None
+    expiration_date: Optional[date] = None
 
     # 文档元数据
     metadata: dict[str, Any] = field(default_factory=dict)
