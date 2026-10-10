@@ -87,7 +87,7 @@ class KeywordRetriever(Retriever):
                 KnowledgeDoc.level,
                 KnowledgeDoc.security_level,
             )
-            .join(KnowledgeDoc, EmbeddingChunk.doc_id == KnowledgeDoc.doc_id)
+            .join(KnowledgeDoc, EmbeddingChunk.doc_id == KnowledgeDoc.id)
             .where(KnowledgeDoc.status == doc_status)
         )
 
@@ -99,35 +99,31 @@ class KeywordRetriever(Retriever):
         if security_level:
             stmt = stmt.where(KnowledgeDoc.security_level == security_level)
 
-        # 计算相关度分数
-        score_parts = []
+        # 计算相关度分数（全部使用 SQL 表达式，保证别名可被 row.score 访问）
+        score_exprs = []
 
         if self.use_fts:
             # 全文检索排名（使用中文配置）
             ts_query = func.plainto_tsquery("chinese_zh", query)
             ts_vector = func.to_tsvector("chinese_zh", EmbeddingChunk.content)
-            fts_rank = func.ts_rank(ts_vector, ts_query)
-            score_parts.append(f"{self.fts_weight} * ts_rank(to_tsvector('chinese_zh', content), plainto_tsquery('chinese_zh', :query))")
+            score_exprs.append(self.fts_weight * func.ts_rank(ts_vector, ts_query))
             stmt = stmt.where(ts_vector.op("@@")(ts_query))
 
         if self.use_trigram:
             # pg_trgm 相似度（0-1，越大越相似）
             trigram_sim = func.similarity(EmbeddingChunk.content, query)
-            score_parts.append(f"{self.trigram_weight} * similarity(content, :query)")
+            score_exprs.append(self.trigram_weight * trigram_sim)
             # 设置相似度阈值（避免无关结果）
             stmt = stmt.where(trigram_sim > 0.1)
 
-        # 组合分数
-        if len(score_parts) == 1:
-            score_expr = text(f"({score_parts[0]}) AS score")
-        else:
-            score_expr = text(f"({' + '.join(score_parts)}) AS score")
+        # 组合分数：加权求和
+        score_expr = sum(score_exprs).label("score")
 
         stmt = stmt.add_columns(score_expr)
         stmt = stmt.order_by(text("score DESC")).limit(top_k)
 
         # 执行查询
-        result = await self.db.execute(stmt, {"query": query})
+        result = await self.db.execute(stmt)
         rows = result.fetchall()
 
         # 转换为检索结果

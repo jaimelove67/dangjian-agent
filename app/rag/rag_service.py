@@ -254,7 +254,7 @@ class RAGService:
 【重要原则】
 1. 只根据下面提供的参考资料回答问题，不要编造或推测
 2. 如果参考资料中没有相关信息，请明确说明"根据现有资料无法回答"
-3. 回答时要引用具体的文档和条款
+3. 凡引用参考资料之处，必须在相应句末用方括号数字角标标注来源，例如 [1]、[2]；角标编号必须对应【文档N】中的 N，且每个结论性表述都要有角标，不得省略
 4. 保持回答准确、简洁、专业
 
 【参考资料】
@@ -297,10 +297,11 @@ class RAGService:
     ) -> bool:
         """判断是否有足够的依据
 
-        简单启发式规则：
-        1. 有检索结果
-        2. 答案不是拒答（不包含"无法回答"、"没有找到"等）
-        3. 至少一个片段的相关度 >= 0.5
+        依据充分性采用"重排分优先、降级按引用判定"的分流策略：
+        - 重排生效（结果带 ``rerank_score``，0-1 相关度）→ 沿用 0.5 强相关阈值；
+        - 重排失败降级（RRF/融合分，数量级 ~0.01，是排名权重而非相关度）
+          → 不适用绝对阈值，改为"有检索结果 + 回答非拒答"即视为有依据，
+          与界面「命中片段 / 实际引用」明细保持一致，避免把有效回答误报为无依据。
 
         Args:
             answer: 生成的答案
@@ -317,7 +318,14 @@ class RAGService:
         if any(keyword in answer for keyword in refuse_keywords):
             return False
 
-        # 检查是否有高相关度片段
-        has_high_relevance = any(r.score >= 0.5 for r in context_results)
+        # 重排分存在时（0-1 相关度），沿用 0.5 强相关阈值
+        rerank_scores = [
+            r.metadata["rerank_score"]
+            for r in context_results
+            if isinstance(r.metadata.get("rerank_score"), (int, float))
+        ]
+        if rerank_scores:
+            return any(s >= 0.5 for s in rerank_scores)
 
-        return has_high_relevance
+        # 降级路径（重排不可用，RRF/融合分）：有检索结果且回答未拒答，即认定引用成立
+        return True

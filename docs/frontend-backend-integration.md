@@ -1,220 +1,168 @@
 # 前后端联调指南
 
-## 📋 联调配置说明
+> 更新日期：2026-10-09 ｜ 适用前端：`frontend/`（独立 **Vite + Vue 3 + TypeScript** 单页应用）
+> ⚠️ 本文档已重写：早期版本描述的是 Vben Admin（`frontend/apps/web-antd` + pnpm），该结构**已不存在**。
 
-本文档记录前后端联调的配置步骤和接口对接情况。
+---
 
-## 🔧 配置完成情况
+## 1. 前端形态
 
-### 后端配置
+| 项 | 说明 |
+| --- | --- |
+| 位置 | `frontend/`（独立工程，不依赖任何脚手架基座）|
+| 技术栈 | Vite 8 + Vue 3.5 + TypeScript 6 + vue-router 4 + axios |
+| 包管理 | **npm**（存在 `package-lock.json`；无需 pnpm）|
+| 开发端口 | `5666` |
+| 页面 | 登录 / 问答 / 知识库 / 党员发展 / 系统状态 / 404 |
+| 接口层 | `src/api/`：`http.ts`（封装）、按模块拆分、`surface.ts`（能力矩阵）、`mock.ts`（示例数据）|
 
-✅ **已完成：**
-1. 创建 `.env` 文件（基于 `.env.example`）
-2. 配置 CORS 允许跨域（`ALLOWED_HOSTS=*`）
-3. 添加缺失的 API 接口：
-   - `POST /api/v1/auth/refresh` - 刷新令牌
-   - `POST /api/v1/auth/logout` - 退出登录
-   - `GET /api/v1/auth/codes` - 获取权限码
-   - `GET /api/v1/user/info` - 获取用户信息
+## 2. 启动
 
-### 前端配置
-
-✅ **已完成：**
-1. 修改 `frontend/apps/web-antd/vite.config.ts`：
-   - 将 `/api` 代理到后端 `http://localhost:8000`
-   - 路径重写：`/api` → `/api/v1`
-2. 修改 `frontend/apps/web-antd/.env.development`：
-   - 关闭 Mock 服务：`VITE_NITRO_MOCK=false`
-
-## 🌐 API 接口对接清单
-
-### 认证接口（Auth）
-
-| 前端调用 | 后端接口 | 方法 | 状态 |
-|---------|---------|------|------|
-| `/auth/login` | `/api/v1/auth/login` | POST | ✅ 已对接 |
-| `/auth/refresh` | `/api/v1/auth/refresh` | POST | ✅ 已对接 |
-| `/auth/logout` | `/api/v1/auth/logout` | POST | ✅ 已对接 |
-| `/auth/codes` | `/api/v1/auth/codes` | GET | ✅ 已对接 |
-
-### 用户接口（User）
-
-| 前端调用 | 后端接口 | 方法 | 状态 |
-|---------|---------|------|------|
-| `/user/info` | `/api/v1/user/info` | GET | ✅ 已对接 |
-
-### 健康检查（Health）
-
-| 前端调用 | 后端接口 | 方法 | 状态 |
-|---------|---------|------|------|
-| - | `/api/v1/health` | GET | ✅ 可用 |
-| - | `/api/v1/health/ready` | GET | ✅ 可用 |
-| - | `/api/v1/health/live` | GET | ✅ 可用 |
-
-## 📊 数据格式说明
-
-### 后端响应格式
-
-所有接口统一返回以下格式：
-
-```json
-{
-  "code": 0,           // 0 表示成功
-  "message": "success",
-  "data": {...},       // 实际数据
-  "trace_id": "..."    // 请求追踪ID
-}
-```
-
-### 前端处理
-
-前端的 `request.ts` 已配置响应拦截器：
-- `codeField: 'code'`
-- `dataField: 'data'`
-- `successCode: 0`
-
-拦截器会自动提取 `data` 字段，因此前端 API 函数直接返回数据对象。
-
-## 🚀 启动步骤
-
-### 1. 启动后端服务
+### 2.1 启动后端
 
 ```bash
-# 确保数据库和Redis已启动（如果需要）
-# 或者使用 docker-compose 启动依赖服务
-docker-compose -f docker-compose.dev.yml up -d postgres redis
-
-# 运行数据库迁移
+# 依赖（Postgres 已在运行；启动 Redis）
+docker start party-agent-redis-dev
+# 数据库迁移（首次）
 alembic upgrade head
-
-# 启动后端服务
+# 启动后端（默认 8000；本机 8000 被占用时用其它端口，见 2.3）
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-后端将运行在：`http://localhost:8000`
-API 文档：`http://localhost:8000/docs`
+后端默认地址 `http://localhost:8000`，API 文档 `http://localhost:8000/docs`。
 
-### 2. 启动前端服务
+### 2.2 启动前端
 
 ```bash
 cd frontend
-pnpm install  # 如果还未安装依赖
-cd apps/web-antd
-pnpm dev
+npm install
+npm run dev        # http://localhost:5666
 ```
 
-前端将运行在：`http://localhost:5666`
+其它脚本：`npm run build`（`vue-tsc` 类型检查 + 生产构建）、`npm run typecheck`、`npm run preview`。
 
-## 🧪 测试连通性
+### 2.3 后端不在 8000 时（本机常见）
 
-### 测试后端健康检查
+`vite.config.ts` 的开发代理把 `/api` 指向后端，**默认 `http://localhost:8000`**，可用环境变量 `VITE_API_TARGET` 覆盖：
 
-```bash
+```powershell
+# 例：后端起在 18000（本机 8000 被其它项目 si-nginx 占用）
+$env:VITE_API_TARGET='http://localhost:18000'
+npm run dev
+```
+
+代理规则：`/api/*` → `${VITE_API_TARGET}/api/v1/*`（即把 `/api` 前缀重写为 `/api/v1`）。前端代码统一以 `/api` 为基准书写路径（见 `src/api/http.ts` 的 `baseURL: '/api'`）。
+
+## 3. 接口契约
+
+### 3.1 统一响应包裹体
+
+所有接口返回：
+
+```json
+{ "code": 0, "message": "success", "data": { }, "trace_id": "..." }
+```
+
+- `src/api/http.ts` 响应拦截器：`code === 0` 时**只把 `data` 交给调用方**；否则抛 `ApiError`（携带 `code` 与 `trace_id`）。
+- 认证：登录后 token 存 `localStorage`（键 `party.access_token` / `party.refresh_token`），请求自动带 `Authorization: Bearer <token>`。
+- `401` / 权限失效会清除本地凭证，由路由守卫跳登录页；租户隔离错误码（`40302`）界面单独解释。
+
+### 3.2 接口对接清单（以 `frontend/src/api/surface.ts` 为准）
+
+**已提供 ✅**
+
+| 前端调用 | 后端接口 | 方法 |
+| --- | --- | --- |
+| 登录 | `/api/v1/auth/login` | POST |
+| 当前用户 | `/api/v1/auth/me` | GET |
+| 刷新令牌 | `/api/v1/auth/refresh` | POST |
+| 退出登录 | `/api/v1/auth/logout` | POST |
+| 权限码 | `/api/v1/auth/codes` | GET |
+| 制度问答 | `/api/v1/qa` | POST |
+| 健康检查 | `/api/v1/health` | GET |
+| 就绪检查 | `/api/v1/health/ready` | GET |
+| 上传文件 | `/api/v1/knowledge-docs` | POST |
+| 文件详情 | `/api/v1/knowledge-docs/{doc_id}` | GET |
+| 变更文件状态 | `/api/v1/knowledge-docs/{doc_id}/status` | PATCH |
+| 资格校验 | `/api/v1/member/qualification-check` | POST |
+| 流转建议 | `/api/v1/member/transition-suggestion` | POST |
+| 待办建议 | `/api/v1/member/todo-suggestions` | POST |
+| 文字向量化 | `/api/v1/embeddings/embed` | POST |
+| 批量向量化 | `/api/v1/embeddings/embed-all-pending` | POST |
+
+**尚未提供（前端用 `mock.ts` 示例数据并打「示例数据」徽标）⛔**
+
+| 能力 | 期望接口 | 影响页面 |
+| --- | --- | --- |
+| 文件列表 | `GET /api/v1/knowledge-docs` | 知识库 |
+| 删除文件 | `DELETE /api/v1/knowledge-docs/{doc_id}` | 知识库 |
+| 问答历史 | `GET /api/v1/qa/sessions` | 问答 |
+| 培养对象名册 | `GET /api/v1/member/roster` | 党员发展 |
+| 阶段流转提交 | `POST /api/v1/member/transition` | 党员发展 |
+
+> 维护约定：后端补齐接口后，把 `surface.ts` 里对应 `available` 改为 `true`，**并同步移除**界面上的示例数据来源与徽标——**不允许只改一边**。「系统状态」页直接读取该矩阵展示。
+
+## 4. 连通性自测
+
+```powershell
+# 后端直连
 curl http://localhost:8000/api/v1/health
+# 经前端代理（等价于后端 /api/v1/health；注意本机后端可能是 18000，代理目标相应调整）
+curl http://localhost:5666/api/health
 ```
 
 预期返回：
+
 ```json
-{
-  "status": "healthy",
-  "service": "党建工作智能体",
-  "version": "1.0.0",
-  "environment": "development"
-}
+{ "status": "healthy", "service": "党建工作智能体", "version": "1.0.0", "environment": "development" }
 ```
 
-### 测试前端代理
+浏览器中观察：前端请求 `/api/auth/login` → 被代理为 `http://<后端>/api/v1/auth/login`。
 
-前端启动后，在浏览器开发者工具中观察网络请求：
-- 前端请求 `/api/auth/login`
-- 应该被代理到 `http://localhost:8000/api/v1/auth/login`
+## 5. 测试账号
 
-## 🔐 测试账号
+系统**没有内置默认账号**（`init_db.sql` 只建扩展、不种用户）。开发/联调账号由脚本创建：
 
-根据数据库迁移脚本，可能已经创建了测试账号。如果需要创建测试用户，可以：
-
-1. 使用 API 文档手动创建：访问 `http://localhost:8000/docs`
-2. 或者运行数据库脚本插入测试用户
-
-测试登录数据格式：
-```json
-{
-  "username": "test_user",
-  "password": "test_password"
-}
+```bash
+# 在仓库根目录本机执行，或在已有依赖的容器内执行：
+python scripts/create_test_user.py                       # 默认 admin / admin123
+python scripts/create_test_user.py --username u1 --password p1 --role member
 ```
 
-## ⚠️ 注意事项
+默认创建（幂等，用户名已存在则跳过）：**`admin` / `admin123`**，角色 `system_admin`，租户 `tenant-demo`。
 
-### 环境依赖
+登录请求体：
 
-后端需要以下服务（可选，取决于功能模块）：
-- PostgreSQL（用户认证、数据存储）
-- Redis（缓存、会话管理）
-- 如果只测试基本接口，可以暂时不启动这些服务，但部分功能会报错
+```json
+{ "username": "admin", "password": "admin123" }
+```
 
-### 开发模式
+> ⚠️ 默认口令仅用于开发/联调，生产环境务必更换并收紧 `ALLOWED_HOSTS`。
 
-- 后端 `DEBUG=true`，启用 API 文档和详细错误信息
-- 前端使用开发模式，启用热重载
-- CORS 允许所有来源（`ALLOWED_HOSTS=*`）
+## 6. 常见问题
 
-### 生产环境注意
+| 现象 | 排查 |
+| --- | --- |
+| 前端 404 / 连不上后端 | 后端未启动、端口不符；确认 `VITE_API_TARGET` 指向正确后端 |
+| CORS 报错 | 确认后端 `ALLOWED_HOSTS`（开发用 `*`）与 `main.py` CORS 中间件 |
+| 登录后仍未授权 | 检查 `localStorage` 中 token、请求头 `Authorization`、后端校验 |
+| 上传文件报 `python-multipart` | 后端依赖缺失（见主仓库已知问题），需安装该包 |
+| 页面显示「示例数据」 | 正常：对应后端列表接口尚未提供（见 §3.2）|
 
-在生产环境部署时，需要修改：
-1. `.env` 中的 `SECRET_KEY`、数据库密码等敏感信息
-2. `ALLOWED_HOSTS` 设置为具体的前端域名
-3. 关闭 `DEBUG` 模式
-4. 使用 HTTPS
+## 7. 合规红线在界面的落点
 
-## 🐛 常见问题
+- **问答页**：每条回答附「依据充分性」结论与免责声明，引用角标可回溯原文。
+- **党员发展页**：常驻决策边界声明，结果一律表述为「待人工确认」，不提供流转操作入口。
+- **登录页/侧栏**：声明「辅助不代决」的产品边界。
 
-### 1. CORS 错误
+## 8. 后续工作
 
-**症状：** 前端请求被浏览器拦截，提示跨域错误
+- [ ] 后端补齐 §3.2 的 5 个接口，前端同步移除示例数据与徽标
+- [ ] 前端单元测试 / E2E（仓库已含 Playwright 截图脚本 `frontend/scripts/screenshot-*.mjs`）
+- [ ] 生产环境：修改 `SECRET_KEY`/密码、收紧 `ALLOWED_HOSTS`、关闭 `DEBUG`、启用 HTTPS
 
-**解决：**
-- 检查后端 `.env` 中 `ALLOWED_HOSTS` 是否正确
-- 确认后端 CORS 中间件已启用（在 `app/main.py` 中）
+## 9. 相关文档
 
-### 2. 代理失败
-
-**症状：** 前端请求 404 或无法到达后端
-
-**解决：**
-- 确认后端已启动在 8000 端口
-- 检查 `vite.config.ts` 中的代理配置
-- 查看前端控制台和后端日志
-
-### 3. 认证失败
-
-**症状：** 登录后仍提示未授权
-
-**解决：**
-- 检查 JWT token 是否正确存储
-- 查看前端请求头是否携带 `Authorization: Bearer <token>`
-- 检查后端 token 验证逻辑
-
-### 4. 数据库连接失败
-
-**症状：** 后端启动时报数据库连接错误
-
-**解决：**
-- 确认 PostgreSQL 已启动
-- 检查 `.env` 中的 `DATABASE_URL` 配置
-- 运行 `alembic upgrade head` 初始化数据库
-
-## 📝 后续工作
-
-- [ ] 添加菜单接口（`/api/core/menu.ts` 调用的 `/menu/all`）
-- [ ] 完善用户管理接口
-- [ ] 添加知识库管理前端页面
-- [ ] 完善错误处理和用户提示
-- [ ] 添加前端单元测试
-- [ ] 添加 E2E 测试
-
-## 📚 相关文档
-
-- [后端 API 文档](http://localhost:8000/docs) - FastAPI 自动生成
-- [前端框架文档](https://doc.vben.pro/) - Vben Admin
-- [项目开发规范](../开发规范文档.md)
+- [前端 README](../frontend/README.md)
+- [后端 API 文档](http://localhost:8000/docs)（按实际端口访问）
+- [测试文档](./TEST_PLAN.md) ｜ [开发规范文档](../开发规范文档.md)

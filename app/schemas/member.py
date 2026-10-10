@@ -5,7 +5,8 @@
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from datetime import date
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -64,3 +65,56 @@ class TodoSuggestionsResponse(BaseModel):
     """待办建议（预留接口）"""
     todos: List[TodoItem] = Field(default_factory=list)
     note: str = DECISION_BOUNDARY_NOTE
+
+
+class MemberRosterItem(BaseModel):
+    """培养对象名册条目"""
+    id: str
+    name: str
+    org_name: str
+    stage: str = Field(..., description="当前阶段（applicant/activist/candidate/probationary/member）")
+    stage_joined_on: date
+    days_in_stage: int = Field(..., description="进入当前阶段的天数（按日期实时计算）")
+    materials: List[str] = Field(default_factory=list)
+    pending: int = 0
+
+    @classmethod
+    def from_profile(
+        cls, profile: Any, today: Optional[date] = None
+    ) -> "MemberRosterItem":
+        """从 ORM 模型构造名册条目（在阶段天数实时计算）"""
+        today = today or date.today()
+        joined = profile.stage_joined_on
+        days = max(0, (today - joined).days) if joined else 0
+        return cls(
+            id=str(profile.id),
+            name=profile.name,
+            org_name=profile.org_name,
+            stage=profile.current_stage,
+            stage_joined_on=joined,
+            days_in_stage=days,
+            materials=list(profile.materials or []),
+            pending=profile.pending or 0,
+        )
+
+
+class MemberRosterResponse(BaseModel):
+    """培养对象名册响应"""
+    total: int = 0
+    items: List[MemberRosterItem] = Field(default_factory=list)
+
+
+class MemberCreateRequest(BaseModel):
+    """新增培养对象请求"""
+    name: str = Field(..., min_length=1, max_length=50, description="姓名")
+    org_name: str = Field(..., min_length=1, max_length=200, description="组织全名")
+    current_stage: str = Field(
+        "applicant",
+        description="起始阶段（applicant/activist/candidate/probationary/member）",
+    )
+    stage_joined_on: Optional[date] = Field(
+        None, description="进入当前阶段日期，缺省为今天"
+    )
+    materials: List[str] = Field(default_factory=list, description="已具备材料名称")
+    pending: int = Field(0, ge=0, description="待办数")
+    org_unit_id: Optional[str] = Field(None, description="组织单元 ID（可选）")

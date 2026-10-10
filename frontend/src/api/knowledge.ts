@@ -1,6 +1,7 @@
 import { http } from './http'
 import type {
   DocumentCreateResponse,
+  DocumentListResponse,
   DocumentResponse,
   DocumentStatusUpdate,
   DocumentUploadForm,
@@ -10,10 +11,8 @@ import type {
 /**
  * app/api/v1/knowledge.py
  *
- * ⚠️ 后端仅提供三个接口：创建、按 doc_id 查询、改状态。
- *    **没有列表接口**（无 GET /knowledge-docs），因此列表页使用 mock
- *    数据源（见 ./mock.ts），并在界面上以「示例数据」徽标显式标注，
- *    避免把演示数据误当成真实库内容。
+ * 后端接口：创建（multipart）、按 doc_id 查询、改状态、分页列表、软删除。
+ * 列表与删除已接入真实接口，不再使用示例数据源。
  */
 
 export function getDocument(docId: string): Promise<DocumentResponse> {
@@ -26,6 +25,31 @@ export function updateDocumentStatus(
 ): Promise<void> {
   const payload: DocumentStatusUpdate = { status }
   return http.patch(`/knowledge-docs/${encodeURIComponent(docId)}/status`, payload)
+}
+
+/** 列表查询参数（与后端 Query 参数逐一对齐） */
+export interface KnowledgeListParams {
+  page?: number
+  page_size?: number
+  /** effective / expired / abolished，空或省略表示全部 */
+  status?: DocStatus | ''
+  keyword?: string
+}
+
+/** 分页查询知识库文件列表 */
+export function listKnowledgeDocuments(
+  params: KnowledgeListParams = {},
+): Promise<DocumentListResponse> {
+  const clean: Record<string, string | number> = {}
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') clean[k] = v
+  }
+  return http.get('/knowledge-docs', { params: clean })
+}
+
+/** 软删除知识库文件，返回删除后的文档（状态标记为已废止） */
+export function deleteKnowledgeDocument(docId: string): Promise<DocumentResponse> {
+  return http.delete(`/knowledge-docs/${encodeURIComponent(docId)}`)
 }
 
 /** 上传为 multipart/form-data，字段名与后端 Form(...) 声明逐一对齐 */

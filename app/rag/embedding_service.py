@@ -25,7 +25,8 @@ class EmbeddingService:
         db: AsyncSession,
         *,
         data_level: DataLevel = DataLevel.PUBLIC,
-        batch_size: int = 32,
+        # DashScope 文本向量化单批上限为 25 条，默认取 25（原 32 会触发 InvalidParameter）
+        batch_size: int = 25,
     ) -> None:
         """
         Args:

@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from sqlalchemy import select, text
+from sqlalchemy import literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.base import DataLevel
@@ -89,9 +89,9 @@ class VectorRetriever(Retriever):
                 KnowledgeDoc.level,
                 KnowledgeDoc.security_level,
                 # 余弦距离
-                text(f"embedding <=> ARRAY{query_vector}::vector AS distance"),
+                literal_column(f"embedding <=> ARRAY{query_vector}::vector").label("distance"),
             )
-            .join(KnowledgeDoc, EmbeddingChunk.doc_id == KnowledgeDoc.doc_id)
+            .join(KnowledgeDoc, EmbeddingChunk.doc_id == KnowledgeDoc.id)
             .where(EmbeddingChunk.embedding.isnot(None))  # 只检索已向量化的片段
             .where(KnowledgeDoc.status == doc_status)
         )

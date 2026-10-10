@@ -1,19 +1,24 @@
 """知识问答接口"""
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import Permission
 from app.db.session import get_db
-from app.deps import get_current_tenant, require_permissions
+from app.deps import get_current_tenant, get_current_user, require_permissions
 from app.llm.base import DataLevel
 from app.models.user import User
 from app.rag.rag_service import RAGService
 from app.schemas.common import APIResponse
+from app.schemas.qa import QASessionItem, QASessionListResponse
+from app.services.qa_session_service import create_session, list_sessions
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -108,6 +113,23 @@ async def ask_question(
         for c in rag_response.citations
     ]
 
+    # 落库问答历史（尽力而为：历史写入失败不影响本次回答返回）
+    try:
+        await create_session(
+            db,
+            tenant_id=tenant_id,
+            user_id=user.id,
+            question=body.question,
+            answer=rag_response.answer,
+            citations=[c.model_dump() for c in citations],
+            data_level=body.data_level,
+            has_sufficient_evidence=rag_response.has_sufficient_evidence,
+            retrieved_count=rag_response.retrieved_count,
+            used_count=rag_response.used_count,
+        )
+    except Exception as exc:
+        logger.warning("qa_history_save_failed: %s", exc)
+
     return APIResponse(
         data=QuestionResponse(
             answer=rag_response.answer,
@@ -115,6 +137,38 @@ async def ask_question(
             retrieved_count=rag_response.retrieved_count,
             used_count=rag_response.used_count,
             has_sufficient_evidence=rag_response.has_sufficient_evidence,
+        ),
+        trace_id=_trace_id(request),
+    )
+
+
+@router.get(
+    "/qa/sessions",
+    response_model=APIResponse[QASessionListResponse],
+    summary="问答历史",
+    description="分页查询当前用户在租户内的问答历史（时间倒序）。",
+    tags=["知识问答"],
+)
+async def list_qa_sessions(
+    request: Request,
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    user: User = Depends(get_current_user),
+    tenant_id: str = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[QASessionListResponse]:
+    """查询当前用户的问答历史"""
+    sessions, total = await list_sessions(
+        db,
+        tenant_id=tenant_id,
+        user_id=str(user.id),
+        page=page,
+        page_size=page_size,
+    )
+    return APIResponse(
+        data=QASessionListResponse(
+            total=total,
+            items=[QASessionItem.from_model(s) for s in sessions],
         ),
         trace_id=_trace_id(request),
     )

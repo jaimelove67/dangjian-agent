@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import DocumentStatus
@@ -205,5 +205,109 @@ async def change_document_status(
             "new_status": new_status,
             "changed_by": changed_by,
         },
+    )
+    return document
+
+
+async def list_documents(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    status: Optional[str] = None,
+    keyword: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[KnowledgeDoc], int]:
+    """分页查询文档列表
+
+    过滤规则：仅返回未软删（``is_deleted = false``）且属于当前租户的文档；
+    可选按状态过滤，可选按标题 / 发文机关 / 文号 / 文档编号模糊匹配。
+
+    Args:
+        db: 数据库会话
+        tenant_id: 租户 ID（数据隔离）
+        status: 文档状态（effective / expired / abolished），None 表示全部
+        keyword: 关键词（模糊匹配标题、发文机关、文号、文档编号）
+        page: 页码（从 1 开始）
+        page_size: 每页条数
+
+    Returns:
+        (文档列表, 命中总数)
+    """
+    conditions: list[Any] = [
+        KnowledgeDoc.tenant_id == tenant_id,
+        KnowledgeDoc.is_deleted.is_(False),
+    ]
+    if status:
+        conditions.append(KnowledgeDoc.status == status)
+    if keyword and keyword.strip():
+        kw = f"%{keyword.strip()}%"
+        conditions.append(
+            or_(
+                KnowledgeDoc.title.ilike(kw),
+                KnowledgeDoc.issuer.ilike(kw),
+                KnowledgeDoc.doc_number.ilike(kw),
+                KnowledgeDoc.doc_id.ilike(kw),
+            )
+        )
+
+    total = (
+        await db.execute(select(func.count(KnowledgeDoc.id)).where(*conditions))
+    ).scalar_one()
+
+    stmt = (
+        select(KnowledgeDoc)
+        .where(*conditions)
+        .order_by(KnowledgeDoc.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    documents = list((await db.execute(stmt)).scalars().all())
+    return documents, int(total)
+
+
+async def delete_document(
+    db: AsyncSession,
+    *,
+    doc_id: str,
+    deleted_by: Optional[str] = None,
+) -> KnowledgeDoc:
+    """软删除文档
+
+    文档置 ``is_deleted = true`` 并同步标记为「已废止」（使检索环节立即排除），
+    其下片段一并软删。不做物理删除，保留可追溯性。
+
+    Args:
+        db: 数据库会话
+        doc_id: 文档业务标识
+        deleted_by: 操作人（用于审计）
+
+    Returns:
+        更新后的文档对象
+
+    Raises:
+        DocumentNotFoundError: 文档不存在或已删除
+    """
+    document = await get_document(db, doc_id=doc_id)
+    if document is None or document.is_deleted:
+        raise DocumentNotFoundError(f"文档不存在: {doc_id}")
+
+    document.is_deleted = True
+    # 标记为已废止，确保检索（按 status = effective 过滤）不再命中
+    document.status = DocumentStatus.ABOLISHED.value
+    await db.flush()
+
+    await db.execute(
+        update(EmbeddingChunk)
+        .where(
+            EmbeddingChunk.doc_id == document.id,
+            EmbeddingChunk.is_deleted.is_(False),
+        )
+        .values(is_deleted=True)
+    )
+
+    logger.info(
+        "knowledge_document_deleted",
+        extra={"doc_id": doc_id, "deleted_by": deleted_by},
     )
     return document

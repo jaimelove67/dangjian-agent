@@ -173,7 +173,7 @@ def build_member_graph(flow: Optional[MemberFlow] = None) -> Any:
 
     图为"校验 → 待办 → 建议"的只读流水线，节点均不修改人员阶段。
     """
-    from langgraph.graph import END, START, StateGraph
+    from langgraph.graph import END, StateGraph
 
     flow = flow or MemberFlow()
 
@@ -217,7 +217,7 @@ def build_member_graph(flow: Optional[MemberFlow] = None) -> Any:
     graph.add_node("check_qualification", check_node)
     graph.add_node("generate_todos", todo_node)
     graph.add_node("suggest_transition", suggest_node)
-    graph.add_edge(START, "check_qualification")
+    graph.set_entry_point("check_qualification")
     graph.add_edge("check_qualification", "generate_todos")
     graph.add_edge("generate_todos", "suggest_transition")
     graph.add_edge("suggest_transition", END)

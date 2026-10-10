@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 
-import { checkQualification, getTodoSuggestions, getTransitionSuggestion } from '@/api/member'
-import { MOCK_MEMBERS, MOCK_NOTICE, MOCK_TODOS, type MockMember } from '@/api/mock'
+import { checkQualification, createMember, getTodoSuggestions, getTransitionSuggestion, listRoster } from '@/api/member'
+import { ApiError } from '@/api/http'
+import { MOCK_TODOS } from '@/api/mock'
 import type {
+  MemberRosterItem,
   MemberStage,
   QualificationResult,
   TodoItem,
@@ -25,14 +27,14 @@ import PageHeader from '@/components/PageHeader.vue'
  *   - 所有校验结果都标注为"建议 / 待人工确认"，绝不出现"通过""不通过"这类结论性动词
  *   - 阶段性动作按钮一律不可用，只给"生成建议"，把操作权明确留在人工途径
  *
- * ⚠️ 后端缺口：无名册接口，左侧名册为 mock 并以徽标标注。
- *    右侧三块（资格校验 / 流转建议 / 待办建议）是**真实接口调用**。
+ * 名册与三块分析（资格校验 / 流转建议 / 待办建议）均为**真实接口调用**。
  */
 
 type PanelTab = 'qualification' | 'transition' | 'todo'
 
-const members = ref<MockMember[]>([])
+const members = ref<MemberRosterItem[]>([])
 const loading = ref(true)
+const loadError = ref<unknown>(null)
 const selectedId = ref<string | null>(null)
 const panelTab = ref<PanelTab>('qualification')
 
@@ -76,16 +78,85 @@ const targetOptions = computed(() => {
   return STAGE_ORDER.slice(i + 1).map((s) => ({ value: s, label: STAGE_LABELS[s] }))
 })
 
-function load(): void {
+async function load(): Promise<void> {
   loading.value = true
-  window.setTimeout(() => {
-    members.value = MOCK_MEMBERS.map((m) => ({ ...m }))
-    loading.value = false
+  loadError.value = null
+  try {
+    const { items } = await listRoster()
+    members.value = items
+    selectedId.value = null
     if (members.value.length) select(members.value[0]!.id)
-  }, 320)
+  } catch (err) {
+    loadError.value = err
+    members.value = []
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(load)
+
+/* ---------------------------- 新增培养对象 ------------------------------ */
+
+const createOpen = ref(false)
+const createSubmitting = ref(false)
+const createError = ref('')
+
+/** 起始阶段候选（不含"退回"，新增对象从正常流程起点开始） */
+const CREATE_STAGES: MemberStage[] = ['applicant', 'activist', 'candidate', 'probationary', 'member']
+
+const create = reactive({
+  name: '',
+  org_name: '',
+  current_stage: 'applicant' as MemberStage,
+  stage_joined_on: new Date().toISOString().slice(0, 10),
+  materials: [] as string[],
+  pending: 0,
+})
+
+const createValid = computed(
+  () => create.name.trim().length > 0 && create.org_name.trim().length > 0,
+)
+
+function toggleCreateMaterial(name: string): void {
+  const i = create.materials.indexOf(name)
+  if (i >= 0) create.materials.splice(i, 1)
+  else create.materials.push(name)
+}
+
+function resetCreate(): void {
+  create.name = ''
+  create.org_name = ''
+  create.current_stage = 'applicant'
+  create.stage_joined_on = new Date().toISOString().slice(0, 10)
+  create.materials = []
+  create.pending = 0
+  createError.value = ''
+}
+
+async function submitCreate(): Promise<void> {
+  if (!createValid.value) return
+  createSubmitting.value = true
+  createError.value = ''
+  try {
+    const item = await createMember({
+      name: create.name.trim(),
+      org_name: create.org_name.trim(),
+      current_stage: create.current_stage,
+      stage_joined_on: create.stage_joined_on || undefined,
+      materials: [...create.materials],
+      pending: create.pending,
+    })
+    members.value = [item, ...members.value]
+    select(item.id)
+    createOpen.value = false
+    resetCreate()
+  } catch (err) {
+    createError.value = err instanceof ApiError ? err.message : '新增失败，请重试'
+  } finally {
+    createSubmitting.value = false
+  }
+}
 
 function select(id: string): void {
   selectedId.value = id
@@ -135,6 +206,7 @@ async function runTransition(): Promise<void> {
   try {
     transition.value = await getTransitionSuggestion({
       current_stage: selected.value.stage,
+      target_stage: form.target_stage,
       materials: [...form.materials],
       days_in_stage: form.days_in_stage,
     })
@@ -184,6 +256,10 @@ const todoTone: Record<TodoItem['category'], string> = {
       description="对照各阶段材料与时限要求，辅助核对培养进度。所有结果均为待人工确认的提示。"
     >
       <template #actions>
+        <button class="btn btn--primary" type="button" @click="createOpen = !createOpen">
+          <AppIcon name="plus" :size="14" />
+          <span>新增培养对象</span>
+        </button>
         <button class="btn btn--quiet" type="button" @click="load">
           <AppIcon name="pulse" :size="14" />
           <span>刷新</span>
@@ -202,12 +278,90 @@ const todoTone: Record<TodoItem['category'], string> = {
       </div>
     </section>
 
-    <p class="gap-note">
-      <AppIcon name="info" :size="14" />
-      <span>
-        后端尚未提供名册查询接口，左侧名册为<b>{{ MOCK_NOTICE }}</b>。右侧三项分析走真实接口。
-      </span>
-    </p>
+    <!-- ---------------------------- 新增培养对象 ---------------------------- -->
+    <section v-if="createOpen" class="create u-card">
+      <header class="u-panel-head">
+        <h2 class="create__title">新增培养对象</h2>
+        <button class="btn btn--quiet" type="button" @click="createOpen = false">
+          <AppIcon name="close" :size="14" />
+          <span>收起</span>
+        </button>
+      </header>
+
+      <div class="create__body">
+        <div class="form-grid">
+          <div class="field">
+            <label class="field__label" for="c-name">姓名</label>
+            <input id="c-name" v-model="create.name" class="input" type="text" maxlength="50" />
+          </div>
+          <div class="field">
+            <label class="field__label" for="c-org">组织全名</label>
+            <input
+              id="c-org"
+              v-model="create.org_name"
+              class="input"
+              type="text"
+              placeholder="如：计算机学院党委 · 本科生第一党支部"
+            />
+          </div>
+          <div class="field">
+            <label class="field__label" for="c-stage">起始阶段</label>
+            <select id="c-stage" v-model="create.current_stage" class="select">
+              <option v-for="s in CREATE_STAGES" :key="s" :value="s">{{ STAGE_LABELS[s] }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field__label" for="c-joined">进入阶段日期</label>
+            <input id="c-joined" v-model="create.stage_joined_on" class="input" type="date" />
+          </div>
+          <div class="field">
+            <label class="field__label" for="c-pending">待办数</label>
+            <input id="c-pending" v-model.number="create.pending" class="input" type="number" min="0" />
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="field__label">已具备材料</span>
+          <div class="chips">
+            <button
+              v-for="mat in MATERIAL_POOL"
+              :key="mat"
+              class="chip"
+              :class="{ 'is-on': create.materials.includes(mat) }"
+              type="button"
+              :aria-pressed="create.materials.includes(mat)"
+              @click="toggleCreateMaterial(mat)"
+            >
+              <AppIcon :name="create.materials.includes(mat) ? 'check' : 'plus'" :size="12" />
+              <span>{{ mat }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-if="createError" class="create__error" role="alert">
+          <AppIcon name="alert" :size="14" />
+          <span>{{ createError }}</span>
+        </div>
+
+        <footer class="create__foot">
+          <p class="create__hint">
+            <AppIcon name="shield" :size="14" />
+            <span>此处为培养对象登记，不构成任何组织认定；阶段流转仍仅通过人工途径操作。</span>
+          </p>
+          <div class="create__actions">
+            <button class="btn btn--ghost" type="button" @click="resetCreate">重置</button>
+            <button
+              class="btn btn--primary"
+              type="button"
+              :disabled="!createValid || createSubmitting"
+              @click="submitCreate"
+            >
+              {{ createSubmitting ? '提交中' : '确认新增' }}
+            </button>
+          </div>
+        </footer>
+      </div>
+    </section>
 
     <div class="mem__grid">
       <!-- ---------------------------- 名册 ---------------------------- -->
@@ -219,8 +373,12 @@ const todoTone: Record<TodoItem['category'], string> = {
 
         <LoadingBlock v-if="loading" variant="list" :rows="5" />
 
+        <ErrorState v-else-if="loadError" :error="loadError">
+          <button class="btn btn--ghost" type="button" @click="load">重新加载</button>
+        </ErrorState>
+
         <div v-else-if="!members.length" class="roster__body">
-          <EmptyState icon="people" title="暂无培养对象" body="名册接口接入后将在此展示。" />
+          <EmptyState icon="people" title="暂无培养对象" body="当前租户下暂无可展示的培养对象。" />
         </div>
 
         <ul v-else class="roster__list">
@@ -574,22 +732,56 @@ const todoTone: Record<TodoItem['category'], string> = {
   color: var(--ink-soft);
 }
 
-.gap-note {
+/* ---------------------------- 新增培养对象 ---------------------------- */
+.create {
+  overflow: hidden;
+}
+
+.create__title {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.create__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+}
+
+.create__error {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-  color: var(--ink-muted);
-  background: var(--warn-wash);
-  border: 1px solid var(--warn-edge);
+  color: var(--bad-ink);
+  background: var(--bad-wash);
+  border: 1px solid var(--bad-edge);
   border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
 }
 
-.gap-note b {
-  font-weight: 600;
-  color: var(--warn-ink);
+.create__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: var(--border);
+}
+
+.create__hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.create__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex: none;
 }
 
 /* ---------------------------- 布局 -------------------------------- */

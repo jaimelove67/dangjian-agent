@@ -8,17 +8,26 @@
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chains.member_flow import MemberFlow
 from app.core.security import Permission
-from app.deps import require_permissions
+from app.db.session import get_db
+from app.deps import get_current_tenant, require_permissions
+from app.models.member import MemberProfile
 from app.models.user import User
+from app.rules.member_stages import MemberStage
 from app.schemas.common import APIResponse, ErrorCode
 from app.schemas.member import (
     DECISION_BOUNDARY_NOTE,
+    MemberCreateRequest,
+    MemberRosterItem,
+    MemberRosterResponse,
     QualificationCheckRequest,
     QualificationResult,
     TodoItem,
@@ -142,5 +151,83 @@ async def todo_suggestions(
             todos=[TodoItem(category=category, content=content) for category, content in todos],
             note=DECISION_BOUNDARY_NOTE,
         ),
+        trace_id=_trace_id(request),
+    )
+
+
+@router.get(
+    "/member/roster",
+    response_model=APIResponse[MemberRosterResponse],
+    summary="培养对象名册",
+    description="查询当前租户的培养对象及其阶段台账（在阶段天数按日期实时计算）。",
+    tags=["党员发展"],
+)
+async def member_roster(
+    request: Request,
+    user: User = Depends(_require_member),
+    tenant_id: str = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[MemberRosterResponse]:
+    """培养对象名册"""
+    result = await db.execute(
+        select(MemberProfile)
+        .where(
+            MemberProfile.tenant_id == tenant_id,
+            MemberProfile.is_deleted.is_(False),
+            MemberProfile.is_active.is_(True),
+        )
+        .order_by(MemberProfile.created_at.desc())
+    )
+    profiles = list(result.scalars().all())
+    today = date.today()
+    items = [MemberRosterItem.from_profile(p, today=today) for p in profiles]
+    return APIResponse(
+        data=MemberRosterResponse(total=len(items), items=items),
+        trace_id=_trace_id(request),
+    )
+
+
+@router.post(
+    "/member/roster",
+    response_model=APIResponse[MemberRosterItem],
+    summary="新增培养对象",
+    description="登记一名培养对象（属数据录入，不构成组织认定）。阶段须为合法取值。",
+    tags=["党员发展"],
+)
+async def create_member(
+    body: MemberCreateRequest,
+    request: Request,
+    user: User = Depends(_require_member),
+    tenant_id: str = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[MemberRosterItem]:
+    """新增培养对象"""
+    try:
+        stage = MemberStage(body.current_stage)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": ErrorCode.BUSINESS_ERROR,
+                "message": f"非法阶段: {body.current_stage}",
+            },
+        ) from exc
+
+    profile = MemberProfile(
+        tenant_id=tenant_id,
+        name=body.name.strip(),
+        org_name=body.org_name.strip(),
+        org_unit_id=body.org_unit_id,
+        current_stage=stage.value,
+        stage_joined_on=body.stage_joined_on or date.today(),
+        materials=body.materials,
+        pending=body.pending,
+        is_active=True,
+    )
+    db.add(profile)
+    await db.commit()
+
+    return APIResponse(
+        data=MemberRosterItem.from_profile(profile),
         trace_id=_trace_id(request),
     )

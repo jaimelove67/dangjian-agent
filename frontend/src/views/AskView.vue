@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
-import { askQuestion } from '@/api/qa'
-import type { AskQuestionResponse, DataLevel } from '@/api/types'
+import { askQuestion, listQASessions } from '@/api/qa'
+import type { AskQuestionResponse, DataLevel, QASession } from '@/api/types'
 import { DATA_LEVEL_LABELS, DATA_LEVEL_ROUTE } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import CitationCard from '@/components/CitationCard.vue'
@@ -143,7 +143,40 @@ async function onAsk(): Promise<void> {
     error.value = err
   } finally {
     loading.value = false
+    // 本次提问已落库，刷新历史列表
+    void loadHistory()
   }
+}
+
+/* ---------------------------- 最近提问 ------------------------------ */
+
+const history = ref<QASession[]>([])
+const historyLoading = ref(false)
+
+/** 加载当前用户的问答历史（辅助信息，失败不打断主流程） */
+async function loadHistory(): Promise<void> {
+  historyLoading.value = true
+  try {
+    const { items } = await listQASessions(1, 8)
+    history.value = items
+  } catch {
+    history.value = []
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+onMounted(loadHistory)
+
+function formatTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 async function jumpToCitation(index: number): Promise<void> {
@@ -417,6 +450,35 @@ function useSuggestion(text: string): void {
               <dd>{{ useReranker ? '已启用' : '未启用' }}</dd>
             </div>
           </dl>
+        </section>
+        <!-- 最近提问：本次会话历史，点击可复填问题 -->
+        <section class="aside-card">
+          <header class="u-panel-head aside-card__head">
+            <h2 class="aside-card__title">最近提问</h2>
+            <span v-if="history.length" class="badge">{{ history.length }}</span>
+          </header>
+
+          <div v-if="historyLoading" class="aside-card__body">
+            <LoadingBlock variant="list" :rows="3" />
+          </div>
+
+          <div v-else-if="history.length" class="aside-card__body">
+            <button
+              v-for="h in history"
+              :key="h.id"
+              class="history__item"
+              type="button"
+              :title="h.question"
+              @click="useSuggestion(h.question)"
+            >
+              <span class="history__q">{{ h.question }}</span>
+              <span class="history__meta u-num">{{ formatTime(h.created_at) }}</span>
+            </button>
+          </div>
+
+          <div v-else class="aside-card__body">
+            <p class="aside-hint">暂无历史提问。提问后会自动记录，点击记录可再次提问。</p>
+          </div>
         </section>
       </aside>
     </div>
@@ -704,6 +766,11 @@ function useSuggestion(text: string): void {
   background: var(--accent-wash);
   border: 1px solid var(--accent-edge);
   border-radius: var(--radius-xs);
+  /* 下划线：明确"可点击跳转到来源"的链接语义 */
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 2px;
+  cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
@@ -777,6 +844,36 @@ function useSuggestion(text: string): void {
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   color: var(--ink-muted);
+}
+
+.history__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2);
+  border-radius: var(--radius-xs);
+  text-align: left;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.history__item:hover {
+  background: var(--paper-dim);
+}
+
+.history__q {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink-soft);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.history__meta {
+  font-size: var(--text-2xs);
+  color: var(--ink-faint);
 }
 
 .stats {

@@ -43,7 +43,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     except Exception as e:
         logger.warning(f"Database connection failed: {e}")
 
-    # TODO: 加载模型配置
+    # 初始化模型注册表与路由（DashScope 的 LLM / Embedding / Reranker）
+    try:
+        from app.llm.init_models import init_models
+        init_models()
+        logger.info("Model providers initialized")
+    except Exception as e:
+        logger.warning(f"Model initialization failed: {e}")
 
     yield
 

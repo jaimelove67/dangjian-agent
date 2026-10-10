@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     PORT: int = Field(default=8000, description="服务端口")
     ALLOWED_HOSTS: list[str] = Field(default=["*"], description="允许的主机")
 
+    # ==================== 上传配置 ====================
+    MAX_UPLOAD_SIZE: int = Field(
+        default=10 * 1024 * 1024,
+        description="知识库上传文件大小上限（字节），默认 10MB",
+    )
+
     # ==================== 安全配置 ====================
     SECRET_KEY: str = Field(
         default="dev_secret_key_change_in_production",

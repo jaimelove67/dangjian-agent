@@ -55,3 +55,9 @@ class DocumentCreateResponse(BaseModel):
     """入库响应"""
     document: DocumentResponse
     chunk_count: int = 0
+
+
+class DocumentListResponse(BaseModel):
+    """文件列表响应（分页）"""
+    total: int = Field(..., description="命中总数")
+    items: List[DocumentResponse] = Field(default_factory=list, description="当前页文档")

@@ -77,7 +77,13 @@ class DashScopeProvider(BaseModelProvider):
 
             if response.status_code == 200:
                 output = response.output
-                content = output.get('text', '')
+                # 新版 DashScope / DeepSeek 系列把回答放在 output.choices[0].message.content，
+                # 旧的 output.text 字段为 null；两者都兼容取用
+                content = output.get('text') or ''
+                if not content:
+                    choices = output.get('choices') or []
+                    if choices:
+                        content = (choices[0].get('message') or {}).get('content') or ''
 
                 # 提取使用情况
                 usage = None

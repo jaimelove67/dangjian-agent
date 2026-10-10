@@ -164,6 +164,35 @@ export interface AskQuestionResponse {
   has_sufficient_evidence: boolean
 }
 
+/** app/schemas/qa.py::QASessionCitation */
+export interface QASessionCitation {
+  title: string
+  issuer: string
+  doc_number?: string | null
+  article?: string | null
+  content: string
+  score: number
+}
+
+/** app/schemas/qa.py::QASessionItem */
+export interface QASession {
+  id: string
+  question: string
+  answer: string
+  data_level: DataLevel
+  has_sufficient_evidence: boolean
+  retrieved_count: number
+  used_count: number
+  citations: QASessionCitation[]
+  created_at: string
+}
+
+/** app/schemas/qa.py::QASessionListResponse */
+export interface QASessionListResponse {
+  total: number
+  items: QASession[]
+}
+
 /* ============================ 知识库 =================================== */
 
 export type DocLevel = 'central' | 'provincial' | 'school' | 'department'
@@ -220,6 +249,12 @@ export interface DocumentResponse {
 export interface DocumentCreateResponse {
   document: DocumentResponse
   chunk_count: number
+}
+
+/** app/schemas/knowledge.py::DocumentListResponse */
+export interface DocumentListResponse {
+  total: number
+  items: DocumentResponse[]
 }
 
 /** app/schemas/knowledge.py::DocumentStatusUpdate */
@@ -282,6 +317,9 @@ export interface QualificationCheckRequest {
   days_in_stage: number
 }
 
+/** app/schemas/member.py::TransitionSuggestionRequest —— 与资格校验同参（服务端继承自 QualificationCheckRequest） */
+export type TransitionSuggestionRequest = QualificationCheckRequest
+
 /** app/schemas/member.py::QualificationResult */
 export interface QualificationResult {
   eligible: boolean
@@ -312,6 +350,35 @@ export interface TodoItem {
 export interface TodoSuggestionsResponse {
   todos: TodoItem[]
   note: string
+}
+
+/** app/schemas/member.py::MemberRosterItem */
+export interface MemberRosterItem {
+  id: string
+  name: string
+  org_name: string
+  stage: MemberStage
+  stage_joined_on: string
+  days_in_stage: number
+  materials: string[]
+  pending: number
+}
+
+/** app/schemas/member.py::MemberRosterResponse */
+export interface MemberRosterResponse {
+  total: number
+  items: MemberRosterItem[]
+}
+
+/** app/schemas/member.py::MemberCreateRequest */
+export interface MemberCreateRequest {
+  name: string
+  org_name: string
+  current_stage: MemberStage
+  stage_joined_on?: string
+  materials?: string[]
+  pending?: number
+  org_unit_id?: string | null
 }
 
 export const TODO_CATEGORY_LABELS: Record<TodoItem['category'], string> = {

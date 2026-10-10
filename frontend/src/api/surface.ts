@@ -51,7 +51,7 @@ export const API_SURFACE: ApiSurfaceItem[] = [
     method: 'GET',
     path: '/api/v1/qa/sessions',
     purpose: '查询历史问答记录',
-    available: false,
+    available: true,
   },
   {
     label: '健康检查',
@@ -93,14 +93,14 @@ export const API_SURFACE: ApiSurfaceItem[] = [
     method: 'GET',
     path: '/api/v1/knowledge-docs',
     purpose: '分页查询知识库文件列表',
-    available: false,
+    available: true,
   },
   {
     label: '删除文件',
     method: 'DELETE',
     path: '/api/v1/knowledge-docs/{doc_id}',
     purpose: '移除知识库中的文件',
-    available: false,
+    available: true,
   },
   {
     label: '资格校验',
@@ -128,7 +128,14 @@ export const API_SURFACE: ApiSurfaceItem[] = [
     method: 'GET',
     path: '/api/v1/member/roster',
     purpose: '查询培养对象及其阶段台账',
-    available: false,
+    available: true,
+  },
+  {
+    label: '新增培养对象',
+    method: 'POST',
+    path: '/api/v1/member/roster',
+    purpose: '登记一名培养对象（数据录入，非组织认定）',
+    available: true,
   },
   {
     label: '阶段流转提交',

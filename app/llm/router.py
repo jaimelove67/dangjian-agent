@@ -88,10 +88,18 @@ class ModelRouter:
             RouterError: 无可用模型
             GatewayError: 闸门拦截
         """
-        # 1. 检查是否有配置的路由规则
+        # 1. 检查是否有配置的路由规则（仅当模型类型与请求一致时采用）
         model_id = self._get_configured_model(data_level, task_type)
+        if model_id:
+            configured = self.registry.get_config(model_id)
+            if configured is not None and configured.model_type != model_type:
+                # 例如：路由把 (public, qa) 配到了 LLM，但本次请求的是 embedding，
+                # 不能复用该路由，回退到按 model_type 的策略选择。
+                # 注意：若配置的模型不在注册表（configured is None），保留该 ID，
+                # 由下方 get_provider 抛出 "not found in registry"。
+                model_id = None
 
-        # 2. 如果没有配置规则，使用默认策略
+        # 2. 如果没有可用配置，使用默认策略
         if not model_id:
             model_id = self._select_model_by_strategy(
                 data_level,

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -23,6 +23,7 @@ from app.rules.document_metadata import MetadataValidationError
 from app.schemas.common import APIResponse, ErrorCode
 from app.schemas.knowledge import (
     DocumentCreateResponse,
+    DocumentListResponse,
     DocumentResponse,
     DocumentStatusUpdate,
 )
@@ -31,13 +32,17 @@ from app.services.knowledge_service import (
     DocumentNotFoundError,
     change_document_status,
     create_document,
+    delete_document,
     get_document,
+    list_documents,
 )
 
 router = APIRouter()
 
 # 入库 / 维护需要"院系级及以上管理员"权限
 _require_manage = require_permissions(Permission.KNOWLEDGE_MANAGE)
+# 列表查询只需知识库查询权限（登录用户）
+_require_query = require_permissions(Permission.KNOWLEDGE_QUERY)
 
 
 def _trace_id(request: Request) -> Optional[str]:
@@ -158,6 +163,45 @@ async def create_knowledge_document(
 
 
 @router.get(
+    "/knowledge-docs",
+    response_model=APIResponse[DocumentListResponse],
+    summary="文件列表",
+    description="分页查询知识库文件列表，支持按状态与关键词过滤（仅返回未删除文件）。",
+    tags=["知识库"],
+)
+async def list_knowledge_documents(
+    request: Request,
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    status_filter: Optional[str] = Query(
+        None, alias="status", description="effective/expired/abolished"
+    ),
+    keyword: Optional[str] = Query(
+        None, max_length=100, description="按标题/发文机关/文号/编号模糊搜索"
+    ),
+    user: User = Depends(_require_query),
+    tenant_id: str = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[DocumentListResponse]:
+    """分页查询知识库文件列表"""
+    documents, total = await list_documents(
+        db,
+        tenant_id=tenant_id,
+        status=status_filter,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+    return APIResponse(
+        data=DocumentListResponse(
+            total=total,
+            items=[DocumentResponse.from_document(doc) for doc in documents],
+        ),
+        trace_id=_trace_id(request),
+    )
+
+
+@router.get(
     "/knowledge-docs/{doc_id}",
     response_model=APIResponse[DocumentResponse],
     summary="查询文档",
@@ -210,6 +254,35 @@ async def update_knowledge_document_status(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": ErrorCode.BUSINESS_ERROR, "message": str(exc)},
         ) from exc
+    except DocumentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": ErrorCode.NOT_FOUND, "message": str(exc)},
+        ) from exc
+
+    await db.commit()
+    return APIResponse(
+        data=DocumentResponse.from_document(document),
+        trace_id=_trace_id(request),
+    )
+
+
+@router.delete(
+    "/knowledge-docs/{doc_id}",
+    response_model=APIResponse[DocumentResponse],
+    summary="删除文件",
+    description="软删除知识库文件（标记为已废止并从检索环节排除），不做物理删除。",
+    tags=["知识库"],
+)
+async def delete_knowledge_document(
+    doc_id: str,
+    request: Request,
+    user: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[DocumentResponse]:
+    """软删除文档"""
+    try:
+        document = await delete_document(db, doc_id=doc_id, deleted_by=user.username)
     except DocumentNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

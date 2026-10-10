@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 
-import { createDocument, updateDocumentStatus } from '@/api/knowledge'
-import { MOCK_DOCUMENTS, MOCK_NOTICE } from '@/api/mock'
+import { createDocument, deleteKnowledgeDocument, listKnowledgeDocuments, updateDocumentStatus } from '@/api/knowledge'
 import { ApiError } from '@/api/http'
 import type { DocumentResponse, DocLevel, DocStatus, DataLevel } from '@/api/types'
 import {
@@ -26,8 +25,7 @@ import PageHeader from '@/components/PageHeader.vue'
  *    而是采用**保守的数据表设计**：粘性表头、克制行高、密度可切换、右侧详情抽屉。
  *    仅复用设计系统的色彩、字阶与圆角 token，以保证与全站同源。
  *
- * ⚠️ 后端缺口：无列表接口，列表数据来自 mock 并以「示例数据」徽标标注。
- *    「改状态」与「上传」是真实接口调用，失败会如实报错。
+ * 列表 / 删除 / 改状态 / 上传均走真实接口；接口失败会如实报错。
  */
 
 type Tab = 'all' | DocStatus
@@ -41,16 +39,21 @@ const levelFilter = ref<DocLevel | 'all'>('all')
 const compact = ref(false)
 const selected = ref<DocumentResponse | null>(null)
 const statusBusy = ref<string | null>(null)
+const deleteArmed = ref<string | null>(null)
 const uploadOpen = ref(false)
 
-/** 模拟一次列表请求的加载过程，让骨架屏在真实接口接入后无需改动 */
-function load(): void {
+/** 从后端拉取文件列表（保留骨架屏/错误态处理） */
+async function load(): Promise<void> {
   loading.value = true
   error.value = null
-  window.setTimeout(() => {
-    docs.value = MOCK_DOCUMENTS.map((d) => ({ ...d }))
+  try {
+    const { items } = await listKnowledgeDocuments({ page_size: 100 })
+    docs.value = items
+  } catch (err) {
+    error.value = err
+  } finally {
     loading.value = false
-  }, 320)
+  }
 }
 
 onMounted(load)
@@ -108,6 +111,25 @@ async function changeStatus(doc: DocumentResponse, status: DocStatus): Promise<v
     error.value = err
   } finally {
     statusBusy.value = null
+  }
+}
+
+/** 两步确认的软删除：第一次点击进入确认态（4 秒未确认自动复位），第二次执行 */
+async function removeDocument(doc: DocumentResponse): Promise<void> {
+  if (deleteArmed.value !== doc.doc_id) {
+    deleteArmed.value = doc.doc_id
+    window.setTimeout(() => {
+      if (deleteArmed.value === doc.doc_id) deleteArmed.value = null
+    }, 4000)
+    return
+  }
+  deleteArmed.value = null
+  try {
+    await deleteKnowledgeDocument(doc.doc_id)
+    docs.value = docs.value.filter((d) => d.doc_id !== doc.doc_id)
+    if (selected.value?.doc_id === doc.doc_id) selected.value = null
+  } catch (err) {
+    error.value = err
   }
 }
 
@@ -227,14 +249,6 @@ async function submitUpload(): Promise<void> {
         </button>
       </template>
     </PageHeader>
-
-    <!-- 后端缺口提示：必须在数据之前就被看到 -->
-    <p class="gap-note">
-      <AppIcon name="info" :size="14" />
-      <span>
-        后端尚未提供列表查询接口，下表为<b>{{ MOCK_NOTICE }}</b>。上传与状态变更走真实接口。
-      </span>
-    </p>
 
     <!-- ---------------------------- 上传面板 ---------------------------- -->
     <section v-if="uploadOpen" class="upload u-card">
@@ -466,6 +480,14 @@ async function submitUpload(): Promise<void> {
               >
                 恢复生效
               </button>
+              <button
+                class="btn btn--quiet btn--danger"
+                type="button"
+                :disabled="deleteArmed !== null && deleteArmed !== d.doc_id"
+                @click="removeDocument(d)"
+              >
+                {{ deleteArmed === d.doc_id ? '确认删除' : '删除' }}
+              </button>
             </td>
           </tr>
         </tbody>
@@ -542,22 +564,8 @@ async function submitUpload(): Promise<void> {
   width: 100%;
 }
 
-.gap-note {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-  color: var(--ink-muted);
-  background: var(--warn-wash);
-  border: 1px solid var(--warn-edge);
-  border-radius: var(--radius-sm);
-}
-
-.gap-note b {
-  font-weight: 600;
-  color: var(--warn-ink);
+.btn--danger {
+  color: var(--bad-ink);
 }
 
 /* ---------------------------- 上传 -------------------------------- */

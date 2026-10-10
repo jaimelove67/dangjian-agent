@@ -60,15 +60,16 @@ async def readiness_check() -> JSONResponse:
         logger.error(f"Redis health check failed: {e}")
         checks["redis"] = f"unhealthy: {str(e)}"
 
-    # TODO: 检查数据库连接
-    # try:
-    #     await check_database()
-    #     checks["database"] = "healthy"
-    # except Exception as e:
-    #     checks["database"] = f"unhealthy: {str(e)}"
-
-    # 暂时标记为未实现
-    checks["database"] = "not_implemented"
+    # 检查数据库连接（SELECT 1 探活）
+    try:
+        from sqlalchemy import text
+        from app.db.session import engine
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["database"] = "healthy"
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        checks["database"] = f"unhealthy: {str(e)}"
 
     # 判断整体状态
     all_healthy = all(v == "healthy" for v in checks.values())

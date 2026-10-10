@@ -161,3 +161,6 @@ htmlcov/
 
 # Pre-commit (保留配置文件，只忽略缓存)
 # .pre-commit-config.yaml
+
+# Browser automation artifacts (Playwright MCP snapshots)
+.playwright-mcp/
