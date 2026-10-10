@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from datetime import date as date_type
+from typing import Any
+from urllib.parse import quote as url_quote
 
 from fastapi import (
     APIRouter,
@@ -24,6 +26,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -53,6 +56,7 @@ from app.schemas.knowledge import (
     DocumentResponse,
     DocumentStatusUpdate,
 )
+from app.services.file_store import read_original, remove_originals, save_original
 from app.services.knowledge_service import (
     DocumentConflictError,
     DocumentNotFoundError,
@@ -76,7 +80,7 @@ class KnowledgeSearch(BaseModel):
     top_k: int = Field(10, ge=1, le=50)
     use_reranker: bool = True
     include_expired: bool = False
-    data_level: Optional[DataLevel] = None
+    data_level: DataLevel | None = None
 
 
 @router.post("/knowledge/search", response_model=APIResponse[dict], summary="授权范围内检索知识")
@@ -123,7 +127,7 @@ async def search_knowledge(
     )
 
 
-def _trace_id(request: Request) -> Optional[str]:
+def _trace_id(request: Request) -> str | None:
     return getattr(request.state, "trace_id", None)
 
 
@@ -152,10 +156,10 @@ async def create_knowledge_document(
     effective_date: str = Form(..., description="YYYY-MM-DD"),
     tags: str = Form(..., description="主题标签，逗号分隔"),
     security_level: str = Form("public", description="public/internal/sensitive/classified"),
-    expiration_date: Optional[str] = Form(None, description="YYYY-MM-DD，空表示长期有效"),
+    expiration_date: str | None = Form(None, description="YYYY-MM-DD，空表示长期有效"),
     doc_status: str = Form("effective", alias="status", description="effective/expired/abolished"),
-    doc_number: Optional[str] = Form(None),
-    summary: Optional[str] = Form(None),
+    doc_number: str | None = Form(None),
+    summary: str | None = Form(None),
     user: User = Depends(_require_manage),
     tenant_id: str = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
@@ -254,6 +258,15 @@ async def create_knowledge_document(
         data_level=document.security_level,
         new_value={"doc_id": document.doc_id, "chunk_count": chunk_count},
     )
+    # 留存原始文件与完整性标识；存储不可用时不阻断入库，下载时明确提示。
+    try:
+        original_version = (document.doc_metadata or {}).get("content_revision", 1)
+        stored = save_original(
+            str(tenant_id), doc_id, original_version, content, file_name
+        )
+        document.doc_metadata = {**(document.doc_metadata or {}), "original_file": stored}
+    except OSError:
+        logger.warning("original_file_save_failed", extra={"doc_id": doc_id})
     await db.commit()
     return APIResponse(
         data=DocumentCreateResponse(
@@ -272,8 +285,8 @@ async def list_knowledge_documents(
     page: int = Query(1, ge=1),
     page_size: int = Query(40, ge=1, le=100),
     q: str = Query("", max_length=200),
-    doc_status: Optional[str] = Query(None, alias="status"),
-    level: Optional[str] = Query(None),
+    doc_status: str | None = Query(None, alias="status"),
+    level: str | None = Query(None),
     user: User = Depends(_require_query),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[DocumentListResponse]:
@@ -322,7 +335,7 @@ async def list_knowledge_documents(
     )
 
 
-async def _readable_document(db: AsyncSession, user: User, doc_id: str) -> Optional[KnowledgeDoc]:
+async def _readable_document(db: AsyncSession, user: User, doc_id: str) -> KnowledgeDoc | None:
     filters = knowledge_filters(user, include_expired=True)
     filters["include_future"] = has_permission(user.role, Permission.KNOWLEDGE_MANAGE)
     stmt = apply_knowledge_access(select(KnowledgeDoc), filters, chunks=False).where(
@@ -385,6 +398,13 @@ async def replace_knowledge_content(
         old_value={"revision": old_revision},
         new_value={"revision": old_revision + 1, "chunk_count": count},
     )
+    try:
+        stored = save_original(
+            str(tenant_id), doc_id, old_revision + 1, content, file.filename
+        )
+        document.doc_metadata = {**(document.doc_metadata or {}), "original_file": stored}
+    except OSError:
+        logger.warning("original_file_save_failed", extra={"doc_id": doc_id})
     await db.commit()
     return APIResponse(
         data=DocumentCreateResponse(
@@ -511,6 +531,7 @@ async def delete_knowledge_document(
         old_value={"status": old_status},
         new_value={"is_deleted": True, "status": document.status},
     )
+    remove_originals(str(user.tenant_id), doc_id)
     await db.commit()
     return APIResponse(data=DocumentResponse.from_document(document), trace_id=_trace_id(request))
 
@@ -550,4 +571,198 @@ async def read_document_chunks(
             for c in chunks
         ],
         trace_id=_trace_id(request),
+    )
+
+
+class DocumentMetadataPatch(BaseModel):
+    """授权人员修正元数据；分级与范围变更记录审计。"""
+
+    title: str | None = Field(None, min_length=1, max_length=500)
+    issuer: str | None = Field(None, min_length=1, max_length=200)
+    doc_number: str | None = Field(None, max_length=100)
+    level: str | None = Field(None, pattern="^(central|provincial|school|department)$")
+    visibility: str | None = Field(None, pattern="^(public|school|department|branch)$")
+    security_level: str | None = Field(None, pattern="^(public|internal|sensitive|classified)$")
+    effective_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    expiration_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    tags: str | None = Field(None, max_length=500)
+    summary: str | None = Field(None, max_length=2000)
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+
+@router.patch(
+    "/knowledge-docs/{doc_id}/metadata",
+    response_model=APIResponse[DocumentResponse],
+    summary="修正文档元数据",
+    description="由授权人员修正来源、标签、时效与可见范围；变更记录审计，历史版本不受影响。",
+    tags=["知识库"],
+)
+async def patch_knowledge_document_metadata(
+    doc_id: str,
+    body: DocumentMetadataPatch,
+    request: Request,
+    user: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[DocumentResponse]:
+    """修正元数据并保留变更审计；不重建片段（检索时实时应用文档级属性）。"""
+    document = await _readable_document(db, user, doc_id)
+    if document is None or str(document.tenant_id) != str(user.tenant_id):
+        raise HTTPException(status_code=404, detail="文档不存在")
+    changes = body.model_dump(exclude_unset=True, exclude={"reason"})
+    if not changes:
+        raise HTTPException(status_code=422, detail="没有需要修正的元数据")
+    old_value: dict[str, Any] = {
+        "title": document.title,
+        "issuer": document.issuer,
+        "doc_number": document.doc_number,
+        "level": document.level,
+        "visibility": document.visibility,
+        "security_level": document.security_level,
+        "effective_date": document.effective_date.isoformat() if document.effective_date else None,
+        "expiration_date": document.expiration_date.isoformat() if document.expiration_date else None,
+        "tags": list(document.tags or []),
+        "summary": document.summary,
+    }
+    new_value = dict(old_value)
+    for key, value in changes.items():
+        if key in ("effective_date", "expiration_date"):
+            new_value[key] = value or None
+            continue
+        if key == "tags":
+            new_value[key] = _split_tags(value) if value else []
+            continue
+        new_value[key] = value
+    for key, value in new_value.items():
+        if key in ("effective_date", "expiration_date"):
+            setattr(
+                document, key, date_type.fromisoformat(value) if value else None
+            )
+        elif key == "tags":
+            setattr(document, key, value)
+        else:
+            setattr(document, key, value)
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="update_metadata",
+        resource_type="knowledge_doc",
+        resource_id=str(document.id),
+        data_level=document.security_level,
+        old_value=old_value,
+        new_value=dict(new_value),
+    )
+    await db.commit()
+    return APIResponse(
+        data=DocumentResponse.from_document(document),
+        trace_id=_trace_id(request),
+    )
+
+
+@router.get(
+    "/knowledge-docs/{doc_id}/processing-status",
+    response_model=APIResponse[dict],
+    summary="向量化处理状态",
+    description="待处理/处理中/可检索/失败 状态与数量；重试走既有受权限控制的向量化接口。",
+    tags=["知识库"],
+)
+async def knowledge_processing_status(
+    doc_id: str,
+    request: Request,
+    user: User = Depends(_require_query),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """按片段向量是否存在计算处理状态，失败原因来自最近一次处理记录。"""
+    document = await _readable_document(db, user, doc_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    count_stmt = (
+        select(
+            func.count(EmbeddingChunk.id),
+            func.count(EmbeddingChunk.id).filter(EmbeddingChunk.embedding.is_not(None)),
+        ).where(EmbeddingChunk.doc_id == document.id, EmbeddingChunk.is_deleted.is_(False))
+    )
+    total, embedded = (await execute_knowledge_query(db, count_stmt)).one()
+    total, embedded = int(total or 0), int(embedded or 0)
+    error = (document.doc_metadata or {}).get("vector_error")
+    if total == 0:
+        status_label = "failed" if error else "no_chunks"
+    elif embedded == total:
+        status_label = "ready"
+    elif embedded > 0:
+        status_label = "partial"
+    else:
+        status_label = "pending"
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="read_processing_status",
+        resource_type="knowledge_doc",
+        resource_id=str(document.id),
+        data_level=document.security_level,
+        new_value={"status": status_label, "total": total, "embedded": embedded},
+    )
+    await db.commit()
+    return APIResponse(
+        data={
+            "doc_id": document.doc_id,
+            "status": status_label,
+            "total_chunks": total,
+            "embedded_chunks": embedded,
+            "pending_chunks": total - embedded,
+            "error": error,
+            "content_revision": (document.doc_metadata or {}).get("content_revision", 1),
+            "retry_endpoint": "/embeddings/embed" if status_label in ("pending", "partial", "failed") else None,
+        },
+        trace_id=_trace_id(request),
+    )
+
+
+@router.get(
+    "/knowledge-docs/{doc_id}/file",
+    response_model=None,
+    summary="下载授权原始文件",
+    description="按当前权限下载对应版本原始文件；未留存或无权时明确拒绝。",
+    tags=["知识库"],
+)
+async def download_original_file(
+    doc_id: str,
+    request: Request,
+    revision: int | None = Query(None, ge=1),
+    user: User = Depends(_require_query),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """下载与引用一致的版本原文；下载行为与旧版本访问遵守同一组织与分级控制。"""
+    document = await _readable_document(db, user, doc_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    stored = (document.doc_metadata or {}).get("original_file")
+    target_revision = revision or (stored.get("revision") if isinstance(stored, dict) else None)
+    if not target_revision or not stored:
+        raise HTTPException(status_code=404, detail="原始文件未留存，暂无版本可下载")
+    import asyncio
+
+    content = await asyncio.to_thread(
+        read_original, str(user.tenant_id), doc_id, int(target_revision)
+    )
+    if content is None:
+        raise HTTPException(status_code=404, detail="原始文件未留存，暂无版本可下载")
+    file_name = stored.get("file_name") or document.file_name
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="download",
+        resource_type="knowledge_doc",
+        resource_id=str(document.id),
+        data_level=document.security_level,
+        new_value={"revision": int(target_revision), "size": len(content)},
+    )
+    await db.commit()
+    disposition = f"attachment; filename*=UTF-8''{url_quote(file_name)}"
+    return Response(
+        content=content,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": disposition, "X-Content-Type-Options": "nosniff"},
     )
