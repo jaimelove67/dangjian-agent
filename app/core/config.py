@@ -109,6 +109,9 @@ class Settings(BaseSettings):
     # ==================== 业务配置 ====================
     ACTIVIST_TRAINING_DAYS: int = Field(default=365, description="入党积极分子培养期上限（天）")
     PROBATIONARY_PERIOD_DAYS: int = Field(default=365, description="预备党员预备期上限（天）")
+    ASSESSMENT_REMINDER_SCAN_SECONDS: int = Field(
+        default=300, ge=60, le=86400, description="考核站内提醒扫描周期（秒）"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -99,6 +99,15 @@ export type PermissionCode =
   | 'member.stage_transition'
   | 'member.scoring'
   | 'meeting.archive'
+  | 'assessment.query'
+  | 'assessment.manage'
+  | 'assessment.configure'
+  | 'assessment.review'
+  | 'assessment.export'
+  | 'study.query'
+  | 'study.manage'
+  | 'study.review'
+  | 'admin.archive_confirm'
   | 'admin.config'
   | 'admin.audit'
 
@@ -110,6 +119,15 @@ export const PERM = {
   STAGE_TRANSITION: 'member.stage_transition',
   SCORING: 'member.scoring',
   MEETING_ARCHIVE: 'meeting.archive',
+  ASSESSMENT_QUERY: 'assessment.query',
+  ASSESSMENT_MANAGE: 'assessment.manage',
+  ASSESSMENT_CONFIGURE: 'assessment.configure',
+  ASSESSMENT_REVIEW: 'assessment.review',
+  ASSESSMENT_EXPORT: 'assessment.export',
+  STUDY_QUERY: 'study.query',
+  STUDY_MANAGE: 'study.manage',
+  STUDY_REVIEW: 'study.review',
+  ARCHIVE_CONFIRM: 'admin.archive_confirm',
   CONFIG_MANAGE: 'admin.config',
   AUDIT_QUERY: 'admin.audit',
 } as const satisfies Record<string, PermissionCode>

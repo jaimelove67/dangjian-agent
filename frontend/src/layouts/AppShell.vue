@@ -35,7 +35,11 @@ const NAV: NavGroup[] = [
   },
   {
     label: '业务',
-    items: [{ to: '/members', label: '党员发展', icon: 'people', perm: PERM.MEMBER_QUERY }],
+    items: [
+      { to: '/members', label: '党员发展', icon: 'people', perm: PERM.MEMBER_QUERY },
+      { to: '/assessment', label: '年度考核', icon: 'check', perm: PERM.ASSESSMENT_QUERY },
+      { to: '/study', label: '中心组学习', icon: 'book', perm: PERM.STUDY_QUERY },
+    ],
   },
   {
     label: '系统',

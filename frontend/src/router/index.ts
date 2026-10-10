@@ -51,10 +51,22 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '知识库', group: '资料', perm: PERM.KNOWLEDGE_MANAGE },
       },
       {
+        path: 'assessment',
+        name: 'assessment',
+        component: () => import('@/views/AssessmentView.vue'),
+        meta: { title: '年度考核', group: '业务', perm: PERM.ASSESSMENT_QUERY },
+      },
+      {
         path: 'members',
         name: 'members',
         component: () => import('@/views/MembersView.vue'),
         meta: { title: '党员发展', group: '业务', perm: PERM.MEMBER_QUERY },
+      },
+      {
+        path: 'study',
+        name: 'study',
+        component: () => import('@/views/StudyView.vue'),
+        meta: { title: '中心组学习', group: '业务', perm: PERM.STUDY_QUERY },
       },
       {
         path: 'system',

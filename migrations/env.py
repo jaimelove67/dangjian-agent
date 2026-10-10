@@ -9,11 +9,23 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # 导入 Base 和所有模型
 from app.db.base import Base
+from app.models.assessment import (  # noqa: F401
+    AssessmentArchive,
+    AssessmentEvidence,
+    AssessmentIndicator,
+    AssessmentPlan,
+    AssessmentPolicy,
+    AssessmentReminder,
+    AssessmentRun,
+    AssessmentTask,
+)
 from app.models.audit import AuditLog  # noqa: F401 - 注册迁移元数据
 from app.models.knowledge import EmbeddingChunk, KnowledgeDoc  # noqa: F401
+from app.models.meeting import ContentRevision, MeetingRecord  # noqa: F401
 from app.models.member import MemberProfile  # noqa: F401
 from app.models.org import OrgUnit  # noqa: F401
 from app.models.qa_session import QASession  # noqa: F401
+from app.models.study import StudyPlan, StudyPlanItem  # noqa: F401
 from app.models.tenant import Tenant  # noqa: F401
 from app.models.user import User  # noqa: F401
 

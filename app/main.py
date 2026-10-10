@@ -1,8 +1,9 @@
 """FastAPI 应用主入口"""
 
+import asyncio
 import re
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import AsyncGenerator, Awaitable, Callable
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -10,7 +11,18 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import admin, auth, embeddings, health, knowledge, member, qa, user
+from app.api.v1 import (
+    admin,
+    assessment,
+    auth,
+    embeddings,
+    health,
+    knowledge,
+    member,
+    qa,
+    study,
+    user,
+)
 from app.core import tenant as _tenant  # noqa: F401  导入即注册租户隔离事件监听
 from app.core.cache import redis_manager
 from app.core.config import settings
@@ -56,7 +68,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
 
     init_models()
 
-    yield
+    from app.services.assessment_scheduler import assessment_reminder_loop
+
+    reminder_task = asyncio.create_task(assessment_reminder_loop())
+    try:
+        yield
+    finally:
+        reminder_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await reminder_task
 
     # 关闭时执行
     logger.info("Application shutting down...")
@@ -117,8 +137,10 @@ app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库"])
 app.include_router(embeddings.router, prefix="/api/v1", tags=["向量化"])
 app.include_router(qa.router, prefix="/api/v1", tags=["知识问答"])
 app.include_router(member.router, prefix="/api/v1", tags=["党员发展"])
+app.include_router(assessment.router, prefix="/api/v1", tags=["年度考核"])
 app.include_router(user.router, prefix="/api/v1", tags=["兼容用户接口"])
 app.include_router(admin.router, prefix="/api/v1", tags=["管理"])
+app.include_router(study.router, prefix="/api/v1", tags=["中心组学习"])
 
 
 # 全局异常处理

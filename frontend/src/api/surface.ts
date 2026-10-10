@@ -18,6 +18,14 @@ export interface ApiSurfaceItem {
 }
 
 export const API_SURFACE: ApiSurfaceItem[] = [
+  { label: '年度考核工作台', method: 'GET', path: '/api/v1/assessment/workspace', purpose: '查看授权年度指标、任务进度、佐证缺项与人工计划草案', available: true },
+  { label: '指标归集', method: 'POST', path: '/api/v1/assessment/recalculate', purpose: '复用业务源记录，保存规则和归集版本', available: true },
+  { label: '考核材料导出', method: 'POST', path: '/api/v1/assessment/runs/{run_id}/export', purpose: '按当前权限导出指标表、任务与佐证目录', available: true },
+  { label: '中心组年度计划', method: 'GET', path: '/api/v1/study/plans', purpose: '按年度、期间和党委范围查询学习计划', available: true },
+  { label: '学习资料推荐', method: 'GET', path: '/api/v1/study/materials', purpose: '检索有效且适用的授权知识材料', available: true },
+  { label: '学习纪要审核', method: 'POST', path: '/api/v1/study/activities/{id}/review', purpose: '人工核对原文后通过或退回纪要', available: true },
+  { label: '学习历史归档', method: 'GET', path: '/api/v1/study/history', purpose: '学校确认电子效力后查询审核归档记录', available: true },
+  { label: '学习考核复用', method: 'GET', path: '/api/v1/study/metrics', purpose: '只读统计学习次数、参学率及佐证来源', available: true },
   {
     label: '登录',
     method: 'POST',

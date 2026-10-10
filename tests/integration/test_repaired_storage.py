@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -83,11 +84,15 @@ async def test_migration_adopts_users_without_changing_records(storage_url):
                 config.attributes["connection"] = sync_conn
                 config.cmd_opts = SimpleNamespace(x=["adopt_existing_users=true"])
                 command.upgrade(config, "head")
+                return ScriptDirectory.from_config(config).get_current_head()
 
-            await conn.run_sync(migrate)
+            expected_revision = await conn.run_sync(migrate)
             after = (await conn.execute(select(User.__table__))).mappings().all()
             assert before == after
-            assert await conn.scalar(text("SELECT version_num FROM alembic_version")) == "005"
+            assert (
+                await conn.scalar(text("SELECT version_num FROM alembic_version"))
+                == expected_revision
+            )
             assert await conn.scalar(text("SELECT to_regclass('knowledge_docs') IS NOT NULL"))
     finally:
         await engine.dispose()
