@@ -1,10 +1,12 @@
 """Alembic 配置文件"""
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # 导入 Base 和所有模型
@@ -40,11 +42,15 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def run_migrations_offline() -> None:
-    """离线模式运行迁移"""
+def _database_url() -> str:
     from app.core.config import settings
 
-    url = settings.DATABASE_URL
+    return os.getenv("ALEMBIC_DATABASE_URL") or settings.DATABASE_URL
+
+
+def run_migrations_offline() -> None:
+    """离线模式运行迁移"""
+    url = _database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -63,11 +69,12 @@ def _migrate(connection) -> None:
 
 
 async def _run_async_migrations() -> None:
-    from app.core.config import settings
-
     section = config.get_section(config.config_ini_section) or {}
-    # 保留从 .env/环境变量加载 URL 的既有行为，迁移与运行时共用异步驱动。
-    section["sqlalchemy.url"] = settings.DATABASE_URL
+    # 保留远端专用迁移 URL 覆盖和本地异步驱动/测试事务连接。
+    url = make_url(_database_url())
+    if url.drivername in {"postgresql", "postgresql+psycopg2"}:
+        url = url.set(drivername="postgresql+asyncpg")
+    section["sqlalchemy.url"] = url
     connectable = async_engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(_migrate)

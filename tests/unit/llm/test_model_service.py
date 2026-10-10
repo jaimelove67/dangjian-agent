@@ -151,12 +151,14 @@ async def test_embed_with_context(model_service, mock_router):
 @pytest.mark.asyncio
 async def test_health_check(model_service, mock_router):
     """测试健康检查"""
-    # 准备mock
-    mock_router.registry.health_check_all.return_value = {
-        "model-1": True,
-        "model-2": False,
-        "model-3": True,
-    }
+    # 准备mock（health_check_all 为 async 方法，需用 AsyncMock，否则 await 会失败）
+    mock_router.registry.health_check_all = AsyncMock(
+        return_value={
+            "model-1": True,
+            "model-2": False,
+            "model-3": True,
+        }
+    )
 
     # 调用
     results = await model_service.health_check()

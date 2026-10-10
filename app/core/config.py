@@ -76,7 +76,7 @@ class Settings(BaseSettings):
 
     # LLM 模型配置
     LLM_MODEL_NAME: str = Field(
-        default="qwen3.8-flash",
+        default="deepseek-v3",
         validation_alias=AliasChoices("CHAT_MODEL", "LLM_MODEL_NAME"),
         description="LLM 模型名称",
     )

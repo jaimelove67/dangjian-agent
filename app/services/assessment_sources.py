@@ -156,7 +156,9 @@ async def load_source(
             MemberProfile.stage_joined_on <= min(end, date.today()),
         )
         if options["stages"]:
-            statement = statement.where(MemberProfile.current_stage.in_(options["stages"]))
+            # 前端沿用 formal；现有人员阶段枚举在数据库中保存为 member。
+            stages = ["member" if stage == "formal" else stage for stage in options["stages"]]
+            statement = statement.where(MemberProfile.current_stage.in_(stages))
         rows = list((await db.execute(statement.order_by(MemberProfile.id))).scalars().all())
         records = tuple(
             SourceRecord(

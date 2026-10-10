@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from argparse import Namespace
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -10,6 +11,7 @@ from sqlalchemy.pool import NullPool
 from app.models.assessment import AssessmentReminder
 from app.models.audit import AuditLog
 from app.models.meeting import ContentRevision
+from app.models.member import MemberProfile
 from app.models.user import User, UserRole
 from app.services.assessment_service import AssessmentService
 from tests.integration import test_assessment_workflow as fixtures
@@ -212,6 +214,17 @@ async def test_school_history_retains_authorized_department_documents(case):
         assert case["doc_id"] not in response.text
 
 
+async def test_formal_member_filter_matches_stored_member_stage(case):
+    async with fixtures.client(case, "branch") as (_, db):
+        profile = (await db.execute(select(MemberProfile))).scalar_one()
+        profile.current_stage = "member"
+        await db.commit()
+    await fixtures.add_rule(case, source="members", source_options={"stages": ["formal"]})
+    run = await fixtures.recalculate(case)
+    assert run["results"][0]["actual"] == 1
+    assert run["results"][0]["sources"][0]["facts"]["stage"] == "member"
+
+
 async def test_scheduler_honors_same_department_evidence_permissions(case, monkeypatch):
     from app.services import assessment_scheduler
 
@@ -272,3 +285,50 @@ async def test_owner_query_count_does_not_grow_with_user_count(case, monkeypatch
         owners = await AssessmentService(db, case["actors"]["branch"])._owners(case["branch"])
         assert len(owners) >= 20
         assert len(calls) <= 3
+
+
+async def test_merged_seed_scripts_scope_users_and_roster_without_password_output(
+    case, monkeypatch, capsys
+):
+    from scripts import create_test_user, seed_member_profiles
+
+    engine = create_async_engine(case["url"], poolclass=NullPool, hide_parameters=True)
+    monkeypatch.setattr(create_test_user, "engine", engine)
+    monkeypatch.setattr(seed_member_profiles, "engine", engine)
+    monkeypatch.setattr(create_test_user.settings, "ENV", "testing")
+    password = "synthetic-review-password-" + uuid.uuid4().hex
+    args = Namespace(
+        username="synthetic-review-" + uuid.uuid4().hex,
+        password=password,
+        name="合成脚本用户",
+        role=UserRole.BRANCH_SECRETARY.value,
+        tenant=case["tenant"],
+        org_unit_id=case["branch"],
+        email="",
+        phone="",
+    )
+    try:
+        await create_test_user.create_user(args)
+        await seed_member_profiles.seed(case["tenant"], case["other"])
+        await seed_member_profiles.seed(case["tenant"], case["other"])
+        assert password not in capsys.readouterr().out
+        async with fixtures.client(case, "school") as (http, db):
+            created = (
+                await db.execute(select(User).where(User.username == args.username))
+            ).scalar_one()
+            assert created.org_unit_id == case["branch"]
+            profiles = list(
+                (
+                    await db.execute(
+                        select(MemberProfile).where(MemberProfile.org_unit_id == case["other"])
+                    )
+                ).scalars()
+            )
+            assert len(profiles) == 6
+            assert all(profile.tenant_id == case["tenant"] for profile in profiles)
+            response = await http.get("/api/v1/member/roster")
+            assert response.status_code == 200, response.text
+            visible = {item["id"] for item in response.json()["data"]["items"]}
+            assert {profile.id for profile in profiles}.issubset(visible)
+    finally:
+        await engine.dispose()

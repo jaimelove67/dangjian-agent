@@ -35,16 +35,16 @@
 
 环境为 Windows、Python 3.13.9、Node.js 24、可用 PostgreSQL 和本地 Chromium。测试进程覆盖 `DASHSCOPE_API_KEY`、`QWEN_API_KEY` 为空，不改 `.env`，没有调用云模型。数据库测试只创建和清理随机 `party_repair_test_*` 库。
 
-- `python -m pytest tests -o addopts= -q --tb=short --show-capture=no --junitxml=tmp/test-results/modules45-review-fixed.xml`：416 通过、0 失败、1 跳过；跳过为当前环境缺少 `pypdf` 的 PDF 检查。最终集成检查见[模块4、5审查记录](MODULE4_MODULE5_REVIEW_2026-10-10.md)。
+- `python -m pytest tests -o addopts= -q --tb=short --show-capture=no --disable-warnings --junitxml=tmp/test-results/modules45-integrated.xml`：422 通过、0 失败、1 跳过；跳过为当前环境缺少 `pypdf` 的 PDF 检查。最终集成检查见[模块4、5审查记录](MODULE4_MODULE5_REVIEW_2026-10-10.md)。
 - 模块5在上述回归中含 17 项规则测试和 18 项真实 HTTP/数据库测试。覆盖跨年度、零分母、重复与冲突来源、组织转接、子组织独立进度、删除/修订/涉密/废止材料、权限不足、人工审核、草案修订、提醒处理、归档撤销、CSV 公式注入及导出审计。
 - 自定义学习期间在查询活动时先按实际日期筛选；期间外待审核活动不会影响本期归集。迁移 `006 → 007_assessment → 006 → 007_assessment` 在独立库保留既有文档数据。
 - `npm --prefix frontend run build`：类型检查与生产构建通过。
 - 在 `frontend/` 执行 `node tests/assessment-workflows.mjs`：7 组浏览器流程通过，API 为明确的合成响应。覆盖规则、归集、历史、来源、失败保存保留输入、任务责任、草案新版本、默认归档门槛、下载、统一设置和移动布局，页面运行异常为 0。截图位于 `tmp/test-results/assessment-browser/`。
-- 本次修改的30个 Python 文件通过项目 Black、isort 与 flake8 检查。
+- 最终集成修改的39个 Python 文件通过项目 Black、isort 与 flake8 检查。
 
 本轮全项目回归还修正了模块4迁移测试的合成 SQL：补填必填 `is_deleted=false`，使其进入正常验证；未调整学习业务行为。
 
-审查另补充7项真实HTTP/独立库回归，覆盖退回审核时资料权限变化、旧审核及修订留痕、提醒重新出现、口径变更后的历史授权、学校范围院系资料、后台扫描权限一致性和责任人查询规模。对应修复保留业务修订快照，审计只记录对象及版本编号。
+审查另补充8项模块真实HTTP/独立库回归，覆盖退回审核时资料权限变化、旧审核及修订留痕、提醒重新出现、口径变更后的历史授权、学校范围院系资料、正式党员筛选、后台扫描权限一致性和责任人查询规模。对应修复保留业务修订快照，审计只记录对象及版本编号。另有5项合并脚本回归，检查测试账号、组织名册和演示资料的隔离。
 
 ## 待验收与依赖
 

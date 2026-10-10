@@ -31,11 +31,11 @@
 
 - 模块4单元与真实HTTP/隔离PostgreSQL回归：35项全部通过；覆盖输入、原文定位、摘录数量与长度上限、日期、人工审核、并发、幂等、组织/租户范围、材料权限变化、归档撤销和统计。
 - `005 → 006` 升级与空学习表回退/再次升级在随机独立库验证，迁移前已有文档完整行数据保持一致。业务库没有迁移或写入。
-- 完整后端审查回归：`python -m pytest tests -o addopts= -q --tb=short --show-capture=no --junitxml=tmp/test-results/modules45-review-fixed.xml`，416通过、0失败、1跳过，包含年度考核模块及7项新增审查回归。跳过为旧PDF解析测试缺少 `pypdf`；不能视为该测试验收通过。最终集成检查见[模块4、5审查记录](MODULE4_MODULE5_REVIEW_2026-10-10.md)。
+- 最终完整后端审查回归：`python -m pytest tests -o addopts= -q --tb=short --show-capture=no --disable-warnings --junitxml=tmp/test-results/modules45-integrated.xml`，422通过、0失败、1跳过，包含年度考核模块、8项模块审查回归及5项合并脚本回归。跳过为旧PDF解析测试缺少 `pypdf`；不能视为该测试验收通过。最终集成检查见[模块4、5审查记录](MODULE4_MODULE5_REVIEW_2026-10-10.md)。
 - 正式前端：`npm --prefix frontend run build`，TypeScript与生产构建通过。
 - 浏览器：从 `frontend/` 执行 `node tests/study-workflows.mjs`，三组流程通过：计划/材料/提纲/不同审核人/纪要/归档/导出/历史/统计；错误重试与移动布局；普通成员导航拦截。API使用合成响应，页面异常0，未知API请求0。可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定已安装的Chromium。
 - 本次新增Python文件通过项目Black、isort及flake8检查。工具安装在忽略目录 `tmp/module4-tools/`，没有变更项目依赖。
-- 机器结果：审查分支中的 `tmp/test-results/modules45-review-fixed.xml`。浏览器截图和日志保存在各工作流测试脚本指定的 `tmp/` 忽略目录中。
+- 机器结果：审查分支中的 `tmp/test-results/modules45-integrated.xml`。浏览器截图和日志保存在各工作流测试脚本指定的 `tmp/` 忽略目录中。
 
 ## 反向检查与边界
 

@@ -1,5 +1,6 @@
 """检索模块单元测试"""
 
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -58,6 +59,9 @@ class TestVectorRetriever:
         mock_row.doc_number = "测试字〔2024〕1号"
         mock_row.level = "school"
         mock_row.security_level = "public"
+        mock_row.status = "effective"
+        mock_row.effective_date = date(2024, 1, 1)
+        mock_row.expiration_date = None
         mock_row.distance = 0.2
 
         mock_result = MagicMock()
@@ -71,6 +75,9 @@ class TestVectorRetriever:
         assert len(results) == 1
         assert results[0].chunk_id == "chunk-1"
         assert results[0].content == "测试内容"
+        assert results[0].doc_status == "effective"
+        assert results[0].effective_date == date(2024, 1, 1)
+        assert results[0].expiration_date is None
         assert results[0].score == pytest.approx(0.8, abs=0.01)  # 1 - 0.2
 
 
@@ -96,6 +103,9 @@ class TestKeywordRetriever:
         mock_row.title = "测试文档"
         mock_row.issuer = "测试单位"
         mock_row.doc_number = "测试字〔2024〕1号"
+        mock_row.status = "effective"
+        mock_row.effective_date = date(2024, 1, 1)
+        mock_row.expiration_date = None
         mock_row.level = "school"
         mock_row.security_level = "public"
         mock_row.score = 0.75
@@ -110,6 +120,9 @@ class TestKeywordRetriever:
         assert len(results) == 1
         assert results[0].chunk_id == "chunk-1"
         assert results[0].score == 0.75
+        assert results[0].doc_status == "effective"
+        assert results[0].effective_date == date(2024, 1, 1)
+        assert results[0].expiration_date is None
 
 
 class TestHybridRetriever:
