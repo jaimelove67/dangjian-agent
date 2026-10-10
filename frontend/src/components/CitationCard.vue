@@ -48,6 +48,9 @@ const anchorId = computed(() => `cite-${props.index}`)
       </header>
 
       <dl class="cite__facts">
+        <div class="cite__fact"><dt>文档编号</dt><dd class="u-mono">{{ citation.doc_id }}</dd></div>
+        <div v-if="citation.file_name" class="cite__fact"><dt>文件名</dt><dd>{{ citation.file_name }}</dd></div>
+        <div v-if="citation.effective_date" class="cite__fact"><dt>生效日期</dt><dd>{{ citation.effective_date }}</dd></div>
         <div class="cite__fact">
           <dt>发文机关</dt>
           <dd>{{ citation.issuer }}</dd>

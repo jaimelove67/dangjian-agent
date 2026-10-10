@@ -9,6 +9,7 @@
 认证成功后会在请求生命周期内写入租户上下文（供数据访问层自动过滤），
 请求结束后清理，避免上下文泄漏。
 """
+
 from __future__ import annotations
 
 from typing import Any, AsyncGenerator, Callable, Optional
@@ -18,6 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import tenant_config
 from app.core.security import (
     Permission,
     TokenError,
@@ -27,6 +29,7 @@ from app.core.security import (
     resolve_data_level,
 )
 from app.core.tenant import clear_tenant_context, set_tenant_context
+from app.core.token_revocation import get_token_revocation_store
 from app.db.session import get_db
 from app.models.user import User, UserRole
 
@@ -49,7 +52,9 @@ async def get_token_payload(
     if credentials is None or not credentials.credentials:
         raise _unauthorized("缺少访问令牌")
     try:
-        return decode_token(credentials.credentials, expected_type=TokenType.ACCESS)
+        payload = decode_token(credentials.credentials, expected_type=TokenType.ACCESS)
+        await get_token_revocation_store().assert_active(payload)
+        return payload
     except TokenError as exc:
         raise _unauthorized(str(exc)) from exc
 
@@ -69,12 +74,10 @@ async def get_current_user(
     try:
         result = await db.execute(select(User).where(User.id == str(user_id)))
         user = result.scalar_one_or_none()
-        if user is None:
+        if user is None or user.is_deleted or str(user.tenant_id) != str(tenant_id):
             raise _unauthorized("用户不存在或不属于当前租户")
         if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用"
-            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用")
 
         # 数据级别由角色推导（不接受前端传入）
         role = user.role or UserRole.MEMBER
@@ -83,6 +86,27 @@ async def get_current_user(
             user_id=str(user_id),
             data_level=resolve_data_level(role).value,
         )
+        await tenant_config.load(db, str(tenant_id))
+        # 知识范围为本组织及祖先组织；只沿数据库中的同租户关系向上读取。
+        org_ids, seen = [], set()
+        org_id = user.org_unit_id
+        if org_id:
+            from app.models.org import OrgUnit
+
+            while org_id and org_id not in seen and len(seen) < 20:
+                seen.add(org_id)
+                org = (
+                    await db.execute(
+                        select(OrgUnit).where(
+                            OrgUnit.id == org_id, OrgUnit.tenant_id == str(tenant_id)
+                        )
+                    )
+                ).scalar_one_or_none()
+                if org is None or org.is_deleted:
+                    break
+                org_ids.append(str(org.id))
+                org_id = org.parent_id
+        user.knowledge_org_ids = org_ids
         yield user
     finally:
         clear_tenant_context()
@@ -104,9 +128,7 @@ def require_roles(*roles: UserRole) -> Callable[..., Any]:
 
     async def _checker(user: User = Depends(get_current_user)) -> User:
         if user.role not in allowed:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="权限不足"
-            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
         return user
 
     return _checker

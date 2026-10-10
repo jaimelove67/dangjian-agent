@@ -1,11 +1,13 @@
 """检索模块单元测试"""
-import pytest
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.rag.retrieval.base import RetrievalResult
-from app.rag.retrieval.vector import VectorRetriever
-from app.rag.retrieval.keyword import KeywordRetriever
 from app.rag.retrieval.hybrid import HybridRetriever
+from app.rag.retrieval.keyword import KeywordRetriever
+from app.rag.retrieval.vector import VectorRetriever
 
 
 @pytest.fixture
@@ -64,7 +66,7 @@ class TestVectorRetriever:
 
         with patch("app.rag.retrieval.vector.get_model_service", return_value=mock_model_service):
             retriever = VectorRetriever(mock_db)
-            results = await retriever.retrieve("测试查询", top_k=10)
+            results = await retriever.retrieve("测试查询", top_k=10, filters={"tenant_id": "t1"})
 
         assert len(results) == 1
         assert results[0].chunk_id == "chunk-1"
@@ -103,7 +105,7 @@ class TestKeywordRetriever:
         mock_db.execute.return_value = mock_result
 
         retriever = KeywordRetriever(mock_db, use_fts=True, use_trigram=False)
-        results = await retriever.retrieve("测试", top_k=10)
+        results = await retriever.retrieve("测试", top_k=10, filters={"tenant_id": "t1"})
 
         assert len(results) == 1
         assert results[0].chunk_id == "chunk-1"
@@ -132,9 +134,7 @@ class TestHybridRetriever:
         ]
 
         # 执行融合
-        fused = retriever._reciprocal_rank_fusion(
-            vector_results, keyword_results, top_k=10
-        )
+        fused = retriever._reciprocal_rank_fusion(vector_results, keyword_results, top_k=10)
 
         # chunk-1 和 chunk-2 应该排在前面（两个列表都有）
         assert len(fused) >= 2
@@ -146,7 +146,9 @@ class TestHybridRetriever:
     async def test_retrieve_with_reranker(self, mock_db, mock_model_service):
         """测试带重排序的检索"""
         # 模拟向量检索结果
-        vector_result = RetrievalResult("chunk-1", "测试内容", 0.8, "doc-1")
+        vector_result = RetrievalResult(
+            "chunk-1", "测试内容", 0.8, "doc-1", metadata={"security_level": "public"}
+        )
 
         # 模拟重排响应
         mock_rerank_result = MagicMock()

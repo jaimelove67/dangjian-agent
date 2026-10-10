@@ -1,10 +1,12 @@
 """RAG 服务单元测试"""
-import pytest
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.rag.rag_service import RAGService, RAGResponse, Citation
+import pytest
+
+from app.rag.rag_service import RAGService
 from app.rag.retrieval.base import RetrievalResult
-from app.llm.base import DataLevel
+from app.schemas.qa import REFUSAL_ANSWER
 
 
 @pytest.fixture
@@ -52,7 +54,7 @@ class TestRAGService:
 
         response = await service.ask("测试问题")
 
-        assert "没有找到相关信息" in response.answer
+        assert response.answer == REFUSAL_ANSWER
         assert response.retrieved_count == 0
         assert response.has_sufficient_evidence is False
 
@@ -81,7 +83,7 @@ class TestRAGService:
 
         # 模拟 LLM 响应
         mock_llm_response = MagicMock()
-        mock_llm_response.content = "这是生成的答案"
+        mock_llm_response.content = "这是生成的答案[1]"
         mock_model_service.generate.return_value = mock_llm_response
 
         with patch("app.rag.rag_service.get_model_service", return_value=mock_model_service):
@@ -90,7 +92,7 @@ class TestRAGService:
 
             response = await service.ask("测试问题")
 
-        assert response.answer == "这是生成的答案"
+        assert response.answer == "这是生成的答案[1]"
         assert response.retrieved_count == 1
         assert response.used_count == 1
         assert len(response.citations) == 1

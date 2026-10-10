@@ -1,17 +1,13 @@
 """模型服务单元测试"""
-import pytest
+
 from unittest.mock import AsyncMock, MagicMock
 
-from app.llm.service import ModelService
-from app.llm.base import (
-    DataLevel,
-    TaskType,
-    ModelType,
-    ModelResponse,
-    EmbeddingResponse,
-)
-from app.llm.router import RouterError
+import pytest
+
+from app.llm.base import DataLevel, EmbeddingResponse, ModelResponse, ModelType, TaskType
 from app.llm.gateway import GatewayError
+from app.llm.router import RouterError
+from app.llm.service import ModelService
 
 
 @pytest.fixture
@@ -19,6 +15,7 @@ def mock_router():
     """模拟路由器"""
     router = MagicMock()
     router.registry = MagicMock()
+    router.registry.health_check_all = AsyncMock()
     return router
 
 
@@ -139,7 +136,7 @@ async def test_embed_with_context(model_service, mock_router):
 
     # 调用
     context = {"user_id": "test-user", "action": "knowledge_ingest"}
-    response = await model_service.embed(
+    await model_service.embed(
         texts=["文档内容"],
         data_level=DataLevel.INTERNAL,
         context=context,

@@ -46,6 +46,7 @@ const NAV: NavGroup[] = [
 const route = useRoute()
 const router = useRouter()
 const menuOpen = ref(false)
+const signOutError = ref('')
 
 const visibleGroups = computed(() =>
   NAV.map((group) => ({
@@ -69,13 +70,19 @@ function onNavigate(): void {
 }
 
 async function onSignOut(): Promise<void> {
-  await session.signOut()
-  void router.push({ name: 'login' })
+  signOutError.value = ''
+  try {
+    await session.signOut()
+    void router.push({ name: 'login' })
+  } catch (error) {
+    signOutError.value = error instanceof Error ? error.message : '退出失败，请重试'
+  }
 }
 </script>
 
 <template>
   <div class="shell">
+    <p v-if="signOutError" role="alert">{{ signOutError }}</p>
     <!-- 顶栏：单行，56px。左侧是产品标识与分组名，右侧是身份与操作。 -->
     <header class="topbar">
       <button

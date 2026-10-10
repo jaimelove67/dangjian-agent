@@ -79,6 +79,11 @@ export const router = createRouter({
     return saved ?? { top: 0 }
   },
 })
+window.addEventListener('party:session-cleared', () => {
+  if (router.currentRoute.value.name !== 'login') {
+    void router.replace({ name: 'login', query: { next: router.currentRoute.value.fullPath } })
+  }
+})
 
 router.beforeEach(async (to) => {
   if (!session.state.resolved) {

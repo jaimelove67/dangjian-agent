@@ -5,7 +5,7 @@ import { useRoute } from 'vue-router'
 import { checkHealth, checkReady } from '@/api/qa'
 import { API_SURFACE } from '@/api/surface'
 import { ROLE_LABELS, DATA_LEVEL_LABELS, DATA_LEVEL_ROUTE } from '@/api/types'
-import type { HealthResponse, DataLevel } from '@/api/types'
+import type { HealthResponse, ReadyResponse, DataLevel } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
@@ -28,7 +28,7 @@ const deniedPath = computed(() => (typeof route.query.denied === 'string' ? rout
 
 interface Probe {
   label: string
-  run: () => Promise<HealthResponse>
+  run: () => Promise<HealthResponse | ReadyResponse>
 }
 
 const probes: Probe[] = [
@@ -39,7 +39,7 @@ const probes: Probe[] = [
 interface ProbeResult {
   label: string
   loading: boolean
-  data: HealthResponse | null
+  data: HealthResponse | ReadyResponse | null
   error: unknown
 }
 
@@ -73,6 +73,8 @@ const roleLabel = computed(() => (user.value ? ROLE_LABELS[user.value.role] : ''
 const DATA_LEVELS: DataLevel[] = ['public', 'internal', 'sensitive', 'classified']
 
 const missingCount = computed(() => API_SURFACE.filter((s) => !s.available).length)
+const CHECK_LABELS: Record<string, string> = { database: '数据库', redis: '会话存储', schema: '业务结构', models: '模型能力' }
+const CHECK_STATUS: Record<string, string> = { healthy: '正常', unhealthy: '连接失败', migration_required: '需要迁移', configuration_required: '尚未配置', unknown: '未确认' }
 </script>
 
 <template>
@@ -118,6 +120,7 @@ const missingCount = computed(() => API_SURFACE.filter((s) => !s.available).leng
                 <span class="dot"></span>
                 不可用
               </span>
+              <span v-else-if="r.data?.status === 'not_ready'" class="badge badge--warn">尚未就绪</span>
               <span v-else class="badge badge--ok">
                 <span class="dot"></span>
                 正常
@@ -137,18 +140,28 @@ const missingCount = computed(() => API_SURFACE.filter((s) => !s.available).leng
                 <dt>状态</dt>
                 <dd>{{ r.data.status }}</dd>
               </div>
-              <div class="facts__row">
+              <div v-if="'service' in r.data" class="facts__row">
                 <dt>服务名</dt>
                 <dd>{{ r.data.service }}</dd>
               </div>
-              <div class="facts__row">
+              <div v-if="'version' in r.data" class="facts__row">
                 <dt>版本</dt>
                 <dd class="u-mono">{{ r.data.version }}</dd>
               </div>
-              <div class="facts__row">
+              <div v-if="'environment' in r.data" class="facts__row">
                 <dt>运行环境</dt>
                 <dd class="u-mono">{{ r.data.environment }}</dd>
               </div>
+              <template v-if="'checks' in r.data">
+                <div v-for="(status, key) in r.data.checks" :key="key" class="facts__row">
+                  <dt>{{ CHECK_LABELS[key] ?? key }}</dt>
+                  <dd>{{ CHECK_STATUS[status] ?? status }}</dd>
+                </div>
+                <div class="facts__row">
+                  <dt>模型配置</dt>
+                  <dd>聊天：{{ r.data.model_capabilities.llm }}；向量：{{ r.data.model_capabilities.embedding }}；重排：{{ r.data.model_capabilities.reranker }}</dd>
+                </div>
+              </template>
             </dl>
           </li>
         </ul>
@@ -220,8 +233,8 @@ const missingCount = computed(() => API_SURFACE.filter((s) => !s.available).leng
           <h2 class="card__title">数据分级与模型走向</h2>
         </header>
         <p class="card__lead">
-          提问前选择的数据分级决定内容会被送往哪一类模型。公开级可走外部模型，
-          其余级别一律由本地模型处理，该限制在服务端强制校验，前端无法绕过。
+          角色权限决定可访问的资料范围。服务端按问题和所用文档分级：公开与获准的内部内容
+          可使用云端模型，敏感与涉密内容禁止调用云端模型。所选分级只能提高限制。
         </p>
         <ul class="levels">
           <li v-for="lv in DATA_LEVELS" :key="lv" class="levels__row">

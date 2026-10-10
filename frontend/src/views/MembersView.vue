@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 
-import { checkQualification, getTodoSuggestions, getTransitionSuggestion } from '@/api/member'
-import { MOCK_MEMBERS, MOCK_NOTICE, MOCK_TODOS, type MockMember } from '@/api/mock'
+import { checkQualification, createMember, getTodoSuggestions, getTransitionSuggestion, listMembers, listMemberOrganizations } from '@/api/member'
+import { ApiError } from '@/api/http'
 import type {
   MemberStage,
+  MemberRosterItem,
+  MemberOrgOption,
   QualificationResult,
   TodoItem,
   TodoSuggestionsResponse,
@@ -16,6 +18,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import { session } from '@/stores/session'
 
 /**
  * 党员发展。
@@ -25,14 +28,17 @@ import PageHeader from '@/components/PageHeader.vue'
  *   - 所有校验结果都标注为"建议 / 待人工确认"，绝不出现"通过""不通过"这类结论性动词
  *   - 阶段性动作按钮一律不可用，只给"生成建议"，把操作权明确留在人工途径
  *
- * ⚠️ 后端缺口：无名册接口，左侧名册为 mock 并以徽标标注。
- *    右侧三块（资格校验 / 流转建议 / 待办建议）是**真实接口调用**。
+ * 名册与人工登记按登录组织范围查询，规则分析不修改人员阶段。
  */
 
 type PanelTab = 'qualification' | 'transition' | 'todo'
 
-const members = ref<MockMember[]>([])
+const members = ref<MemberRosterItem[]>([])
 const loading = ref(true)
+const rosterError = ref<unknown>(null)
+const total = ref(0)
+const page = ref(1)
+const pageSize = 40
 const selectedId = ref<string | null>(null)
 const panelTab = ref<PanelTab>('qualification')
 
@@ -42,6 +48,19 @@ const todos = ref<TodoSuggestionsResponse | null>(null)
 
 const busy = ref<null | PanelTab>(null)
 const panelError = ref<unknown>(null)
+const createOpen = ref(false)
+const creating = ref(false)
+const createError = ref('')
+const createSuccess = ref('')
+const organizations = ref<MemberOrgOption[]>([])
+const organizationsLoading = ref(false)
+const organizationsError = ref<unknown>(null)
+const canCreate = computed(() => session.can('member.stage_transition'))
+const registration = reactive({
+  name: '', org_unit_id: '', current_stage: 'applicant' as MemberStage,
+  stage_joined_on: '', materials: '', pending: 0,
+})
+const registrationValid = computed(() => registration.name.trim().length > 0 && registration.org_unit_id.length > 0)
 
 /** 校验用输入，跟随选中成员初始化，允许人工调整 */
 const form = reactive({
@@ -76,16 +95,71 @@ const targetOptions = computed(() => {
   return STAGE_ORDER.slice(i + 1).map((s) => ({ value: s, label: STAGE_LABELS[s] }))
 })
 
-function load(): void {
+let rosterSequence = 0
+async function load(): Promise<void> {
+  const sequence = ++rosterSequence
   loading.value = true
-  window.setTimeout(() => {
-    members.value = MOCK_MEMBERS.map((m) => ({ ...m }))
-    loading.value = false
-    if (members.value.length) select(members.value[0]!.id)
-  }, 320)
+  rosterError.value = null
+  try {
+    const response = await listMembers({ page: page.value, page_size: pageSize })
+    if (sequence !== rosterSequence) return
+    members.value = response.items
+    total.value = response.total
+    const current = members.value.find((member) => member.id === selectedId.value) ?? members.value[0]
+    if (current) select(current.id)
+    else selectedId.value = null
+  } catch (error) {
+    if (sequence === rosterSequence) rosterError.value = error
+  } finally {
+    if (sequence === rosterSequence) loading.value = false
+  }
 }
 
-onMounted(load)
+async function loadOrganizations(): Promise<void> {
+  organizationsLoading.value = true
+  organizationsError.value = null
+  try {
+    organizations.value = await listMemberOrganizations()
+    registration.org_unit_id = organizations.value.some((org) => org.id === session.state.user?.org_unit_id)
+      ? session.state.user!.org_unit_id! : ''
+  } catch (error) {
+    organizationsError.value = error
+  } finally {
+    organizationsLoading.value = false
+  }
+}
+
+onMounted(() => { void load(); void loadOrganizations() })
+
+function turnPage(delta: number): void {
+  page.value += delta
+  void load()
+}
+
+async function registerMember(): Promise<void> {
+  if (!registrationValid.value || creating.value) return
+  creating.value = true
+  createError.value = ''
+  createSuccess.value = ''
+  try {
+    const created = await createMember({
+      name: registration.name.trim(), org_unit_id: registration.org_unit_id,
+      current_stage: registration.current_stage, stage_joined_on: registration.stage_joined_on || undefined,
+      materials: registration.materials.split('\n').map((name) => name.trim()).filter(Boolean),
+      pending: registration.pending,
+    })
+    createSuccess.value = `已登记：${created.name}。规则分析仅提供建议，阶段变更仍须人工确认。`
+    Object.assign(registration, { name: '', current_stage: 'applicant', stage_joined_on: '', materials: '', pending: 0 })
+    createOpen.value = false
+    selectedId.value = created.id
+    page.value = 1
+    await load()
+  } catch (error) {
+    createError.value = error instanceof ApiError ? error.message : '登记失败，请重试'
+  } finally {
+    creating.value = false
+  }
+}
 
 function select(id: string): void {
   selectedId.value = id
@@ -135,6 +209,7 @@ async function runTransition(): Promise<void> {
   try {
     transition.value = await getTransitionSuggestion({
       current_stage: selected.value.stage,
+      target_stage: form.target_stage,
       materials: [...form.materials],
       days_in_stage: form.days_in_stage,
     })
@@ -150,7 +225,9 @@ async function runTodos(): Promise<void> {
   busy.value = 'todo'
   panelError.value = null
   try {
-    todos.value = await getTodoSuggestions({ current_stage: selected.value.stage })
+    todos.value = await getTodoSuggestions({
+      current_stage: selected.value.stage, materials: [...form.materials], days_in_stage: form.days_in_stage,
+    })
   } catch (err) {
     panelError.value = err
   } finally {
@@ -184,7 +261,10 @@ const todoTone: Record<TodoItem['category'], string> = {
       description="对照各阶段材料与时限要求，辅助核对培养进度。所有结果均为待人工确认的提示。"
     >
       <template #actions>
-        <button class="btn btn--quiet" type="button" @click="load">
+        <button v-if="canCreate" class="btn btn--primary" type="button" :disabled="creating || busy !== null" @click="createOpen = !createOpen">
+          <AppIcon name="plus" :size="14" /><span>登记培养对象</span>
+        </button>
+        <button class="btn btn--quiet" type="button" :disabled="loading || creating || busy !== null" @click="load">
           <AppIcon name="pulse" :size="14" />
           <span>刷新</span>
         </button>
@@ -202,25 +282,44 @@ const todoTone: Record<TodoItem['category'], string> = {
       </div>
     </section>
 
-    <p class="gap-note">
-      <AppIcon name="info" :size="14" />
-      <span>
-        后端尚未提供名册查询接口，左侧名册为<b>{{ MOCK_NOTICE }}</b>。右侧三项分析走真实接口。
-      </span>
-    </p>
+    <p v-if="createSuccess" role="status">{{ createSuccess }}</p>
+    <section v-if="createOpen && canCreate" class="u-card registration">
+      <header class="u-panel-head"><h2 class="roster__title">人工登记培养对象</h2></header>
+      <form class="registration__body" @submit.prevent="registerMember">
+        <div class="form-grid">
+          <div class="field"><label for="new-name" class="field__label">姓名</label><input id="new-name" v-model="registration.name" class="input" maxlength="50" required /></div>
+          <div class="field">
+            <label for="new-org" class="field__label">所属组织</label>
+            <select id="new-org" v-model="registration.org_unit_id" class="select" :disabled="organizationsLoading" required>
+              <option value="">请选择组织</option><option v-for="org in organizations" :key="org.id" :value="org.id">{{ org.name }}</option>
+            </select>
+          </div>
+          <div class="field"><label for="new-stage" class="field__label">已确认的当前阶段</label><select id="new-stage" v-model="registration.current_stage" class="select"><option v-for="stage in STAGE_ORDER" :key="stage" :value="stage">{{ STAGE_LABELS[stage] }}</option></select></div>
+          <div class="field"><label for="new-date" class="field__label">进入阶段日期（留空为今天）</label><input id="new-date" v-model="registration.stage_joined_on" class="input" type="date" /></div>
+          <div class="field"><label for="new-pending" class="field__label">待办数</label><input id="new-pending" v-model.number="registration.pending" class="input" type="number" min="0" max="2147483647" /></div>
+        </div>
+        <div class="field"><label for="new-materials" class="field__label">已具备材料（每行一项）</label><textarea id="new-materials" v-model="registration.materials" class="textarea" rows="3"></textarea></div>
+        <ErrorState v-if="organizationsError" :error="organizationsError"><button class="btn btn--ghost" type="button" @click="loadOrganizations">重试组织查询</button></ErrorState>
+        <p v-else-if="!organizationsLoading && !organizations.length" role="status">账号没有可登记的有效组织，请联系管理员绑定组织。</p>
+        <p v-if="createError" class="field__error" role="alert">{{ createError }}</p>
+        <button class="btn btn--primary" type="submit" :disabled="!registrationValid || creating">{{ creating ? '保存中' : '保存登记' }}</button>
+      </form>
+    </section>
 
     <div class="mem__grid">
       <!-- ---------------------------- 名册 ---------------------------- -->
       <section class="roster u-card">
         <header class="u-panel-head">
           <h2 class="roster__title">培养对象</h2>
-          <span class="badge">{{ members.length }}</span>
+          <span class="badge">{{ total }}</span>
         </header>
 
         <LoadingBlock v-if="loading" variant="list" :rows="5" />
 
+        <ErrorState v-else-if="rosterError" :error="rosterError"><button class="btn btn--ghost" type="button" @click="load">重试名册查询</button></ErrorState>
+
         <div v-else-if="!members.length" class="roster__body">
-          <EmptyState icon="people" title="暂无培养对象" body="名册接口接入后将在此展示。" />
+          <EmptyState icon="people" title="暂无培养对象" body="当前组织范围内尚无台账，可由具备权限的组织人员登记。" />
         </div>
 
         <ul v-else class="roster__list">
@@ -230,6 +329,7 @@ const todoTone: Record<TodoItem['category'], string> = {
               :class="{ 'is-active': selectedId === m.id }"
               type="button"
               :aria-pressed="selectedId === m.id"
+              :disabled="busy !== null || creating"
               @click="select(m.id)"
             >
               <span class="roster__row">
@@ -244,6 +344,11 @@ const todoTone: Record<TodoItem['category'], string> = {
             </button>
           </li>
         </ul>
+        <div v-if="!loading && !rosterError && total > pageSize" class="roster__body">
+          <span class="u-meta">第 {{ page }} 页</span>
+          <button class="btn btn--quiet" :disabled="page <= 1 || busy !== null || creating" @click="turnPage(-1)">上一页</button>
+          <button class="btn btn--quiet" :disabled="page * pageSize >= total || busy !== null || creating" @click="turnPage(1)">下一页</button>
+        </div>
       </section>
 
       <!-- ---------------------------- 工作区 ---------------------------- -->
@@ -510,9 +615,6 @@ const todoTone: Record<TodoItem['category'], string> = {
                     <button class="btn btn--primary" type="button" @click="runTodos">
                       生成待办建议
                     </button>
-                    <button class="btn btn--quiet" type="button" @click="todos = { todos: MOCK_TODOS, note: '以下为离线示例，未取自后端计算' }">
-                      查看示例
-                    </button>
                   </div>
                 </div>
 
@@ -540,6 +642,13 @@ const todoTone: Record<TodoItem['category'], string> = {
 </template>
 
 <style scoped>
+.registration__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
 .mem {
   display: flex;
   flex-direction: column;

@@ -3,18 +3,21 @@
 根据数据级别拦截敏感数据调用外部模型，确保数据安全。
 """
 
-from typing import Optional
 from functools import lru_cache
+from typing import Optional
+from urllib.parse import urlsplit
 
-from app.llm.base import DataLevel, DeploymentType, ModelConfig
-from app.core.config import settings
 import structlog
+
+from app.core.config import settings
+from app.llm.base import DataLevel, DeploymentType, ModelConfig
 
 logger = structlog.get_logger(__name__)
 
 
 class GatewayError(Exception):
     """闸门错误"""
+
     pass
 
 
@@ -34,14 +37,11 @@ class DataLevelGateway:
         logger.info(
             "gateway_initialized",
             enabled=self.enabled,
-            allowed_domains=list(self.allowed_external_domains)
+            allowed_domains=list(self.allowed_external_domains),
         )
 
     def check_access(
-        self,
-        data_level: DataLevel,
-        model_config: ModelConfig,
-        context: Optional[dict] = None
+        self, data_level: DataLevel, model_config: ModelConfig, context: Optional[dict] = None
     ) -> tuple[bool, Optional[str]]:
         """检查是否允许访问
 
@@ -53,10 +53,9 @@ class DataLevelGateway:
         Returns:
             (是否允许, 拒绝原因)
         """
-        # 如果闸门未启用，直接通过
+        # 开关不能取消数据政策。保留属性兼容旧配置，安全边界始终生效。
         if not self.enabled:
-            logger.warning("gateway_disabled", data_level=data_level)
-            return True, None
+            logger.warning("gateway_disable_ignored", data_level=data_level)
 
         # 涉密数据直接拒绝
         if data_level == DataLevel.CLASSIFIED:
@@ -65,7 +64,7 @@ class DataLevelGateway:
                 "gateway_blocked_classified",
                 data_level=data_level,
                 model_id=model_config.model_id,
-                context=context
+                context=context,
             )
             return False, reason
 
@@ -78,7 +77,7 @@ class DataLevelGateway:
                     data_level=data_level,
                     model_id=model_config.model_id,
                     deployment_type=model_config.deployment_type,
-                    context=context
+                    context=context,
                 )
                 return False, reason
 
@@ -93,7 +92,7 @@ class DataLevelGateway:
                         data_level=data_level,
                         model_id=model_config.model_id,
                         provider=model_config.provider,
-                        context=context
+                        context=context,
                     )
                     return False, reason
 
@@ -105,7 +104,7 @@ class DataLevelGateway:
             model_id=model_config.model_id,
             deployment_type=model_config.deployment_type,
             provider=model_config.provider,
-            context=context
+            context=context,
         )
 
         return True, None
@@ -123,26 +122,18 @@ class DataLevelGateway:
         if not self.allowed_external_domains:
             return False
 
-        # 检查供应商是否在白名单中
-        provider_lower = model_config.provider.lower()
-        for allowed in self.allowed_external_domains:
-            if allowed.lower() in provider_lower:
-                return True
-
-        # 检查端点域名是否在白名单中
+        allowed = {item.lower().rstrip(".") for item in self.allowed_external_domains}
+        # 只匹配解析后的完整主机名，路径或相似域名不能获得授权。
         if model_config.endpoint:
-            endpoint_lower = model_config.endpoint.lower()
-            for allowed in self.allowed_external_domains:
-                if allowed.lower() in endpoint_lower:
-                    return True
-
-        return False
+            endpoint = urlsplit(model_config.endpoint)
+            return (
+                endpoint.scheme == "https"
+                and (endpoint.hostname or "").lower().rstrip(".") in allowed
+            )
+        return model_config.provider.lower() in allowed
 
     def validate_and_block(
-        self,
-        data_level: DataLevel,
-        model_config: ModelConfig,
-        context: Optional[dict] = None
+        self, data_level: DataLevel, model_config: ModelConfig, context: Optional[dict] = None
     ) -> None:
         """验证并在不通过时抛出异常
 
@@ -165,7 +156,7 @@ class DataLevelGateway:
                 provider=model_config.provider,
                 deployment_type=model_config.deployment_type,
                 reason=reason,
-                context=context
+                context=context,
             )
             raise GatewayError(reason)
 

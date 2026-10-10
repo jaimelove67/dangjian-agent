@@ -10,6 +10,7 @@
 
 本模块为纯逻辑，不依赖数据库 / 模型，便于单元测试。
 """
+
 from __future__ import annotations
 
 import re
@@ -23,8 +24,8 @@ _CITATION_RE = re.compile(r"\[(\d+)\]")
 _ARTICLE_RE = re.compile(r"第\s*[一二三四五六七八九十百千零两〇0-9]+\s*条")
 _SENTENCE_SPLIT_RE = re.compile(r"[。！？\n]")
 
-DEFAULT_LONG_ANSWER_THRESHOLD = 80   # 超过该长度视为“长回答”
-DEFAULT_EXPIRING_DAYS = 30           # 距失效多少天提示“即将失效”
+DEFAULT_LONG_ANSWER_THRESHOLD = 80  # 超过该长度视为“长回答”
+DEFAULT_EXPIRING_DAYS = 30  # 距失效多少天提示“即将失效”
 
 _STATUS_CN = {"abolished": "已废止", "expired": "已失效", "effective": "有效"}
 
@@ -32,6 +33,7 @@ _STATUS_CN = {"abolished": "已废止", "expired": "已失效", "effective": "�
 @dataclass
 class RetrievedChunk:
     """检索片段（引用核验输入，由检索链路产出）"""
+
     index: int
     doc_id: str
     doc_name: str
@@ -43,11 +45,17 @@ class RetrievedChunk:
     expiration_date: Optional[date] = None
     status: str = "effective"
     score: Optional[float] = None
+    file_name: Optional[str] = None
+    visibility: Optional[str] = None
+    level: Optional[str] = None
+    security_level: Optional[str] = None
+    chunk_id: Optional[str] = None
 
 
 @dataclass
 class VerificationResult:
     """核验结果"""
+
     answer: str
     citations: list[Citation] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -68,9 +76,7 @@ class CitationVerifier:
         self.long_answer_threshold = long_answer_threshold
         self.expiring_days = expiring_days
 
-    def verify(
-        self, answer: str, chunks: Sequence[RetrievedChunk]
-    ) -> VerificationResult:
+    def verify(self, answer: str, chunks: Sequence[RetrievedChunk]) -> VerificationResult:
         """核验答案并产出清洗后的答案、引用列表与风险提示"""
         answer = answer or ""
         by_index = {chunk.index: chunk for chunk in chunks}
@@ -89,9 +95,10 @@ class CitationVerifier:
         cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
 
         # 逐条核验（条款真实性 + 文件时效）
+        article_valid = True
         for idx in valid_indices:
             chunk = by_index[idx]
-            self._check_article(cleaned, idx, chunk, warnings)
+            article_valid = self._check_article(cleaned, idx, chunk, warnings) and article_valid
             self._check_timeliness(chunk, warnings)
 
         # 引用完整性 / 无依据长回答
@@ -103,7 +110,7 @@ class CitationVerifier:
             answer=cleaned,
             citations=citations,
             warnings=self._dedup(warnings),
-            valid=not invalid,
+            valid=not invalid and article_valid,
         )
 
     # ---------------------------------------------------------------
@@ -119,17 +126,20 @@ class CitationVerifier:
 
     def _check_article(
         self, answer: str, idx: int, chunk: RetrievedChunk, warnings: list[str]
-    ) -> None:
+    ) -> bool:
         """条款真实性：包含 [idx] 的句子中提及的“第 X 条”须存在于被引片段"""
+        valid = True
         for sentence in _SENTENCE_SPLIT_RE.split(answer):
             if f"[{idx}]" not in sentence:
                 continue
             for article in _ARTICLE_RE.findall(sentence):
                 normalized = article.replace(" ", "")
                 if normalized not in chunk.content and (chunk.article or "") != normalized:
+                    valid = False
                     warnings.append(
                         f"引用[{idx}]提及的条款“{normalized}”在被引片段中不存在，请人工复核"
                     )
+        return valid
 
     def _check_timeliness(self, chunk: RetrievedChunk, warnings: list[str]) -> None:
         """文件时效检查"""
@@ -139,13 +149,9 @@ class CitationVerifier:
             return
         if chunk.expiration_date is not None:
             if chunk.expiration_date < self.today:
-                warnings.append(
-                    f"引用文件《{chunk.doc_name}》已于 {chunk.expiration_date} 失效"
-                )
+                warnings.append(f"引用文件《{chunk.doc_name}》已于 {chunk.expiration_date} 失效")
             elif chunk.expiration_date <= self.today + timedelta(days=self.expiring_days):
-                warnings.append(
-                    f"引用文件《{chunk.doc_name}》即将于 {chunk.expiration_date} 失效"
-                )
+                warnings.append(f"引用文件《{chunk.doc_name}》即将于 {chunk.expiration_date} 失效")
 
     @staticmethod
     def _to_citation(chunk: RetrievedChunk) -> Citation:
@@ -158,6 +164,13 @@ class CitationVerifier:
             doc_number=chunk.doc_number,
             issuer=chunk.issuer,
             effective_date=chunk.effective_date,
+            expiration_date=chunk.expiration_date,
+            file_name=chunk.file_name,
+            visibility=chunk.visibility,
+            level=chunk.level,
+            security_level=chunk.security_level,
+            chunk_id=chunk.chunk_id,
+            score=chunk.score or 0.0,
         )
 
     @staticmethod

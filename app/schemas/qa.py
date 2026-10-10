@@ -1,4 +1,5 @@
 """知识问答出入参（统一响应结构，见框架文档 5.6 / 开发规范 7.4）"""
+
 from __future__ import annotations
 
 from datetime import date
@@ -13,6 +14,7 @@ REFUSAL_ANSWER = "知识库中未找到直接依据，建议向上一级党组�
 
 class AskRequest(BaseModel):
     """知识问答请求"""
+
     question: str = Field(..., min_length=1, max_length=2000, description="用户问题")
     session_id: Optional[str] = Field(None, max_length=64, description="会话ID（多轮对话）")
     include_expired: bool = Field(False, description="是否包含已失效文件")
@@ -20,6 +22,7 @@ class AskRequest(BaseModel):
 
 class Citation(BaseModel):
     """引用条目（含文件名、文号、条款、发文单位、生效日期）"""
+
     index: int = Field(..., description="引用编号（对应正文中的 [n]）")
     doc_id: str
     doc_name: str
@@ -28,10 +31,18 @@ class Citation(BaseModel):
     doc_number: Optional[str] = None
     issuer: Optional[str] = None
     effective_date: Optional[date] = None
+    expiration_date: Optional[date] = None
+    file_name: Optional[str] = None
+    visibility: Optional[str] = None
+    level: Optional[str] = None
+    security_level: Optional[str] = None
+    chunk_id: Optional[str] = None
+    score: float = 0.0
 
 
 class QAResponse(BaseModel):
     """统一问答响应：回答正文 + 引用列表 + 风险提示 + 免责声明"""
+
     answer: str
     citations: List[Citation] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)

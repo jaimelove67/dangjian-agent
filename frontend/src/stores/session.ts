@@ -28,6 +28,11 @@ const state = reactive<SessionState>({
   loading: false,
   resolved: false,
 })
+window.addEventListener('party:session-cleared', () => {
+  state.user = null
+  state.permissions = []
+  state.resolved = true
+})
 
 const isAuthenticated = computed(() => state.user !== null)
 
@@ -87,16 +92,11 @@ async function restore(): Promise<void> {
 }
 
 async function signOut(): Promise<void> {
-  try {
-    if (tokenStore.get()) await authApi.logout()
-  } catch {
-    // 后端登出目前是空实现（Redis 黑名单待办），失败不影响本地登出
-  } finally {
-    tokenStore.clear()
-    state.user = null
-    state.permissions = []
-    state.resolved = true
-  }
+  if (tokenStore.get()) await authApi.logout()
+  tokenStore.clear()
+  state.user = null
+  state.permissions = []
+  state.resolved = true
 }
 
 export const session = {

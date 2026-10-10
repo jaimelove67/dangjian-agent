@@ -9,23 +9,20 @@
 核心约束（框架 5.9.3）：状态图**不写入阶段字段**，人员阶段变更只能通过人工接口完成。
 本模块的纯逻辑方法可独立单测；LangGraph 编排在 :func:`build_member_graph` 中惰性构建。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Optional, TypedDict
 
-from app.rules.member_stages import (
-    MemberStage,
-    STAGE_LABELS,
-    StageRules,
-    load_stage_rules,
-)
+from app.rules.member_stages import STAGE_LABELS, MemberStage, StageRules, load_stage_rules
 from app.schemas.member import DECISION_BOUNDARY_NOTE
 
 
 @dataclass
 class QualificationOutcome:
     """资格校验结果"""
+
     eligible: bool
     blockers: list[str] = field(default_factory=list)
     missing_materials: list[str] = field(default_factory=list)
@@ -37,6 +34,7 @@ class QualificationOutcome:
 @dataclass
 class SuggestionOutcome:
     """流转建议（不含阶段写入）"""
+
     current_stage: str
     suggested_target: Optional[str]
     eligible: bool
@@ -47,8 +45,14 @@ class SuggestionOutcome:
 class MemberFlow:
     """党员发展状态图的纯逻辑实现"""
 
-    def __init__(self, rules: Optional[StageRules] = None) -> None:
+    def __init__(
+        self,
+        rules: Optional[StageRules] = None,
+        *,
+        reminder_limits: Optional[dict[MemberStage, int]] = None,
+    ) -> None:
         self.rules = rules or load_stage_rules()
+        self.reminder_limits = dict(reminder_limits or {})
 
     @staticmethod
     def _coerce(stage: MemberStage | str) -> MemberStage:
@@ -81,9 +85,7 @@ class MemberFlow:
         if missing:
             blockers.append("材料不齐：" + "、".join(missing))
         if days_in_stage < rule.min_days:
-            blockers.append(
-                f"未满足最短时限：需 {rule.min_days} 天，当前 {days_in_stage} 天"
-            )
+            blockers.append(f"未满足最短时限：需 {rule.min_days} 天，当前 {days_in_stage} 天")
 
         return QualificationOutcome(
             eligible=not blockers,
@@ -148,6 +150,15 @@ class MemberFlow:
         if not todos:
             todos.append(("meeting", "材料齐备，建议按程序安排支委会/支部大会研究"))
 
+        limit = self.reminder_limits.get(current)
+        if limit is not None and days_in_stage >= limit:
+            todos.append(
+                (
+                    "reminder",
+                    f"{STAGE_LABELS[current]}已达到配置的 {limit} 天提醒时限，请人工核查进度",
+                )
+            )
+
         return todos
 
 
@@ -173,7 +184,7 @@ def build_member_graph(flow: Optional[MemberFlow] = None) -> Any:
 
     图为"校验 → 待办 → 建议"的只读流水线，节点均不修改人员阶段。
     """
-    from langgraph.graph import END, START, StateGraph
+    from langgraph.graph import END, StateGraph
 
     flow = flow or MemberFlow()
 
@@ -217,7 +228,7 @@ def build_member_graph(flow: Optional[MemberFlow] = None) -> Any:
     graph.add_node("check_qualification", check_node)
     graph.add_node("generate_todos", todo_node)
     graph.add_node("suggest_transition", suggest_node)
-    graph.add_edge(START, "check_qualification")
+    graph.set_entry_point("check_qualification")
     graph.add_edge("check_qualification", "generate_todos")
     graph.add_edge("generate_todos", "suggest_transition")
     graph.add_edge("suggest_transition", END)

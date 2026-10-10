@@ -1,139 +1,163 @@
-"""评测脚本
+"""真实 API 评测器；未就绪或调用失败不能计为质量通过。
 
-运行检索和问答的离线评测。
+EVALUATION_ACCESS_TOKEN 提供已有登录令牌，不在命令行或结果中保存令牌。
+python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v1
 """
+
+import argparse
 import asyncio
 import json
+import math
+import os
+import re
+import time
 from pathlib import Path
-from typing import List, Dict, Any
 
-# 评测配置
-RETRIEVAL_SAMPLES_FILE = Path(__file__).parent / "retrieval_samples.json"
-QA_SAMPLES_FILE = Path(__file__).parent / "qa_samples.json"
-OUTPUT_DIR = Path(__file__).parent / "results"
+import httpx
+
+ROOT = Path(__file__).parent
 
 
-async def evaluate_retrieval():
-    """评测检索准确率
-
-    指标：
-    - Recall@K: 期望文档在top-K中的召回率
-    - MRR (Mean Reciprocal Rank): 平均倒数排名
-    - Precision@K: top-K中相关文档的比例
-    """
-    print("=" * 60)
-    print("检索评测")
-    print("=" * 60)
-
-    # 加载样本
-    with open(RETRIEVAL_SAMPLES_FILE, "r", encoding="utf-8") as f:
-        samples = json.load(f)
-
-    print(f"\n加载了 {len(samples)} 个检索样本")
-    print("\n注意：需要真实数据库和知识库数据才能运行评测")
-    print("建议：")
-    print("1. 确保数据库已启动并包含党建文档数据")
-    print("2. 确保文档已向量化")
-    print("3. 设置DashScope API Key")
-
-    # 评测逻辑（需要真实环境）
-    print("\n评测指标定义：")
-    print("- Recall@5: 期望文档在top-5结果中的比例")
-    print("- Recall@10: 期望文档在top-10结果中的比例")
-    print("- MRR: 期望文档首次出现的平均倒数排名")
-    print("- Precision@5: top-5中相关文档的平均比例")
-
-    print("\n样本示例：")
-    for sample in samples[:3]:
-        print(f"  [{sample['id']}] {sample['query']}")
-        print(f"      期望文档: {', '.join(sample['expected_docs'])}")
-        print(f"      期望条款: {', '.join(sample.get('expected_articles', []))}")
-
+def grade_retrieval(sample, items, k=5):
+    # 多片段可能来自同一文档；先去重，再计算文档召回。
+    documents = []
+    for item in items:
+        identity = item["doc_id"]
+        if identity not in {doc[0] for doc in documents}:
+            documents.append((identity, item.get("metadata", {}).get("title", "")))
+    expected = set(sample["expected_docs"])
+    ranks = [
+        rank
+        for rank, (identity, title) in enumerate(documents, 1)
+        if identity in expected or title in expected
+    ]
+    matched = {name for name in expected if any(name in doc for doc in documents[:k])}
     return {
-        "total_samples": len(samples),
-        "note": "需要真实环境运行",
+        "recall_at_k": len(matched) / len(expected) if expected else 0,
+        "precision_at_k": sum(rank <= k for rank in ranks) / k,
+        "mrr": 1 / ranks[0] if ranks else 0,
     }
 
 
-async def evaluate_qa():
-    """评测问答质量
-
-    指标：
-    - 答案相关性: 答案是否包含期望内容
-    - 引用准确性: 是否有正确的引用
-    - 拒答准确率: 无关问题的拒答率
-    """
-    print("\n" + "=" * 60)
-    print("问答评测")
-    print("=" * 60)
-
-    # 加载样本
-    with open(QA_SAMPLES_FILE, "r", encoding="utf-8") as f:
-        samples = json.load(f)
-
-    refuse_samples = [s for s in samples if s["should_refuse"]]
-    answer_samples = [s for s in samples if not s["should_refuse"]]
-
-    print(f"\n加载了 {len(samples)} 个问答样本")
-    print(f"  - 正常回答样本: {len(answer_samples)}")
-    print(f"  - 拒答测试样本: {len(refuse_samples)}")
-
-    print("\n评测指标定义：")
-    print("- 答案相关性: 答案是否包含期望关键词")
-    print("- 引用准确性: 是否有正确的文档引用")
-    print("- 拒答准确率: 无关问题的拒答比例")
-    print("- 拒答误报率: 有关问题被错误拒答的比例")
-
-    print("\n正常回答样本示例：")
-    for sample in answer_samples[:3]:
-        print(f"  [{sample['id']}] {sample['question']}")
-        print(f"      期望包含: {', '.join(sample['expected_answer_contains'])}")
-
-    print("\n拒答测试样本示例：")
-    for sample in refuse_samples[:3]:
-        print(f"  [{sample['id']}] {sample['question']}")
-        print(f"      应该拒答: 是")
-
-    return {
-        "total_samples": len(samples),
-        "answer_samples": len(answer_samples),
-        "refuse_samples": len(refuse_samples),
-        "note": "需要真实环境运行",
+def grade_qa(sample, data):
+    refused = data.get("refused") is True
+    citations = data.get("citations", [])
+    references = {int(value) for value in re.findall(r"\[(\d+)\]", data.get("answer", ""))}
+    located = {
+        citation.get("index")
+        for citation in citations
+        if citation.get("doc_id") and citation.get("chunk_id") and citation.get("content")
     }
+    traceable = bool(references) and references <= located and not refused
+    keywords = sample.get("expected_answer_contains", [])
+    return {
+        "refusal_correct": refused == sample["should_refuse"],
+        "keyword_match": not refused
+        and bool(keywords)
+        and all(keyword in data.get("answer", "") for keyword in keywords),
+        "citation_traceable": traceable,
+    }
+
+
+def summarize(retrieval, qa, latencies, samples, errors):
+    normal = [result for result in qa if not result["should_refuse"]]
+    refusal = [result for result in qa if result["should_refuse"]]
+
+    def mean(values):
+        return sum(values) / len(values) if values else None
+
+    minimums = (
+        len(samples) >= 200
+        and sum(s["should_refuse"] for s in samples) >= 30
+        and sum(s.get("category") == "时效测试" for s in samples) >= 20
+    )
+    return {
+        "status": "failed" if errors else "completed",
+        "errors": errors,
+        "sample_size_meets_acceptance": minimums,
+        "retrieval": {
+            metric: mean([result[metric] for result in retrieval])
+            for metric in ("recall_at_k", "precision_at_k", "mrr")
+        },
+        "qa": {
+            "refusal_accuracy": mean([result["refusal_correct"] for result in refusal]),
+            "false_refusal_rate": mean([not result["refusal_correct"] for result in normal]),
+            "keyword_match_rate": mean([result["keyword_match"] for result in normal]),
+            "citation_traceability_rate": mean([result["citation_traceable"] for result in normal]),
+        },
+        "request_latency_p95_seconds": (
+            sorted(latencies)[math.ceil(0.95 * len(latencies)) - 1] if latencies else None
+        ),
+        "notes": "关键词命中是自动化代理指标，不能代替专家答案正确性审查；延迟为串行样本请求，不能代替负载测试。",
+    }
+
+
+async def evaluate(base_url, token):
+    samples = json.loads((ROOT / "qa_samples.json").read_text(encoding="utf-8"))
+    retrieval_samples = json.loads((ROOT / "retrieval_samples.json").read_text(encoding="utf-8"))
+    async with httpx.AsyncClient(base_url=base_url.rstrip("/") + "/", timeout=150) as client:
+        ready = await client.get("health/ready")
+        if ready.status_code != 200:
+            return {
+                "status": "blocked",
+                "reason": "后端、数据库结构或模型尚未就绪",
+                "checks": ready.json().get("checks", {}),
+            }
+        if not token:
+            return {
+                "status": "blocked",
+                "reason": "请通过 EVALUATION_ACCESS_TOKEN 配置已有登录令牌",
+            }
+        client.headers["Authorization"] = "Bearer " + token
+        retrieval, qa, errors, latencies = [], [], [], []
+        for phase, rows, endpoint, field in (
+            ("retrieval", retrieval_samples, "knowledge/search", "query"),
+            ("qa", samples, "qa", "question"),
+        ):
+            for sample in rows:
+                started = time.perf_counter()
+                try:
+                    response = await client.post(endpoint, json={field: sample[field], "top_k": 5})
+                    latencies.append(time.perf_counter() - started)
+                    if response.status_code != 200 or response.json().get("code") != 0:
+                        errors.append(
+                            {
+                                "phase": phase,
+                                "id": sample["id"],
+                                "http_status": response.status_code,
+                            }
+                        )
+                        continue
+                    data = response.json()["data"]
+                    if phase == "retrieval":
+                        retrieval.append(grade_retrieval(sample, data["items"]))
+                    else:
+                        qa.append(
+                            {**grade_qa(sample, data), "should_refuse": sample["should_refuse"]}
+                        )
+                except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                    errors.append(
+                        {"phase": phase, "id": sample["id"], "reason": "请求失败或响应格式异常"}
+                    )
+        report = summarize(retrieval, qa, latencies, samples, errors)
+        report["executed_samples"] = {"retrieval": len(retrieval), "qa": len(qa)}
+        return report
 
 
 async def main():
-    """主函数"""
-    print("党建工作智能体 - 离线评测")
-    print("=" * 60)
-
-    # 创建输出目录
-    OUTPUT_DIR.mkdir(exist_ok=True)
-
-    # 运行评测
-    retrieval_result = await evaluate_retrieval()
-    qa_result = await evaluate_qa()
-
-    # 保存结果
-    results = {
-        "retrieval": retrieval_result,
-        "qa": qa_result,
-    }
-
-    output_file = OUTPUT_DIR / "evaluation_summary.json"
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-
-    print("\n" + "=" * 60)
-    print(f"评测摘要已保存到: {output_file}")
-    print("=" * 60)
-
-    print("\n下一步：")
-    print("1. 准备真实数据库环境")
-    print("2. 导入党建知识文档")
-    print("3. 运行完整评测并记录指标")
-    print("4. 根据评测结果调优参数（阈值、top_k等）")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default="http://127.0.0.1:8000/api/v1")
+    parser.add_argument("--output", type=Path, default=ROOT / "results" / "evaluation_summary.json")
+    args = parser.parse_args()
+    try:
+        report = await evaluate(args.base_url, os.getenv("EVALUATION_ACCESS_TOKEN", ""))
+    except (httpx.HTTPError, ValueError):
+        report = {"status": "blocked", "reason": "无法连接就绪接口或响应无效"}
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report["status"] == "completed" else 2
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

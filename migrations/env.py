@@ -1,18 +1,21 @@
 """Alembic 配置文件"""
+
+import asyncio
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-
 from alembic import context
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # 导入 Base 和所有模型
 from app.db.base import Base
-from app.models.user import User
-from app.models.tenant import Tenant
-from app.models.org import OrgUnit
-from app.models.knowledge import KnowledgeDoc, EmbeddingChunk
-from app.models.audit import AuditLog
+from app.models.audit import AuditLog  # noqa: F401 - 注册迁移元数据
+from app.models.knowledge import EmbeddingChunk, KnowledgeDoc  # noqa: F401
+from app.models.member import MemberProfile  # noqa: F401
+from app.models.org import OrgUnit  # noqa: F401
+from app.models.qa_session import QASession  # noqa: F401
+from app.models.tenant import Tenant  # noqa: F401
+from app.models.user import User  # noqa: F401
 
 # Alembic Config 对象
 config = context.config
@@ -27,7 +30,9 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """离线模式运行迁移"""
-    url = config.get_main_option("sqlalchemy.url")
+    from app.core.config import settings
+
+    url = settings.DATABASE_URL
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -39,21 +44,31 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _migrate(connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def _run_async_migrations() -> None:
+    from app.core.config import settings
+
+    section = config.get_section(config.config_ini_section) or {}
+    # 保留从 .env/环境变量加载 URL 的既有行为，迁移与运行时共用异步驱动。
+    section["sqlalchemy.url"] = settings.DATABASE_URL
+    connectable = async_engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
+    async with connectable.connect() as connection:
+        await connection.run_sync(_migrate)
+    await connectable.dispose()
+
+
 def run_migrations_online() -> None:
-    """在线模式运行迁移"""
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
+    """支持正常 CLI 迁移和测试传入的事务连接。"""
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        _migrate(connection)
+    else:
+        asyncio.run(_run_async_migrations())
 
 
 if context.is_offline_mode():

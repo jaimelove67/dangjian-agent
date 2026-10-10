@@ -94,7 +94,7 @@ async function onSubmit(): Promise<void> {
         </div>
         <div class="pane__fact">
           <dt><AppIcon name="shield" :size="15" /> 分级不出网</dt>
-          <dd>敏感与涉密材料仅由本地模型处理，出网闸门在服务端强制校验。</dd>
+          <dd>公开与获准的内部材料使用云端模型；敏感与涉密内容由服务端拦截。</dd>
         </div>
         <div class="pane__fact">
           <dt><AppIcon name="people" :size="15" /> 辅助不代决</dt>

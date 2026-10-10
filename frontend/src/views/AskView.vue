@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
-import { askQuestion } from '@/api/qa'
-import type { AskQuestionResponse, DataLevel } from '@/api/types'
+import { askQuestion, listQASessions } from '@/api/qa'
+import type { AskQuestionResponse, DataLevel, QASessionItem } from '@/api/types'
 import { DATA_LEVEL_LABELS, DATA_LEVEL_ROUTE } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import CitationCard from '@/components/CitationCard.vue'
@@ -10,6 +10,8 @@ import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import WarningList from '@/components/WarningList.vue'
+import { session } from '@/stores/session'
 
 /**
  * 制度问答主界面。
@@ -30,7 +32,7 @@ import PageHeader from '@/components/PageHeader.vue'
 const question = ref('')
 const useReranker = ref(true)
 const topK = ref(10)
-const dataLevel = ref<DataLevel>('public')
+const dataLevel = ref<DataLevel>('internal')
 
 const loading = ref(false)
 const result = ref<AskQuestionResponse | null>(null)
@@ -38,6 +40,56 @@ const error = ref<unknown>(null)
 const submittedQuestion = ref('')
 const activeCitation = ref<number | null>(null)
 const copyState = ref<'idle' | 'done'>('idle')
+const recent = ref<QASessionItem[]>([])
+const historyLoading = ref(false)
+const historyError = ref<unknown>(null)
+const historyPage = ref(1)
+const historyTotal = ref(0)
+const historyPageSize = 8
+const viewingHistory = ref(false)
+const resultReranker = ref<boolean | null>(null)
+// 浏览器保留会话编号，内容保存在服务端并按租户及用户隔离。
+const sessionKey = `party.qa-session.${session.state.user?.id ?? ''}`
+const sessionId = ref(sessionStorage.getItem(sessionKey) ?? crypto.randomUUID())
+sessionStorage.setItem(sessionKey, sessionId.value)
+
+let historySequence = 0
+async function loadHistory(page = historyPage.value): Promise<void> {
+  const sequence = ++historySequence
+  historyLoading.value = true
+  historyError.value = null
+  try {
+    const response = await listQASessions({ page, page_size: historyPageSize })
+    if (sequence !== historySequence) return
+    recent.value = response.items
+    historyTotal.value = response.total
+    historyPage.value = response.page
+  } catch (error) {
+    if (sequence === historySequence) historyError.value = error
+  } finally {
+    if (sequence === historySequence) historyLoading.value = false
+  }
+}
+onMounted(() => { void loadHistory() })
+
+function viewHistory(item: QASessionItem): void {
+  if (loading.value) return
+  question.value = item.question
+  submittedQuestion.value = item.question
+  dataLevel.value = item.data_level
+  result.value = item
+  error.value = null
+  activeCitation.value = null
+  viewingHistory.value = true
+  resultReranker.value = null
+  sessionId.value = item.session_id ?? crypto.randomUUID()
+  sessionStorage.setItem(sessionKey, sessionId.value)
+}
+
+function historyDate(value: string): string {
+  const utc = /Z$|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`
+  return new Date(utc).toLocaleString('zh-CN')
+}
 
 const MAX_LEN = 500 // 后端 QuestionRequest.question 的 max_length
 
@@ -131,6 +183,8 @@ async function onAsk(): Promise<void> {
   result.value = null
   activeCitation.value = null
   submittedQuestion.value = q
+  viewingHistory.value = false
+  resultReranker.value = useReranker.value
 
   try {
     result.value = await askQuestion({
@@ -138,7 +192,9 @@ async function onAsk(): Promise<void> {
       data_level: dataLevel.value,
       use_reranker: useReranker.value,
       top_k: topK.value,
+      session_id: sessionId.value,
     })
+    void loadHistory(1)
   } catch (err) {
     error.value = err
   } finally {
@@ -158,10 +214,10 @@ async function copyAnswer(): Promise<void> {
   if (!r) return
 
   const sources = r.citations
-    .map((c, i) => `[${i + 1}] ${c.title}（${c.issuer}${c.doc_number ? `，${c.doc_number}` : ''}）`)
+    .map((c) => `[${c.index}] ${c.title}（${c.issuer}${c.doc_number ? `，${c.doc_number}` : ''}）`)
     .join('\n')
 
-  const payload = `${submittedQuestion.value}\n\n${r.answer}\n\n来源：\n${sources}`
+  const payload = `${submittedQuestion.value}\n\n${r.answer}\n\n来源：\n${sources}\n\n${r.disclaimer}`
 
   try {
     await navigator.clipboard.writeText(payload)
@@ -178,6 +234,10 @@ function onReset(): void {
   error.value = null
   submittedQuestion.value = ''
   activeCitation.value = null
+  viewingHistory.value = false
+  resultReranker.value = null
+  sessionId.value = crypto.randomUUID()
+  sessionStorage.setItem(sessionKey, sessionId.value)
 }
 
 const SUGGESTIONS = [
@@ -198,7 +258,7 @@ function useSuggestion(text: string): void {
       description="以党内法规与校内制度为依据作答，并逐条标注出处。回答仅作辅助参考，不构成组织认定。"
     >
       <template #actions>
-        <button v-if="result" class="btn btn--ghost" type="button" @click="onReset">
+        <button v-if="result" class="btn btn--ghost" type="button" :disabled="loading" @click="onReset">
           <AppIcon name="close" :size="14" />
           <span>清空</span>
         </button>
@@ -297,6 +357,7 @@ function useSuggestion(text: string): void {
 
         <!-- 结果 -->
         <template v-else-if="result">
+          <p v-if="viewingHistory" class="aside-hint" role="note">当前展示历史回答，引用的文件可能已经更新或失效。再次提问会重新检索。</p>
           <!-- 依据充分性结论条：先给结论强度，再给内容 -->
           <div v-if="evidence" class="evidence" :class="`is-${evidence.tone}`">
             <AppIcon :name="evidence.tone === 'ok' ? 'check' : 'alert'" :size="16" />
@@ -340,10 +401,11 @@ function useSuggestion(text: string): void {
               </p>
             </div>
 
+            <WarningList v-if="result.warnings.length" :warnings="result.warnings" />
             <footer class="answer__foot">
               <p class="disclaimer">
                 <AppIcon name="info" :size="14" />
-                <span>本回答仅供参考，具体以组织部门确认为准。</span>
+                <span>{{ result.disclaimer }}</span>
               </p>
             </footer>
           </article>
@@ -362,6 +424,28 @@ function useSuggestion(text: string): void {
       <aside class="ask__aside">
         <section class="aside-card">
           <header class="u-panel-head aside-card__head">
+            <h2 class="aside-card__title">最近提问</h2><span class="badge">{{ historyTotal }}</span>
+          </header>
+          <div class="aside-card__body">
+            <LoadingBlock v-if="historyLoading" variant="list" :rows="3" />
+            <ErrorState v-else-if="historyError" :error="historyError"><button class="btn btn--ghost" type="button" @click="loadHistory()">重试历史查询</button></ErrorState>
+            <p v-else-if="!recent.length" class="aside-hint">尚无问答记录，提问后会在这里保存。</p>
+            <ul v-else class="recent-list">
+              <li v-for="item in recent" :key="item.id">
+                <button class="recent-item" type="button" :disabled="loading" @click="viewHistory(item)">
+                  <span>{{ item.question }}</span><time class="u-meta" :datetime="item.created_at">{{ historyDate(item.created_at) }}</time>
+                </button>
+              </li>
+            </ul>
+            <div v-if="!historyLoading && !historyError && historyTotal > historyPageSize" class="recent-pages">
+              <button class="btn btn--quiet" :disabled="historyPage <= 1" @click="loadHistory(historyPage - 1)">上一页</button>
+              <span class="u-meta">第 {{ historyPage }} 页</span>
+              <button class="btn btn--quiet" :disabled="historyPage * historyPageSize >= historyTotal" @click="loadHistory(historyPage + 1)">下一页</button>
+            </div>
+          </div>
+        </section>
+        <section class="aside-card">
+          <header class="u-panel-head aside-card__head">
             <h2 class="aside-card__title">来源清单</h2>
             <span v-if="result" class="badge">{{ result.citations.length }}</span>
           </header>
@@ -372,12 +456,12 @@ function useSuggestion(text: string): void {
 
           <div v-else-if="result && result.citations.length" class="aside-card__body">
             <CitationCard
-              v-for="(c, i) in result.citations"
-              :key="i"
+              v-for="c in result.citations"
+              :key="c.index"
               :citation="c"
-              :index="i + 1"
+              :index="c.index"
               class="aside-card__cite"
-              :class="{ 'is-active': activeCitation === i + 1 }"
+              :class="{ 'is-active': activeCitation === c.index }"
             />
           </div>
 
@@ -412,9 +496,9 @@ function useSuggestion(text: string): void {
               <dt>依据充分</dt>
               <dd>{{ result.has_sufficient_evidence ? '是' : '否' }}</dd>
             </div>
-            <div class="stats__row">
+            <div v-if="resultReranker !== null" class="stats__row">
               <dt>重排序</dt>
-              <dd>{{ useReranker ? '已启用' : '未启用' }}</dd>
+              <dd>{{ resultReranker ? '已启用' : '未启用' }}</dd>
             </div>
           </dl>
         </section>
@@ -424,6 +508,18 @@ function useSuggestion(text: string): void {
 </template>
 
 <style scoped>
+.recent-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  text-align: left;
+  border-bottom: var(--border);
+}
+.recent-item:hover { background: var(--paper-dim); }
+.recent-pages { display: flex; align-items: center; justify-content: space-between; }
+
 .ask {
   display: flex;
   flex-direction: column;

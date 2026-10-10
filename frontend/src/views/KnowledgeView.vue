@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 
-import { createDocument, updateDocumentStatus } from '@/api/knowledge'
-import { MOCK_DOCUMENTS, MOCK_NOTICE } from '@/api/mock'
+import { createDocument, deleteDocument, listDocuments, updateDocumentStatus, replaceDocumentContent } from '@/api/knowledge'
 import { ApiError } from '@/api/http'
 import type { DocumentResponse, DocLevel, DocStatus, DataLevel } from '@/api/types'
 import {
@@ -26,8 +25,7 @@ import PageHeader from '@/components/PageHeader.vue'
  *    而是采用**保守的数据表设计**：粘性表头、克制行高、密度可切换、右侧详情抽屉。
  *    仅复用设计系统的色彩、字阶与圆角 token，以保证与全站同源。
  *
- * ⚠️ 后端缺口：无列表接口，列表数据来自 mock 并以「示例数据」徽标标注。
- *    「改状态」与「上传」是真实接口调用，失败会如实报错。
+ * 列表、上传和状态均来自真实接口，查询范围由后端鉴权决定。
  */
 
 type Tab = 'all' | DocStatus
@@ -42,41 +40,69 @@ const compact = ref(false)
 const selected = ref<DocumentResponse | null>(null)
 const statusBusy = ref<string | null>(null)
 const uploadOpen = ref(false)
+const replacement = ref<File | null>(null)
+const replacementBusy = ref(false)
+const replacementMessage = ref('')
+watch(selected, () => { replacement.value = null; replacementMessage.value = '' })
 
-/** 模拟一次列表请求的加载过程，让骨架屏在真实接口接入后无需改动 */
-function load(): void {
+function chooseReplacement(event: Event): void {
+  replacement.value = (event.target as HTMLInputElement).files?.[0] ?? null
+}
+
+async function replaceContent(): Promise<void> {
+  if (!selected.value || !replacement.value) return
+  replacementBusy.value = true
+  try {
+    const response = await replaceDocumentContent(selected.value, replacement.value)
+    selected.value = response.document
+    await load()
+    replacementMessage.value = '文件已更新，新片段需重新向量化。'
+  } catch (err) {
+    replacementMessage.value = err instanceof ApiError ? err.message : '文件更新失败'
+  } finally {
+    replacementBusy.value = false
+  }
+}
+const page = ref(1)
+const total = ref(0)
+const pageSize = 40
+const counts = ref<Record<Tab, number>>({ all: 0, effective: 0, expired: 0, abolished: 0 })
+let requestSequence = 0
+
+async function load(): Promise<void> {
+  const sequence = ++requestSequence
   loading.value = true
   error.value = null
-  window.setTimeout(() => {
-    docs.value = MOCK_DOCUMENTS.map((d) => ({ ...d }))
-    loading.value = false
-  }, 320)
+  try {
+    const response = await listDocuments({
+      page: page.value, page_size: pageSize, q: keyword.value.trim() || undefined,
+      status: tab.value === 'all' ? undefined : tab.value,
+      level: levelFilter.value === 'all' ? undefined : levelFilter.value,
+    })
+    if (sequence !== requestSequence) return
+    docs.value = response.items
+    total.value = response.total
+    counts.value = { all: 0, effective: 0, expired: 0, abolished: 0, ...response.counts }
+  } catch (err) {
+    if (sequence === requestSequence) error.value = err
+  } finally {
+    if (sequence === requestSequence) loading.value = false
+  }
 }
 
 onMounted(load)
 
-const filtered = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  return docs.value.filter((d) => {
-    if (tab.value !== 'all' && d.status !== tab.value) return false
-    if (levelFilter.value !== 'all' && d.level !== levelFilter.value) return false
-    if (!kw) return true
-    return (
-      d.title.toLowerCase().includes(kw) ||
-      d.issuer.toLowerCase().includes(kw) ||
-      d.doc_id.toLowerCase().includes(kw) ||
-      (d.doc_number ?? '').toLowerCase().includes(kw) ||
-      d.tags.some((t) => t.toLowerCase().includes(kw))
-    )
-  })
+const filtered = computed(() => docs.value)
+let searchTimer: number | undefined
+watch([tab, keyword, levelFilter], () => {
+  page.value = 1
+  window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(() => { void load() }, 200)
 })
-
-const counts = computed(() => ({
-  all: docs.value.length,
-  effective: docs.value.filter((d) => d.status === 'effective').length,
-  expired: docs.value.filter((d) => d.status === 'expired').length,
-  abolished: docs.value.filter((d) => d.status === 'abolished').length,
-}))
+function turnPage(delta: number): void {
+  page.value += delta
+  void load()
+}
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -104,6 +130,22 @@ async function changeStatus(doc: DocumentResponse, status: DocStatus): Promise<v
     await updateDocumentStatus(doc.doc_id, status)
     // 接口成功后再改本地视图，避免"看起来成功但后端没落库"
     doc.status = status
+    await load()
+  } catch (err) {
+    error.value = err
+  } finally {
+    statusBusy.value = null
+  }
+}
+
+async function removeDocument(doc: DocumentResponse): Promise<void> {
+  if (!window.confirm(`确认移除《${doc.title}》？移除后不再参与检索，历史记录保留。`)) return
+  statusBusy.value = doc.doc_id
+  try {
+    await deleteDocument(doc.doc_id)
+    if (selected.value?.doc_id === doc.doc_id) selected.value = null
+    if (docs.value.length === 1 && page.value > 1) page.value -= 1
+    await load()
   } catch (err) {
     error.value = err
   } finally {
@@ -199,9 +241,10 @@ async function submitUpload(): Promise<void> {
       expiration_date: upload.expiration_date || undefined,
     })
     uploadDone.value = `已入库：${res.document.title}，切分为 ${res.chunk_count} 个片段。`
-    docs.value = [res.document, ...docs.value]
     resetUpload()
     uploadOpen.value = false
+    page.value = 1
+    await load()
   } catch (err) {
     uploadError.value = err instanceof ApiError ? err.message : '上传失败，请重试'
   } finally {
@@ -228,14 +271,6 @@ async function submitUpload(): Promise<void> {
       </template>
     </PageHeader>
 
-    <!-- 后端缺口提示：必须在数据之前就被看到 -->
-    <p class="gap-note">
-      <AppIcon name="info" :size="14" />
-      <span>
-        后端尚未提供列表查询接口，下表为<b>{{ MOCK_NOTICE }}</b>。上传与状态变更走真实接口。
-      </span>
-    </p>
-
     <!-- ---------------------------- 上传面板 ---------------------------- -->
     <section v-if="uploadOpen" class="upload u-card">
       <header class="u-panel-head">
@@ -249,7 +284,7 @@ async function submitUpload(): Promise<void> {
       <div class="upload__body">
         <div class="upload__file">
           <label class="dropzone">
-            <input class="u-sr" type="file" accept=".pdf,.doc,.docx,.txt,.md" @change="onFileChange" />
+            <input class="u-sr" type="file" accept=".pdf,.docx,.txt,.md" @change="onFileChange" />
             <AppIcon name="upload" :size="20" />
             <span class="dropzone__title">
               {{ upload.file ? upload.file.name : '选择文件' }}
@@ -304,7 +339,7 @@ async function submitUpload(): Promise<void> {
               <option v-for="(l, k) in DATA_LEVEL_LABELS" :key="k" :value="k">{{ l }}</option>
             </select>
             <p v-if="upload.security_level !== 'public'" class="field__hint">
-              非公开文件仅由本地模型处理
+              内部内容仅供获准云端服务处理；敏感与涉密内容不参与云端 AI 处理
             </p>
           </div>
           <div class="field">
@@ -466,6 +501,7 @@ async function submitUpload(): Promise<void> {
               >
                 恢复生效
               </button>
+              <button class="btn btn--quiet" type="button" :disabled="statusBusy !== null || replacementBusy" @click="removeDocument(d)">移除</button>
             </td>
           </tr>
         </tbody>
@@ -473,8 +509,12 @@ async function submitUpload(): Promise<void> {
     </div>
 
     <p v-if="!loading && !error && filtered.length" class="table-foot u-meta">
-      共 {{ filtered.length }} 条。选择行可在右侧查看完整信息。
+      共 {{ total }} 条，第 {{ page }} 页。选择行可查看完整信息。
     </p>
+    <div v-if="!loading && !error && total > pageSize" class="table-foot">
+      <button class="btn btn--ghost" :disabled="page <= 1" @click="turnPage(-1)">上一页</button>
+      <button class="btn btn--ghost" :disabled="page * pageSize >= total" @click="turnPage(1)">下一页</button>
+    </div>
 
     <!-- ---------------------------- 详情抽屉 ---------------------------- -->
     <aside v-if="selected" class="detail u-card">
@@ -528,6 +568,14 @@ async function submitUpload(): Promise<void> {
       </dl>
       <footer class="detail__foot">
         <p class="u-meta">状态变更会直接影响该文件是否被问答环节检索到。</p>
+        <label class="field">
+          <span>更新文件内容（当前版本 {{ selected.content_revision ?? 1 }}）</span>
+          <input :key="selected.id + ':' + selected.content_revision" type="file" accept=".txt,.md,.pdf,.docx" @change="chooseReplacement" />
+        </label>
+        <button class="btn btn--ghost" type="button" :disabled="!replacement || replacementBusy" @click="replaceContent">
+          {{ replacementBusy ? '保存中' : '保存新版本' }}
+        </button>
+        <p v-if="replacementMessage" role="status">{{ replacementMessage }}</p>
       </footer>
     </aside>
   </div>

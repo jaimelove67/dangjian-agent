@@ -10,6 +10,7 @@
 设计约定：本模块只承载**纯逻辑**（密码 / 令牌 / 权限判定），不依赖 FastAPI 与
 数据库，便于单元测试。FastAPI 依赖注入见 ``app/deps.py``。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -82,9 +83,7 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
     if not plain_password or not password_hash:
         return False
     try:
-        return bcrypt.checkpw(
-            _to_bcrypt_bytes(plain_password), password_hash.encode("utf-8")
-        )
+        return bcrypt.checkpw(_to_bcrypt_bytes(plain_password), password_hash.encode("utf-8"))
     except (ValueError, TypeError):
         return False
 
@@ -92,6 +91,7 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
 # ==================== JWT 令牌 ====================
 class TokenType(str, Enum):
     """令牌类型"""
+
     ACCESS = "access"
     REFRESH = "refresh"
 
@@ -142,6 +142,7 @@ def create_refresh_token(
     subject: str,
     tenant_id: Optional[str] = None,
     role: Optional[UserRole] = None,
+    extra_claims: Optional[dict[str, Any]] = None,
 ) -> str:
     """签发刷新令牌"""
     return _encode(
@@ -150,6 +151,7 @@ def create_refresh_token(
         timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         tenant_id=tenant_id,
         role=role,
+        **(extra_claims or {}),
     )
 
 
@@ -171,9 +173,7 @@ def decode_token(token: str, expected_type: Optional[TokenType] = None) -> dict[
     try:
         payload = cast(
             "dict[str, Any]",
-            jwt.decode(
-                token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
-            ),
+            jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]),
         )
     except JWTError as exc:
         raise TokenError(f"令牌无效或已过期: {exc}") from exc
@@ -186,20 +186,22 @@ def decode_token(token: str, expected_type: Optional[TokenType] = None) -> dict[
 # ==================== 角色与数据范围 ====================
 class Permission(str, Enum):
     """接口权限点（对应开发规范 8.3 接口权限要求）"""
-    QA_ASK = "qa.ask"                           # 知识问答：登录用户
-    KNOWLEDGE_QUERY = "knowledge.query"         # 知识检索：登录用户
-    KNOWLEDGE_MANAGE = "knowledge.manage"       # 知识库维护：院系级及以上管理员
-    MEMBER_QUERY = "member.query"               # 党员发展查询：支部书记及以上
+
+    QA_ASK = "qa.ask"  # 知识问答：登录用户
+    KNOWLEDGE_QUERY = "knowledge.query"  # 知识检索：登录用户
+    KNOWLEDGE_MANAGE = "knowledge.manage"  # 知识库维护：院系级及以上管理员
+    MEMBER_QUERY = "member.query"  # 党员发展查询：支部书记及以上
     STAGE_TRANSITION = "member.stage_transition"  # 阶段流转：支部书记及以上
-    SCORING = "member.scoring"                  # 辅助评分：支部书记及以上
-    MEETING_ARCHIVE = "meeting.archive"         # 会议归档：支部书记及以上
-    CONFIG_MANAGE = "admin.config"              # 配置管理：系统管理员
-    AUDIT_QUERY = "admin.audit"                 # 审计查询：系统管理员
+    SCORING = "member.scoring"  # 辅助评分：支部书记及以上
+    MEETING_ARCHIVE = "meeting.archive"  # 会议归档：支部书记及以上
+    CONFIG_MANAGE = "admin.config"  # 配置管理：系统管理员
+    AUDIT_QUERY = "admin.audit"  # 审计查询：系统管理员
 
 
 @dataclass(frozen=True)
 class RoleProfile:
     """角色画像：知识库可见范围 + 业务数据范围 + 权限点 + 数据级别上限"""
+
     role: UserRole
     knowledge_scopes: frozenset[str]
     business_scope: str
@@ -224,23 +226,27 @@ _BUSINESS_SCOPE_ORDER = {BS_SELF: 0, BS_BRANCH: 1, BS_DEPARTMENT: 2, BS_SCHOOL: 
 
 # 合并权限集合，便于复用
 _ALL_PERMISSIONS = frozenset(Permission)
-_MANAGER_PERMISSIONS = frozenset({
-    Permission.QA_ASK,
-    Permission.KNOWLEDGE_QUERY,
-    Permission.KNOWLEDGE_MANAGE,
-    Permission.MEMBER_QUERY,
-    Permission.STAGE_TRANSITION,
-    Permission.SCORING,
-    Permission.MEETING_ARCHIVE,
-})
-_BRANCH_PERMISSIONS = frozenset({
-    Permission.QA_ASK,
-    Permission.KNOWLEDGE_QUERY,
-    Permission.MEMBER_QUERY,
-    Permission.STAGE_TRANSITION,
-    Permission.SCORING,
-    Permission.MEETING_ARCHIVE,
-})
+_MANAGER_PERMISSIONS = frozenset(
+    {
+        Permission.QA_ASK,
+        Permission.KNOWLEDGE_QUERY,
+        Permission.KNOWLEDGE_MANAGE,
+        Permission.MEMBER_QUERY,
+        Permission.STAGE_TRANSITION,
+        Permission.SCORING,
+        Permission.MEETING_ARCHIVE,
+    }
+)
+_BRANCH_PERMISSIONS = frozenset(
+    {
+        Permission.QA_ASK,
+        Permission.KNOWLEDGE_QUERY,
+        Permission.MEMBER_QUERY,
+        Permission.STAGE_TRANSITION,
+        Permission.SCORING,
+        Permission.MEETING_ARCHIVE,
+    }
+)
 _MEMBER_PERMISSIONS = frozenset({Permission.QA_ASK, Permission.KNOWLEDGE_QUERY})
 
 # 角色画像（对应框架文档 9.1 角色与数据范围表）

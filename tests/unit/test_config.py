@@ -1,6 +1,6 @@
 """配置加载与回退逻辑测试"""
+
 import pytest
-from unittest.mock import patch
 
 from app.core.config import Settings, TenantConfig, get_settings
 
@@ -8,14 +8,20 @@ from app.core.config import Settings, TenantConfig, get_settings
 class TestSettings:
     """配置加载测试"""
 
-    def test_default_settings(self):
+    def test_default_settings(self, monkeypatch):
         """测试：默认配置加载成功"""
-        settings = Settings()
+        monkeypatch.delenv("ENV", raising=False)
+        monkeypatch.delenv("DEBUG", raising=False)
+        settings = Settings(_env_file=None)
 
         assert settings.PROJECT_NAME == "党建工作智能体"
         assert settings.VERSION == "1.0.0"
         assert settings.ENV == "development"
-        assert settings.DEBUG is True
+        assert settings.DEBUG is False
+
+    def test_production_never_enables_debug(self):
+        settings = Settings(_env_file=None, ENV="production", DEBUG=True)
+        assert settings.DEBUG is False
 
     def test_env_validation(self):
         """测试：环境变量验证"""

@@ -1,6 +1,7 @@
 """健康检查接口"""
-from typing import Dict, Any
+
 import logging
+from typing import Any, Dict
 
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
@@ -49,26 +50,61 @@ async def readiness_check() -> JSONResponse:
     checks = {
         "database": "unknown",
         "redis": "unknown",
+        "schema": "unknown",
+        "models": "unknown",
     }
 
     # 检查 Redis 连接
     try:
         from app.core.cache import redis_manager
+
         await redis_manager.client.ping()
         checks["redis"] = "healthy"
     except Exception as e:
         logger.error(f"Redis health check failed: {e}")
-        checks["redis"] = f"unhealthy: {str(e)}"
+        checks["redis"] = "unhealthy"
 
-    # TODO: 检查数据库连接
-    # try:
-    #     await check_database()
-    #     checks["database"] = "healthy"
-    # except Exception as e:
-    #     checks["database"] = f"unhealthy: {str(e)}"
+    # 检查数据库连接
+    try:
+        from sqlalchemy import text
 
-    # 暂时标记为未实现
-    checks["database"] = "not_implemented"
+        from app.db.session import engine
+
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+            expected_tables = (
+                "users",
+                "tenants",
+                "org_units",
+                "knowledge_docs",
+                "embedding_chunks",
+                "audit_logs",
+            )
+            present = await conn.execute(
+                text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+            )
+            tables_ready = set(expected_tables).issubset({row[0] for row in present})
+            fts_ready = await conn.scalar(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM pg_ts_config WHERE cfgname = 'chinese_zh') "
+                    "AND EXISTS(SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'knowledge_docs' AND column_name = 'search_vector')"
+                )
+            )
+            checks["schema"] = "healthy" if tables_ready and fts_ready else "migration_required"
+        checks["database"] = "healthy"
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        checks["database"] = "unhealthy"
+
+    from app.llm.init_models import model_readiness
+
+    models = model_readiness()
+    checks["models"] = (
+        "healthy"
+        if all(value != "missing" for value in models.values())
+        else "configuration_required"
+    )
 
     # 判断整体状态
     all_healthy = all(v == "healthy" for v in checks.values())
@@ -79,6 +115,7 @@ async def readiness_check() -> JSONResponse:
         content={
             "status": "ready" if all_healthy else "not_ready",
             "checks": checks,
+            "model_capabilities": models,
         },
     )
 

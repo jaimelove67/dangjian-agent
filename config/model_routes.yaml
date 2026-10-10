@@ -1,5 +1,5 @@
-# 模型路由配置
-# 根据数据级别和任务类型选择合适的模型
+# 模型路由说明（运行时配置以 .env 和 app/llm/init_models.py 为准）。
+# 此文件不作为动态路由加载源。账号权限决定资料范围，问题与文档决定内容等级。
 
 # 数据级别定义
 # - public: 公开数据
@@ -14,73 +14,42 @@ routes:
     task_type: qa
     model:
       provider: qwen
-      name: qwen-turbo
+      name: qwen3.8-flash
       is_private: false
       max_tokens: 2000
       temperature: 0.3
 
-  # 内部数据 - 优先私有模型
+  # 内部数据 - 仅调用已授权白名单中的云端模型
   - data_level: internal
     task_type: qa
     model:
-      provider: local
-      name: qwen2-7b-instruct
-      is_private: true
+      provider: qwen
+      name: qwen3.8-flash
+      is_private: false
       max_tokens: 2000
       temperature: 0.3
 
-  # 敏感数据 - 强制私有模型
+  # 当前全部模型部署在云端，敏感数据拒绝模型调用
   - data_level: sensitive
-    task_type: qa
-    model:
-      provider: local
-      name: qwen2-7b-instruct
-      is_private: true
-      max_tokens: 2000
-      temperature: 0.1
+    task_type: "*"
+    action: deny
 
-  - data_level: sensitive
-    task_type: member_analysis
-    model:
-      provider: local
-      name: qwen2-7b-instruct
-      is_private: true
-      max_tokens: 3000
-      temperature: 0.1
-
-  # 涉密数据 - 强制私有模型，不允许调用
+  # 涉密数据禁止模型调用
   - data_level: classified
     task_type: "*"
-    model:
-      provider: local
-      name: qwen2-7b-instruct
-      is_private: true
-      max_tokens: 2000
-      temperature: 0.0
+    action: deny
 
-# 默认路由（找不到匹配规则时使用）
+# 未匹配的请求不默认出网
 default:
-  model:
-    provider: local
-    name: qwen2-7b-instruct
-    is_private: true
-    max_tokens: 2000
-    temperature: 0.3
+  action: deny
 
 # 模型提供商配置
 providers:
   qwen:
     type: api
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api_key_env: QWEN_API_KEY
+    api_key_env: DASHSCOPE_API_KEY
     models:
-      - qwen-turbo
-      - qwen-plus
-      - qwen-max
-
-  local:
-    type: local
-    base_url: http://localhost:8000/v1
-    models:
-      - qwen2-7b-instruct
-      - qwen2-14b-instruct
+      - qwen3.8-flash
+      - qwen3.7-text-embedding-flash
+      - qwen3.7-text-rerank

@@ -3,6 +3,7 @@
 # ==================== Web 框架 ====================
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
+python-multipart==0.0.20
 pydantic==2.5.3
 pydantic-settings==2.1.0
 
@@ -40,8 +41,7 @@ openai==1.10.0
 # torch==2.1.2
 
 # ==================== 向量化与检索 ====================
-# Sentence Transformers（本地 Embedding）
-sentence-transformers==2.3.1
+# 三种模型统一使用云端 HTTP 接口，无需下载本地模型或安装推理框架。
 
 # 文本分词
 jieba==0.42.1
@@ -54,8 +54,8 @@ pdfplumber==0.10.3
 # Word 解析
 python-docx==1.1.0
 
-# 文本切分
-langchain-text-splitters==0.0.1
+# 文本切分由 app/rag/splitter.py 实现。
+# 未使用的 langchain-text-splitters 0.0.1 与当前 langchain-core 锁定版本冲突。
 
 # ==================== 安全与认证 ====================
 # JWT

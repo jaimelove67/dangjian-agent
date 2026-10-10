@@ -34,6 +34,7 @@ COPY ./app ./app
 COPY ./migrations ./migrations
 COPY ./config ./config
 COPY ./scripts ./scripts
+COPY alembic.ini ./alembic.ini
 
 # 创建非 root 用户
 RUN useradd -m -u 1000 appuser && \
@@ -44,7 +45,7 @@ USER appuser
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:8000/api/v1/health/ready || exit 1
 
 # 暴露端口
 EXPOSE 8000

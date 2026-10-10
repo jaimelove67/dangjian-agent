@@ -35,13 +35,15 @@ services:
   redis:
     image: ${DOCKERHUB_MIRROR:-docker.io}/library/redis:7-alpine
     container_name: party-agent-redis
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change_me_in_production}
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-change_me_in_production}
     volumes:
       - redis_data:/data
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -59,21 +61,24 @@ services:
     container_name: party-agent-app
     environment:
       # 数据库配置
-      DATABASE_URL: postgresql://party_user:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/party_agent
+      DATABASE_URL: postgresql+asyncpg://party_user:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/party_agent
       # Redis 配置
       REDIS_URL: redis://:${REDIS_PASSWORD:-change_me_in_production}@redis:6379/0
       # 应用配置
       ENV: production
       LOG_LEVEL: INFO
       # 模型配置（从环境变量读取）
-      QWEN_API_KEY: ${QWEN_API_KEY}
-      EMBEDDING_MODEL_PATH: ${EMBEDDING_MODEL_PATH:-/models/bge-large-zh-v1.5}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-${QWEN_API_KEY:-}}
+      CHAT_MODEL: ${CHAT_MODEL:-qwen3.8-flash}
+      EMBED_MODEL: ${EMBED_MODEL:-qwen3.7-text-embedding-flash}
+      RERANK_MODEL: ${RERANK_MODEL:-qwen3.7-text-rerank}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com}
+      ALLOWED_EXTERNAL_MODELS: ${ALLOWED_EXTERNAL_MODELS:-["dashscope.aliyuncs.com"]}
+      ENABLE_DATA_LEVEL_GATEWAY: "true"
       # 安全配置
       SECRET_KEY: ${SECRET_KEY:-please_change_this_secret_key}
-      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-["*"]}
     volumes:
-      # 挂载模型目录（本地模型）
-      - ${LOCAL_MODEL_PATH:-./models}:/models:ro
       # 挂载配置文件
       - ./config:/app/config:ro
       # 挂载日志目录
@@ -86,32 +91,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/ready"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-    restart: unless-stopped
-    networks:
-      - party-agent-network
-
-  # 本地向量化服务（可选，使用本地 Embedding 模型）
-  embedding:
-    # 注意：registry-mirrors 对 ghcr.io 无效，该镜像必须直连 GHCR 或走私有 registry。
-    # 无法直连时，用 scripts/offline-images.sh save/load 离线分发，或把 GHCR_MIRROR 指向支持的源。
-    image: ${GHCR_MIRROR:-ghcr.io}/huggingface/text-embeddings-inference:cpu-1.2
-    container_name: party-agent-embedding
-    command: --model-id /models/bge-large-zh-v1.5 --port 8080
-    volumes:
-      - ${LOCAL_MODEL_PATH:-./models}:/models:ro
-    ports:
-      - "8080:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
     restart: unless-stopped
     networks:
       - party-agent-network

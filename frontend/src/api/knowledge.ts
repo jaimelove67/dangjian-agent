@@ -5,19 +5,29 @@ import type {
   DocumentStatusUpdate,
   DocumentUploadForm,
   DocStatus,
+  DocumentListResponse,
 } from './types'
 
-/**
- * app/api/v1/knowledge.py
- *
- * ⚠️ 后端仅提供三个接口：创建、按 doc_id 查询、改状态。
- *    **没有列表接口**（无 GET /knowledge-docs），因此列表页使用 mock
- *    数据源（见 ./mock.ts），并在界面上以「示例数据」徽标显式标注，
- *    避免把演示数据误当成真实库内容。
- */
+/** app/api/v1/knowledge.py：列表、详情、创建和状态维护均为真实接口。 */
+export function listDocuments(params: { page?: number; page_size?: number; q?: string; status?: string; level?: string }): Promise<DocumentListResponse> {
+  return http.get('/knowledge-docs', { params })
+}
 
 export function getDocument(docId: string): Promise<DocumentResponse> {
   return http.get(`/knowledge-docs/${encodeURIComponent(docId)}`)
+}
+
+export function deleteDocument(docId: string): Promise<DocumentResponse> {
+  return http.delete(`/knowledge-docs/${encodeURIComponent(docId)}`)
+}
+
+export function replaceDocumentContent(doc: DocumentResponse, file: File): Promise<DocumentCreateResponse> {
+  const data = new FormData()
+  data.append('file', file)
+  data.append('expected_revision', String(doc.content_revision ?? 1))
+  return http.put(`/knowledge-docs/${encodeURIComponent(doc.doc_id)}/content`, data, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
 }
 
 export function updateDocumentStatus(

@@ -11,6 +11,7 @@
 
 检索与生成以协议（Protocol）注入，便于开发者B接入真实实现，也便于单测替换。
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class Retriever(Protocol):
     """检索器协议（阶段 2）"""
+
     async def retrieve(
         self, *, question: str, tenant_id: str, include_expired: bool = False
     ) -> list[RetrievedChunk]: ...
@@ -34,9 +36,8 @@ class Retriever(Protocol):
 
 class Generator(Protocol):
     """生成器协议（阶段 4）"""
-    async def generate(
-        self, *, question: str, chunks: Sequence[RetrievedChunk]
-    ) -> str: ...
+
+    async def generate(self, *, question: str, chunks: Sequence[RetrievedChunk]) -> str: ...
 
 
 class QAChain:
@@ -76,16 +77,14 @@ class QAChain:
         history = []
         if self.session and session_id:
             history = await self.session.get_history(tenant_id, session_id)
-        standalone_question = await rewrite_question(
-            question, history, llm_call=self.llm_call
-        )
+        standalone_question = await rewrite_question(question, history, llm_call=self.llm_call)
         logger.info(
             "qa_stage_rewrite",
             extra={
                 "tenant_id": tenant_id,
                 "session_id": session_id,
-                "original_question": question,
-                "rewritten_question": standalone_question,
+                "original_length": len(question),
+                "rewritten_length": len(standalone_question),
             },
         )
 
@@ -125,9 +124,7 @@ class QAChain:
 
         # 阶段 4：生成
         try:
-            draft = await self.generator.generate(
-                question=standalone_question, chunks=chunks
-            )
+            draft = await self.generator.generate(question=standalone_question, chunks=chunks)
             logger.info(
                 "qa_stage_generate",
                 extra={
@@ -156,12 +153,16 @@ class QAChain:
         )
 
         # 阶段 6：统一响应组装
+        unsupported = not verification.valid or not verification.citations
+        warnings = list(verification.warnings)
+        if unsupported:
+            warnings.append("生成内容未通过引用核验，已拒答")
         response = QAResponse(
-            answer=verification.answer,
-            citations=verification.citations,
-            warnings=verification.warnings,
+            answer=REFUSAL_ANSWER if unsupported else verification.answer,
+            citations=[] if unsupported else verification.citations,
+            warnings=warnings,
             disclaimer=DEFAULT_DISCLAIMER,
-            refused=False,
+            refused=unsupported,
         )
         await self._persist(tenant_id, session_id, question, response)
         return response
@@ -182,11 +183,13 @@ class QAChain:
         """写入会话（仅问答与引用摘要）"""
         if not (self.session and session_id):
             return
-        summaries = SessionStore.summarize_citations(
-            [c.model_dump() for c in response.citations]
-        )
-        await self.session.append_turn(
-            tenant_id,
-            session_id,
-            QATurn.create(question=question, answer=response.answer, citations=summaries),
-        )
+        summaries = SessionStore.summarize_citations([c.model_dump() for c in response.citations])
+        try:
+            await self.session.append_turn(
+                tenant_id,
+                session_id,
+                QATurn.create(question=question, answer=response.answer, citations=summaries),
+            )
+        except Exception:
+            logger.exception("qa_session_persistence_failed")
+            response.warnings.append("本次会话历史未能保存，请稍后重试")

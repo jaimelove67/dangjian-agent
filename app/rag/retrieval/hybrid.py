@@ -3,15 +3,20 @@
 融合向量检索和关键词检索的结果，使用 Reciprocal Rank Fusion (RRF) 算法。
 支持集成重排模型进一步优化结果。
 """
+
 from __future__ import annotations
 
 import logging
+import math
+from dataclasses import replace
 from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.base import DataLevel
+from app.llm.router import RouterError
 from app.llm.service import get_model_service
+from app.rag.privacy import LEVELS, content_level, require_cloud_eligible
 from app.rag.retrieval.base import RetrievalResult, Retriever
 from app.rag.retrieval.keyword import KeywordRetriever
 from app.rag.retrieval.vector import VectorRetriever
@@ -52,6 +57,7 @@ class HybridRetriever(Retriever):
         self.vector_retriever = VectorRetriever(db, data_level=data_level)
         self.keyword_retriever = KeywordRetriever(db)
         self._model_service = get_model_service()
+        self.warnings: list[str] = []
 
     async def retrieve(
         self,
@@ -78,13 +84,20 @@ class HybridRetriever(Retriever):
         """
         if not query.strip():
             return []
+        require_cloud_eligible(content_level(query, minimum=self.data_level))
 
         # 1. 并行执行两种检索（各取 top_k * 2 保证融合后有足够候选）
         retrieval_top_k = top_k * 2
 
-        vector_results = await self.vector_retriever.retrieve(
-            query, top_k=retrieval_top_k, filters=filters
-        )
+        # 同一 AsyncSession 不允许并发执行 SQL。数据库错误不降级吞掉。
+        self.warnings = []
+        try:
+            vector_results = await self.vector_retriever.retrieve(
+                query, top_k=retrieval_top_k, filters=filters
+            )
+        except RouterError:
+            vector_results = []
+            self.warnings.append("向量模型不可用，本次仅使用关键词检索")
         keyword_results = await self.keyword_retriever.retrieve(
             query, top_k=retrieval_top_k, filters=filters
         )
@@ -92,7 +105,7 @@ class HybridRetriever(Retriever):
         logger.debug(
             "retrieval_results_collected",
             extra={
-                "query": query[:50],
+                "query_length": len(query),
                 "vector_count": len(vector_results),
                 "keyword_count": len(keyword_results),
             },
@@ -106,7 +119,7 @@ class HybridRetriever(Retriever):
         logger.debug(
             "rrf_fusion_completed",
             extra={
-                "query": query[:50],
+                "query_length": len(query),
                 "fused_count": len(fused_results),
             },
         )
@@ -114,13 +127,11 @@ class HybridRetriever(Retriever):
         # 3. 可选：重排序
         if self.use_reranker and fused_results:
             try:
-                reranked_results = await self._rerank(
-                    query, fused_results, top_k=top_k
-                )
+                reranked_results = await self._rerank(query, fused_results, top_k=top_k)
                 logger.debug(
                     "reranking_completed",
                     extra={
-                        "query": query[:50],
+                        "query_length": len(query),
                         "reranked_count": len(reranked_results),
                     },
                 )
@@ -128,9 +139,10 @@ class HybridRetriever(Retriever):
             except Exception as exc:
                 logger.warning(
                     "reranking_failed_fallback_to_fused",
-                    extra={"query": query[:50], "error": str(exc)},
+                    extra={"query_length": len(query), "error_type": type(exc).__name__},
                 )
-                # 重排失败时降级到融合结果
+                self.warnings.append("重排未完成，本次使用召回排序与原始相关度")
+                # RRF 只用于排序，拒答阈值使用保留的原始相关度。
                 return fused_results[:top_k]
 
         return fused_results[:top_k]
@@ -162,11 +174,10 @@ class HybridRetriever(Retriever):
             chunk_id = result.chunk_id
             rrf_score = self.vector_weight / (self.rrf_k + rank)
             if chunk_id not in chunk_map:
-                chunk_map[chunk_id] = result
-                chunk_map[chunk_id].score = rrf_score
+                chunk_map[chunk_id] = replace(result, metadata=dict(result.metadata))
                 chunk_map[chunk_id].metadata["rrf_score"] = rrf_score
             else:
-                chunk_map[chunk_id].score += rrf_score
+                chunk_map[chunk_id].score = max(chunk_map[chunk_id].score, result.score)
                 chunk_map[chunk_id].metadata["rrf_score"] += rrf_score
 
         # 关键词检索结果的排名分数
@@ -174,17 +185,16 @@ class HybridRetriever(Retriever):
             chunk_id = result.chunk_id
             rrf_score = self.keyword_weight / (self.rrf_k + rank)
             if chunk_id not in chunk_map:
-                chunk_map[chunk_id] = result
-                chunk_map[chunk_id].score = rrf_score
+                chunk_map[chunk_id] = replace(result, metadata=dict(result.metadata))
                 chunk_map[chunk_id].metadata["rrf_score"] = rrf_score
             else:
-                chunk_map[chunk_id].score += rrf_score
+                chunk_map[chunk_id].score = max(chunk_map[chunk_id].score, result.score)
                 chunk_map[chunk_id].metadata["rrf_score"] += rrf_score
 
         # 按 RRF 分数排序
         fused = sorted(
             chunk_map.values(),
-            key=lambda r: r.score,
+            key=lambda r: r.metadata["rrf_score"],
             reverse=True,
         )
 
@@ -215,19 +225,41 @@ class HybridRetriever(Retriever):
 
         # 准备文档列表
         documents = [result.content for result in candidates]
+        processing_level = max(
+            [content_level(query, minimum=self.data_level)]
+            + [
+                content_level(
+                    result.content,
+                    minimum=DataLevel(result.metadata.get("security_level") or "sensitive"),
+                )
+                for result in candidates
+            ],
+            key=LEVELS.index,
+        )
+        require_cloud_eligible(processing_level)
 
         # 调用重排模型
         rerank_response = await self._model_service.rerank(
             query=query,
             documents=documents,
             top_k=top_k,
-            data_level=self.data_level,
+            data_level=processing_level,
         )
 
         # 根据重排结果重新排序
         reranked_results = []
+        seen = set()
         for rerank_result in rerank_response.results:
-            original_result = candidates[rerank_result.index]
+            index, score = rerank_result.index, rerank_result.relevance_score
+            if (
+                index in seen
+                or not 0 <= index < len(candidates)
+                or not math.isfinite(score)
+                or not 0 <= score <= 1
+            ):
+                raise ValueError("Invalid rerank result")
+            seen.add(index)
+            original_result = replace(candidates[index], metadata=dict(candidates[index].metadata))
             # 保留原始分数，添加重排分数
             original_result.metadata["original_score"] = original_result.score
             original_result.score = rerank_result.relevance_score

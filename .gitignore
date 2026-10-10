@@ -127,6 +127,7 @@ dmypy.json
 # IDE
 .idea/
 .vscode/
+.workbuddy/
 *.swp
 *.swo
 *~
@@ -136,7 +137,7 @@ dmypy.json
 logs/
 *.log
 data/
-models/
+/models/
 !models/.gitkeep
 uploads/
 backups/
@@ -158,6 +159,9 @@ temp/
 # 测试覆盖率报告
 htmlcov/
 .coverage
+
+# 自动生成的业务评测结果
+/tests/evaluation/results/
 
 # Pre-commit (保留配置文件，只忽略缓存)
 # .pre-commit-config.yaml

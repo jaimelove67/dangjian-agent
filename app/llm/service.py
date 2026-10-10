@@ -3,18 +3,16 @@
 提供高层次的模型调用接口，封装路由、闸门和调用逻辑。
 """
 
-from typing import List, Optional, Dict, Any, AsyncIterator
+import asyncio
+from typing import Any, AsyncIterator, Dict, List, Optional
 
-from app.llm.base import (
-    DataLevel,
-    TaskType,
-    ModelType,
-    ModelResponse,
-    EmbeddingResponse,
-)
-from app.llm.router import get_model_router
-from app.llm.gateway import GatewayError
 import structlog
+
+from app.core.config import settings
+from app.llm.base import DataLevel, EmbeddingResponse, ModelResponse, ModelType, TaskType
+from app.llm.errors import ModelUnavailableError
+from app.llm.gateway import GatewayError
+from app.llm.router import RouterError, get_model_router
 
 logger = structlog.get_logger(__name__)
 
@@ -36,7 +34,7 @@ class ModelService:
         data_level: DataLevel,
         task_type: TaskType = TaskType.QA,
         context: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> ModelResponse:
         """生成文本
 
@@ -64,7 +62,9 @@ class ModelService:
             )
 
             # 调用模型
-            response = await provider.generate(prompt, **kwargs)
+            response = await asyncio.wait_for(
+                provider.generate(prompt, **kwargs), timeout=settings.MODEL_TIMEOUT_SECONDS
+            )
 
             logger.info(
                 "generate_success",
@@ -87,6 +87,8 @@ class ModelService:
             )
             raise
 
+        except RouterError:
+            raise
         except Exception as e:
             logger.error(
                 "generate_failed",
@@ -95,14 +97,14 @@ class ModelService:
                 error=str(e),
                 context=context,
             )
-            raise
+            raise ModelUnavailableError("文本生成服务暂不可用，请检查模型配置或稍后重试") from e
 
     async def embed(
         self,
         texts: List[str],
         data_level: DataLevel = DataLevel.PUBLIC,
         context: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> EmbeddingResponse:
         """文本向量化
 
@@ -129,7 +131,9 @@ class ModelService:
             )
 
             # 调用模型
-            response = await provider.embed(texts, **kwargs)
+            response = await asyncio.wait_for(
+                provider.embed(texts, **kwargs), timeout=settings.MODEL_TIMEOUT_SECONDS
+            )
 
             logger.info(
                 "embed_success",
@@ -151,6 +155,8 @@ class ModelService:
             )
             raise
 
+        except RouterError:
+            raise
         except Exception as e:
             logger.error(
                 "embed_failed",
@@ -159,7 +165,7 @@ class ModelService:
                 error=str(e),
                 context=context,
             )
-            raise
+            raise ModelUnavailableError("向量模型暂不可用，请检查配置和服务状态") from None
 
     async def generate_stream(
         self,
@@ -168,7 +174,7 @@ class ModelService:
         task_type: TaskType = TaskType.QA,
         system_prompt: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> AsyncIterator[str]:
         """流式生成文本
 
@@ -197,7 +203,7 @@ class ModelService:
             )
 
             # 检查provider是否支持流式生成
-            if not hasattr(provider, 'generate_stream'):
+            if not hasattr(provider, "generate_stream"):
                 # 降级到非流式
                 response = await provider.generate(prompt, **kwargs)
                 yield response.content
@@ -244,7 +250,7 @@ class ModelService:
         top_k: int,
         data_level: DataLevel = DataLevel.PUBLIC,
         context: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ):
         """文档重排序
 
@@ -269,7 +275,10 @@ class ModelService:
             )
 
             # 调用模型
-            response = await provider.rerank(query, documents, top_k=top_k, **kwargs)
+            response = await asyncio.wait_for(
+                provider.rerank(query, documents, top_k=top_k, **kwargs),
+                timeout=settings.MODEL_TIMEOUT_SECONDS,
+            )
 
             logger.info(
                 "rerank_success",
@@ -280,6 +289,8 @@ class ModelService:
 
             return response
 
+        except (GatewayError, RouterError):
+            raise
         except Exception as e:
             logger.error(
                 "rerank_failed",
@@ -287,7 +298,7 @@ class ModelService:
                 error=str(e),
                 context=context,
             )
-            raise
+            raise ModelUnavailableError("重排模型暂不可用，请检查配置和服务状态") from None
 
     async def health_check(self) -> Dict[str, bool]:
         """健康检查所有模型

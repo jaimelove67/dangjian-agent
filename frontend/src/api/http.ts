@@ -1,6 +1,7 @@
-import axios, { type AxiosError, type AxiosInstance, type AxiosResponse } from 'axios'
+import axios, { type AxiosError, type AxiosInstance, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 
 import { ErrorCode, type ApiEnvelope } from './types'
+import type { TokenResponse } from './types'
 
 /**
  * 统一的 HTTP 客户端。
@@ -54,6 +55,7 @@ export const tokenStore = {
   clear(): void {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(REFRESH_KEY)
+    window.dispatchEvent(new Event('party:session-cleared'))
   },
 }
 
@@ -84,13 +86,20 @@ export const http: AxiosInstance = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+type SessionRequest = InternalAxiosRequestConfig & { sessionToken?: string; retried?: boolean }
+
 http.interceptors.request.use((config) => {
   const token = tokenStore.get()
-  if (token) {
+  if (token && !config.headers.has('Authorization')) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  if (token && config.headers.Authorization === `Bearer ${token}`) {
+    (config as SessionRequest).sessionToken = token
   }
   return config
 })
+
+let refreshPending: Promise<TokenResponse> | null = null
 
 http.interceptors.response.use(
   (res: AxiosResponse<ApiEnvelope<unknown>>) => {
@@ -108,11 +117,41 @@ http.interceptors.response.use(
     // 非包裹体（如文件流、裸 JSON）：透传载荷
     return body as never
   },
-  (err: AxiosError<Partial<ApiEnvelope<unknown>>>) => {
+  async (err: AxiosError<Partial<ApiEnvelope<unknown>>>) => {
     const apiErr = normalizeError(err)
+    const original = err.config as SessionRequest | undefined
+    const authRequest = original?.url?.startsWith('/auth/') &&
+      !['/auth/me', '/auth/codes'].includes(original.url)
+    const currentAccess = tokenStore.get()
+    const ownSession = !!currentAccess && !!original?.sessionToken && original.headers.Authorization === `Bearer ${original.sessionToken}`
+
+    if (apiErr.isAuthError && original && !authRequest && ownSession && !original.retried && tokenStore.getRefresh()) {
+      original.retried = true
+      // 另一个并发请求已经完成刷新时，直接用新令牌重试。
+      if (original.sessionToken !== currentAccess) {
+        original.headers.Authorization = `Bearer ${currentAccess}`
+        return http.request(original)
+      }
+      try {
+        if (!refreshPending) {
+          refreshPending = http.post<never, TokenResponse>('/auth/refresh', null, {
+            headers: { Authorization: `Bearer ${tokenStore.getRefresh()}` },
+          }).then((tokens) => {
+            tokenStore.set(tokens.access_token, tokens.refresh_token)
+            return tokens
+          }).finally(() => { refreshPending = null })
+        }
+        const tokens = await refreshPending
+        original.headers.Authorization = `Bearer ${tokens.access_token}`
+        return http.request(original)
+      } catch (refreshError) {
+        if (refreshError instanceof ApiError && refreshError.isAuthError) tokenStore.clear()
+        return Promise.reject(refreshError)
+      }
+    }
 
     // 令牌失效：清空本地凭证，交给路由守卫跳登录页，不在此处自行跳转
-    if (apiErr.isAuthError) {
+    if (apiErr.isAuthError && (ownSession || original?.url === '/auth/refresh')) {
       tokenStore.clear()
     }
 

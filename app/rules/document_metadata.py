@@ -8,18 +8,14 @@
 - 层级 / 可见范围 / 保密级别 / 状态取值必须合法；
 - 失效日期不得早于生效日期。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Mapping, Optional
 
-from app.core.constants import (
-    DataLevel,
-    DocumentLevel,
-    DocumentStatus,
-    DocumentVisibility,
-)
+from app.core.constants import DataLevel, DocumentLevel, DocumentStatus, DocumentVisibility
 
 REQUIRED_FIELDS: tuple[str, ...] = (
     "doc_id",
@@ -45,6 +41,7 @@ class MetadataValidationError(Exception):
 @dataclass(frozen=True)
 class MetadataValidationResult:
     """校验结果"""
+
     embedding_allowed: bool  # 是否允许进入向量库（涉密材料为 False）
 
 
@@ -95,6 +92,16 @@ def validate_document_metadata(data: Mapping[str, Any]) -> MetadataValidationRes
         errors.append("主题标签存在空值")
 
     # 枚举取值
+    for field, maximum in {
+        "doc_id": 100,
+        "file_name": 255,
+        "title": 500,
+        "issuer": 200,
+        "doc_number": 100,
+    }.items():
+        if data.get(field) is not None and len(str(data[field])) > maximum:
+            errors.append(f"字段 {field} 超过长度限制（{maximum}）")
+
     level = data.get("level")
     if not _is_missing(level) and level not in level_values:
         errors.append(f"层级非法: {level}（应为 {'/'.join(sorted(level_values))}）")

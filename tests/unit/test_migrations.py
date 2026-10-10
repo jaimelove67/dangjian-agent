@@ -3,6 +3,7 @@
 使用 Alembic offline 模式生成 SQL，验证迁移链可加载、且 002 迁移包含
 中文全文检索相关 DDL。
 """
+
 import io
 
 import pytest
@@ -30,8 +31,16 @@ def offline_sql() -> str:
 
 
 def test_migration_chain_renders_core_tables(offline_sql):
-    for table in ("tenants", "org_units", "users", "knowledge_docs", "audit_logs",
-                  "embedding_chunks"):
+    for table in (
+        "tenants",
+        "org_units",
+        "users",
+        "knowledge_docs",
+        "audit_logs",
+        "embedding_chunks",
+        "qa_sessions",
+        "member_profiles",
+    ):
         assert f"CREATE TABLE {table}" in offline_sql
 
 

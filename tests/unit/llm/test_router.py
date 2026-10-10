@@ -1,19 +1,20 @@
 """测试模型路由器"""
 
 import pytest
-from app.llm.router import ModelRouter, RouterError
+
+from app.llm.base import (
+    BaseModelProvider,
+    DataLevel,
+    DeploymentType,
+    EmbeddingResponse,
+    ModelConfig,
+    ModelResponse,
+    ModelType,
+    TaskType,
+)
 from app.llm.gateway import GatewayError
 from app.llm.registry import ModelRegistry
-from app.llm.base import (
-    DataLevel,
-    TaskType,
-    ModelType,
-    ModelConfig,
-    DeploymentType,
-    BaseModelProvider,
-    ModelResponse,
-    EmbeddingResponse,
-)
+from app.llm.router import ModelRouter, RouterError
 
 
 class MockProvider(BaseModelProvider):
@@ -80,9 +81,7 @@ def test_router_sensitive_data_uses_local(setup_models):
     router.registry = setup_models
 
     provider = router.get_model(
-        data_level=DataLevel.SENSITIVE,
-        task_type=TaskType.QA,
-        model_type=ModelType.LLM
+        data_level=DataLevel.SENSITIVE, task_type=TaskType.QA, model_type=ModelType.LLM
     )
 
     assert provider.config.model_id == "local-llm"
@@ -99,9 +98,7 @@ def test_router_sensitive_data_no_local_fails(setup_models):
 
     with pytest.raises(RouterError, match="No available model"):
         router.get_model(
-            data_level=DataLevel.SENSITIVE,
-            task_type=TaskType.QA,
-            model_type=ModelType.LLM
+            data_level=DataLevel.SENSITIVE, task_type=TaskType.QA, model_type=ModelType.LLM
         )
 
 
@@ -111,9 +108,7 @@ def test_router_internal_data_prefers_local(setup_models):
     router.registry = setup_models
 
     provider = router.get_model(
-        data_level=DataLevel.INTERNAL,
-        task_type=TaskType.QA,
-        model_type=ModelType.LLM
+        data_level=DataLevel.INTERNAL, task_type=TaskType.QA, model_type=ModelType.LLM
     )
 
     # 应该选择本地模型
@@ -126,9 +121,7 @@ def test_router_public_data_prefers_external(setup_models):
     router.registry = setup_models
 
     provider = router.get_model(
-        data_level=DataLevel.PUBLIC,
-        task_type=TaskType.QA,
-        model_type=ModelType.LLM
+        data_level=DataLevel.PUBLIC, task_type=TaskType.QA, model_type=ModelType.LLM
     )
 
     # 应该选择外部模型以降低成本
@@ -141,16 +134,10 @@ def test_router_custom_route(setup_models):
     router.registry = setup_models
 
     # 注册自定义规则：公开数据的QA任务使用本地模型
-    router.register_route(
-        data_level=DataLevel.PUBLIC,
-        task_type=TaskType.QA,
-        model_id="local-llm"
-    )
+    router.register_route(data_level=DataLevel.PUBLIC, task_type=TaskType.QA, model_id="local-llm")
 
     provider = router.get_model(
-        data_level=DataLevel.PUBLIC,
-        task_type=TaskType.QA,
-        model_type=ModelType.LLM
+        data_level=DataLevel.PUBLIC, task_type=TaskType.QA, model_type=ModelType.LLM
     )
 
     # 应该按自定义规则选择本地模型
@@ -164,17 +151,13 @@ def test_router_gateway_blocks_sensitive_external(setup_models):
 
     # 强制指定外部模型
     router.register_route(
-        data_level=DataLevel.SENSITIVE,
-        task_type=TaskType.QA,
-        model_id="external-llm"
+        data_level=DataLevel.SENSITIVE, task_type=TaskType.QA, model_id="external-llm"
     )
 
     # 应被闸门拦截
     with pytest.raises(GatewayError, match="敏感数据禁止使用外部模型"):
         router.get_model(
-            data_level=DataLevel.SENSITIVE,
-            task_type=TaskType.QA,
-            model_type=ModelType.LLM
+            data_level=DataLevel.SENSITIVE, task_type=TaskType.QA, model_type=ModelType.LLM
         )
 
 
@@ -184,9 +167,7 @@ def test_router_embedding_model(setup_models):
     router.registry = setup_models
 
     provider = router.get_model(
-        data_level=DataLevel.PUBLIC,
-        task_type=TaskType.QA,
-        model_type=ModelType.EMBEDDING
+        data_level=DataLevel.PUBLIC, task_type=TaskType.QA, model_type=ModelType.EMBEDDING
     )
 
     assert provider.config.model_id == "local-embedding"
@@ -200,20 +181,15 @@ def test_router_remove_route(setup_models):
 
     # 注册规则
     router.register_route(
-        data_level=DataLevel.PUBLIC,
-        task_type=TaskType.SUMMARIZE,
-        model_id="local-llm"
+        data_level=DataLevel.PUBLIC, task_type=TaskType.SUMMARIZE, model_id="local-llm"
     )
 
     # 验证规则存在
     rules = router.get_routing_rules()
-    assert (DataLevel.PUBLIC, TaskType.SUMMARIZE) in rules
+    assert (DataLevel.PUBLIC, TaskType.SUMMARIZE, ModelType.LLM) in rules
 
     # 移除规则
-    router.remove_route(
-        data_level=DataLevel.PUBLIC,
-        task_type=TaskType.SUMMARIZE
-    )
+    router.remove_route(data_level=DataLevel.PUBLIC, task_type=TaskType.SUMMARIZE)
 
     # 验证规则已移除
     rules = router.get_routing_rules()
@@ -227,9 +203,7 @@ def test_router_no_model_available():
 
     with pytest.raises(RouterError, match="No available model"):
         router.get_model(
-            data_level=DataLevel.PUBLIC,
-            task_type=TaskType.QA,
-            model_type=ModelType.LLM
+            data_level=DataLevel.PUBLIC, task_type=TaskType.QA, model_type=ModelType.LLM
         )
 
 
@@ -240,16 +214,12 @@ def test_router_model_not_in_registry(setup_models):
 
     # 注册一个不存在的模型ID
     router.register_route(
-        data_level=DataLevel.PUBLIC,
-        task_type=TaskType.QA,
-        model_id="non-existent-model"
+        data_level=DataLevel.PUBLIC, task_type=TaskType.QA, model_id="non-existent-model"
     )
 
     with pytest.raises(RouterError, match="not found in registry"):
         router.get_model(
-            data_level=DataLevel.PUBLIC,
-            task_type=TaskType.QA,
-            model_type=ModelType.LLM
+            data_level=DataLevel.PUBLIC, task_type=TaskType.QA, model_type=ModelType.LLM
         )
 
 
@@ -258,17 +228,14 @@ def test_router_context_passed_to_gateway(setup_models):
     router = ModelRouter()
     router.registry = setup_models
 
-    context = {
-        "user_id": "user-123",
-        "request_id": "req-456"
-    }
+    context = {"user_id": "user-123", "request_id": "req-456"}
 
     # 应正常通过并记录上下文
     provider = router.get_model(
         data_level=DataLevel.PUBLIC,
         task_type=TaskType.QA,
         model_type=ModelType.LLM,
-        context=context
+        context=context,
     )
 
     assert provider is not None

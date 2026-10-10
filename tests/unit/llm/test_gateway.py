@@ -1,19 +1,13 @@
 """测试数据级别出网闸门"""
 
 import pytest
+
+from app.llm.base import DataLevel, DeploymentType, ModelConfig, ModelType
 from app.llm.gateway import DataLevelGateway, GatewayError
-from app.llm.base import (
-    DataLevel,
-    ModelConfig,
-    ModelType,
-    DeploymentType,
-)
 
 
 def create_test_config(
-    model_id: str,
-    deployment_type: DeploymentType,
-    provider: str = "test"
+    model_id: str, deployment_type: DeploymentType, provider: str = "test"
 ) -> ModelConfig:
     """创建测试用模型配置"""
     return ModelConfig(
@@ -33,10 +27,7 @@ def test_gateway_classified_data_blocked():
     local_config = create_test_config("local-model", DeploymentType.LOCAL)
 
     # 涉密数据即使使用本地模型也被拒绝
-    allowed, reason = gateway.check_access(
-        DataLevel.CLASSIFIED,
-        local_config
-    )
+    allowed, reason = gateway.check_access(DataLevel.CLASSIFIED, local_config)
 
     assert not allowed
     assert "涉密数据" in reason
@@ -51,18 +42,12 @@ def test_gateway_sensitive_requires_local():
     external_config = create_test_config("external-model", DeploymentType.EXTERNAL)
 
     # 本地模型允许
-    allowed, reason = gateway.check_access(
-        DataLevel.SENSITIVE,
-        local_config
-    )
+    allowed, reason = gateway.check_access(DataLevel.SENSITIVE, local_config)
     assert allowed
     assert reason is None
 
     # 外部模型拒绝
-    allowed, reason = gateway.check_access(
-        DataLevel.SENSITIVE,
-        external_config
-    )
+    allowed, reason = gateway.check_access(DataLevel.SENSITIVE, external_config)
     assert not allowed
     assert "敏感数据禁止使用外部模型" in reason
 
@@ -75,9 +60,7 @@ def test_gateway_internal_whitelist():
 
     local_config = create_test_config("local-model", DeploymentType.LOCAL)
     external_config = create_test_config(
-        "external-model",
-        DeploymentType.EXTERNAL,
-        provider="unknown"
+        "external-model", DeploymentType.EXTERNAL, provider="unknown"
     )
 
     # 本地模型始终允许
@@ -113,15 +96,15 @@ def test_gateway_public_data_allowed():
 
 
 def test_gateway_disabled():
-    """测试闸门禁用时全部通过"""
+    """旧开关不能取消敏感数据政策。"""
     gateway = DataLevelGateway()
     gateway.enabled = False
 
     external_config = create_test_config("external-model", DeploymentType.EXTERNAL)
 
-    # 即使是敏感数据使用外部模型也通过
+    # 配置开关不会允许敏感数据出网。
     allowed, _ = gateway.check_access(DataLevel.SENSITIVE, external_config)
-    assert allowed
+    assert not allowed
 
 
 def test_gateway_validate_and_block():
@@ -133,16 +116,10 @@ def test_gateway_validate_and_block():
 
     # 敏感数据使用外部模型应抛出异常
     with pytest.raises(GatewayError, match="敏感数据禁止使用外部模型"):
-        gateway.validate_and_block(
-            DataLevel.SENSITIVE,
-            external_config
-        )
+        gateway.validate_and_block(DataLevel.SENSITIVE, external_config)
 
     # 公开数据应通过
-    gateway.validate_and_block(
-        DataLevel.PUBLIC,
-        external_config
-    )
+    gateway.validate_and_block(DataLevel.PUBLIC, external_config)
 
 
 def test_gateway_domain_management():
@@ -170,7 +147,7 @@ def test_gateway_endpoint_check():
         model_type=ModelType.LLM,
         deployment_type=DeploymentType.EXTERNAL,
         provider="qwen",
-        endpoint="https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+        endpoint="https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation",
     )
 
     # 端点在白名单中应允许
@@ -185,16 +162,8 @@ def test_gateway_context_logging():
 
     local_config = create_test_config("local-model", DeploymentType.LOCAL)
 
-    context = {
-        "user_id": "user-123",
-        "tenant_id": "tenant-456",
-        "request_id": "req-789"
-    }
+    context = {"user_id": "user-123", "tenant_id": "tenant-456", "request_id": "req-789"}
 
     # 应正常通过并记录上下文
-    allowed, _ = gateway.check_access(
-        DataLevel.PUBLIC,
-        local_config,
-        context=context
-    )
+    allowed, _ = gateway.check_access(DataLevel.PUBLIC, local_config, context=context)
     assert allowed

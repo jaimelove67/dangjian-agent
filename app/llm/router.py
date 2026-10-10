@@ -3,25 +3,21 @@
 根据数据级别和任务类型选择合适的模型。
 """
 
-from typing import Optional, Dict
 from functools import lru_cache
+from typing import Dict, Optional
 
-from app.llm.base import (
-    DataLevel,
-    TaskType,
-    ModelType,
-    DeploymentType,
-    BaseModelProvider,
-)
-from app.llm.registry import get_model_registry
-from app.llm.gateway import get_gateway, GatewayError
 import structlog
+
+from app.llm.base import BaseModelProvider, DataLevel, DeploymentType, ModelType, TaskType
+from app.llm.gateway import get_gateway
+from app.llm.registry import get_model_registry
 
 logger = structlog.get_logger(__name__)
 
 
 class RouterError(Exception):
     """路由错误"""
+
     pass
 
 
@@ -49,6 +45,7 @@ class ModelRouter:
         data_level: DataLevel,
         task_type: TaskType,
         model_id: str,
+        model_type: ModelType = ModelType.LLM,
     ) -> None:
         """注册路由规则
 
@@ -57,13 +54,10 @@ class ModelRouter:
             task_type: 任务类型
             model_id: 模型ID
         """
-        key = (data_level, task_type)
+        key = (data_level, task_type, model_type)
         self._routing_rules[key] = model_id
         logger.info(
-            "route_registered",
-            data_level=data_level,
-            task_type=task_type,
-            model_id=model_id
+            "route_registered", data_level=data_level, task_type=task_type, model_id=model_id
         )
 
     def get_model(
@@ -89,15 +83,11 @@ class ModelRouter:
             GatewayError: 闸门拦截
         """
         # 1. 检查是否有配置的路由规则
-        model_id = self._get_configured_model(data_level, task_type)
+        model_id = self._get_configured_model(data_level, task_type, model_type)
 
         # 2. 如果没有配置规则，使用默认策略
         if not model_id:
-            model_id = self._select_model_by_strategy(
-                data_level,
-                task_type,
-                model_type
-            )
+            model_id = self._select_model_by_strategy(data_level, task_type, model_type)
 
         # 3. 获取模型提供者
         if not model_id:
@@ -109,12 +99,12 @@ class ModelRouter:
         provider = self.registry.get_provider(model_id)
         if not provider:
             raise RouterError(f"Model {model_id} not found in registry")
+        if provider.config.model_type != model_type:
+            raise RouterError(f"Model {model_id} does not support {model_type.value}")
 
         # 4. 通过闸门验证
         self.gateway.validate_and_block(
-            data_level=data_level,
-            model_config=provider.config,
-            context=context
+            data_level=data_level, model_config=provider.config, context=context
         )
 
         logger.info(
@@ -123,7 +113,7 @@ class ModelRouter:
             task_type=task_type,
             model_type=model_type,
             model_id=model_id,
-            context=context
+            context=context,
         )
 
         return provider
@@ -131,7 +121,8 @@ class ModelRouter:
     def _get_configured_model(
         self,
         data_level: DataLevel,
-        task_type: TaskType
+        task_type: TaskType,
+        model_type: ModelType = ModelType.LLM,
     ) -> Optional[str]:
         """获取配置的模型
 
@@ -142,7 +133,7 @@ class ModelRouter:
         Returns:
             模型ID，如果没有配置返回None
         """
-        key = (data_level, task_type)
+        key = (data_level, task_type, model_type)
         return self._routing_rules.get(key)
 
     def _select_model_by_strategy(
@@ -164,8 +155,7 @@ class ModelRouter:
         # 策略1：敏感和涉密数据只能使用本地模型
         if data_level in [DataLevel.SENSITIVE, DataLevel.CLASSIFIED]:
             local_models = self.registry.list_models(
-                model_type=model_type,
-                deployment_type=DeploymentType.LOCAL
+                model_type=model_type, deployment_type=DeploymentType.LOCAL
             )
             if local_models:
                 return local_models[0]
@@ -174,16 +164,14 @@ class ModelRouter:
         # 策略2：内部数据优先本地模型
         if data_level == DataLevel.INTERNAL:
             local_models = self.registry.list_models(
-                model_type=model_type,
-                deployment_type=DeploymentType.LOCAL
+                model_type=model_type, deployment_type=DeploymentType.LOCAL
             )
             if local_models:
                 return local_models[0]
 
             # 如果没有本地模型，尝试外部模型
             external_models = self.registry.list_models(
-                model_type=model_type,
-                deployment_type=DeploymentType.EXTERNAL
+                model_type=model_type, deployment_type=DeploymentType.EXTERNAL
             )
             if external_models:
                 return external_models[0]
@@ -192,15 +180,13 @@ class ModelRouter:
         # 策略3：公开数据可以使用任何模型（优先外部模型降低成本）
         if data_level == DataLevel.PUBLIC:
             external_models = self.registry.list_models(
-                model_type=model_type,
-                deployment_type=DeploymentType.EXTERNAL
+                model_type=model_type, deployment_type=DeploymentType.EXTERNAL
             )
             if external_models:
                 return external_models[0]
 
             local_models = self.registry.list_models(
-                model_type=model_type,
-                deployment_type=DeploymentType.LOCAL
+                model_type=model_type, deployment_type=DeploymentType.LOCAL
             )
             if local_models:
                 return local_models[0]
@@ -224,7 +210,8 @@ class ModelRouter:
     def remove_route(
         self,
         data_level: DataLevel,
-        task_type: TaskType
+        task_type: TaskType,
+        model_type: ModelType = ModelType.LLM,
     ) -> None:
         """移除路由规则
 
@@ -232,14 +219,10 @@ class ModelRouter:
             data_level: 数据级别
             task_type: 任务类型
         """
-        key = (data_level, task_type)
+        key = (data_level, task_type, model_type)
         if key in self._routing_rules:
             del self._routing_rules[key]
-            logger.info(
-                "route_removed",
-                data_level=data_level,
-                task_type=task_type
-            )
+            logger.info("route_removed", data_level=data_level, task_type=task_type)
 
 
 @lru_cache

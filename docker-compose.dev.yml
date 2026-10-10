@@ -18,7 +18,7 @@ services:
       - postgres_dev_data:/var/lib/postgresql/data
       - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U party_user -d party_agent_dev"]
       interval: 10s
@@ -35,7 +35,7 @@ services:
     volumes:
       - redis_dev_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-56379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -53,13 +53,18 @@ services:
         BASE_IMAGE: ${DOCKERHUB_MIRROR:-docker.io}/library/python:3.11-slim
     container_name: party-agent-app-dev
     environment:
-      DATABASE_URL: postgresql://party_user:dev_password@postgres:5432/party_agent_dev
+      DATABASE_URL: postgresql+asyncpg://party_user:dev_password@postgres:5432/party_agent_dev
       REDIS_URL: redis://redis:6379/0
       ENV: development
       LOG_LEVEL: DEBUG
       # 开发环境使用的模型配置
-      QWEN_API_KEY: ${QWEN_API_KEY}
-      EMBEDDING_MODEL_PATH: /models/bge-large-zh-v1.5
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-${QWEN_API_KEY:-}}
+      CHAT_MODEL: ${CHAT_MODEL:-qwen3.8-flash}
+      EMBED_MODEL: ${EMBED_MODEL:-qwen3.7-text-embedding-flash}
+      RERANK_MODEL: ${RERANK_MODEL:-qwen3.7-text-rerank}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com}
+      ALLOWED_EXTERNAL_MODELS: ${ALLOWED_EXTERNAL_MODELS:-["dashscope.aliyuncs.com"]}
+      ENABLE_DATA_LEVEL_GATEWAY: "true"
       SECRET_KEY: dev_secret_key_change_in_production
     volumes:
       # 挂载源代码（热重载）
@@ -68,8 +73,6 @@ services:
       - ./migrations:/app/migrations
       - ./config:/app/config
       - ./scripts:/app/scripts
-      # 挂载模型目录
-      - ${LOCAL_MODEL_PATH:-./models}:/models:ro
       # 挂载日志目录
       - ./logs:/app/logs
     ports:

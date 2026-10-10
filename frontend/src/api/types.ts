@@ -127,14 +127,13 @@ export const DATA_LEVEL_LABELS: Record<DataLevel, string> = {
 }
 
 /**
- * 出网策略提示：公开级可走外部模型，其余必须走本地模型。
- * 与 config/model_routes.yaml 一致。此处只做前端提示，闸门由后端强制。
+ * 项目使用云端模型；最终分级和出网边界由后端校验。
  */
 export const DATA_LEVEL_ROUTE: Record<DataLevel, string> = {
   public: '外部模型可处理',
-  internal: '仅本地模型',
-  sensitive: '仅本地模型',
-  classified: '仅本地模型',
+  internal: '仅获准的云端服务可处理',
+  sensitive: '当前云端模式禁止处理',
+  classified: '禁止 AI 处理',
 }
 
 /** app/api/v1/qa.py::QuestionRequest */
@@ -143,6 +142,8 @@ export interface AskQuestionRequest {
   data_level: DataLevel
   use_reranker: boolean
   top_k: number
+  session_id?: string
+  include_expired?: boolean
 }
 
 /** app/api/v1/qa.py::CitationSchema */
@@ -153,6 +154,13 @@ export interface Citation {
   article?: string | null
   content: string
   score: number
+  index: number
+  doc_id: string
+  file_name?: string | null
+  effective_date?: string | null
+  expiration_date?: string | null
+  visibility?: string | null
+  chunk_id?: string | null
 }
 
 /** app/api/v1/qa.py::QuestionResponse */
@@ -162,6 +170,24 @@ export interface AskQuestionResponse {
   retrieved_count: number
   used_count: number
   has_sufficient_evidence: boolean
+  warnings: string[]
+  disclaimer: string
+  refused: boolean
+  session_id?: string | null
+}
+
+export interface QASessionItem extends AskQuestionResponse {
+  id: string
+  question: string
+  data_level: DataLevel
+  created_at: string
+}
+
+export interface QASessionListResponse {
+  items: QASessionItem[]
+  total: number
+  page: number
+  page_size: number
 }
 
 /* ============================ 知识库 =================================== */
@@ -199,6 +225,7 @@ export const DOC_STATUS_TONE: Record<DocStatus, 'ok' | 'warn' | 'bad'> = {
 
 /** app/schemas/knowledge.py::DocumentResponse */
 export interface DocumentResponse {
+  content_revision?: number
   id: string
   doc_id: string
   file_name: string
@@ -220,6 +247,14 @@ export interface DocumentResponse {
 export interface DocumentCreateResponse {
   document: DocumentResponse
   chunk_count: number
+}
+
+export interface DocumentListResponse {
+  items: DocumentResponse[]
+  total: number
+  page: number
+  page_size: number
+  counts: Record<string, number>
 }
 
 /** app/schemas/knowledge.py::DocumentStatusUpdate */
@@ -273,6 +308,40 @@ export const STAGE_ORDER: MemberStage[] = [
   'probationary',
   'member',
 ]
+
+export interface MemberRosterItem {
+  id: string
+  name: string
+  org_name: string
+  org_unit_id?: string | null
+  stage: MemberStage
+  stage_joined_on: string
+  days_in_stage: number
+  materials: string[]
+  pending: number
+}
+
+export interface MemberRosterResponse {
+  items: MemberRosterItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface MemberCreateRequest {
+  name: string
+  org_unit_id?: string
+  current_stage: MemberStage
+  stage_joined_on?: string
+  materials: string[]
+  pending: number
+}
+
+export interface MemberOrgOption {
+  id: string
+  name: string
+  org_type: string
+}
 
 /** app/schemas/member.py::QualificationCheckRequest */
 export interface QualificationCheckRequest {
@@ -328,4 +397,10 @@ export interface HealthResponse {
   service: string
   version: string
   environment: string
+}
+
+export interface ReadyResponse {
+  status: 'ready' | 'not_ready'
+  checks: Record<string, string>
+  model_capabilities: Record<string, string>
 }

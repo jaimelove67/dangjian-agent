@@ -49,9 +49,13 @@ export const API_SURFACE: ApiSurfaceItem[] = [
   {
     label: '问答历史',
     method: 'GET',
-    path: '/api/v1/qa/sessions',
-    purpose: '查询历史问答记录',
-    available: false,
+    path: '/api/v1/qa/history',
+    purpose: '按会话编号查询当前用户的问答记录',
+    available: true,
+  },
+  {
+    label: '长期问答历史', method: 'GET', path: '/api/v1/qa/sessions',
+    purpose: '分页回看当前用户的问答及完整引用', available: true,
   },
   {
     label: '健康检查',
@@ -93,14 +97,14 @@ export const API_SURFACE: ApiSurfaceItem[] = [
     method: 'GET',
     path: '/api/v1/knowledge-docs',
     purpose: '分页查询知识库文件列表',
-    available: false,
+    available: true,
   },
   {
     label: '删除文件',
     method: 'DELETE',
     path: '/api/v1/knowledge-docs/{doc_id}',
-    purpose: '移除知识库中的文件',
-    available: false,
+    purpose: '软删除文件和片段，保留历史记录',
+    available: true,
   },
   {
     label: '资格校验',
@@ -128,7 +132,15 @@ export const API_SURFACE: ApiSurfaceItem[] = [
     method: 'GET',
     path: '/api/v1/member/roster',
     purpose: '查询培养对象及其阶段台账',
-    available: false,
+    available: true,
+  },
+  {
+    label: '登记培养对象', method: 'POST', path: '/api/v1/member/roster',
+    purpose: '由组织人员在授权组织范围内登记台账', available: true,
+  },
+  {
+    label: '名册组织范围', method: 'GET', path: '/api/v1/member/org-units',
+    purpose: '查询账号可管理的有效组织', available: true,
   },
   {
     label: '阶段流转提交',
