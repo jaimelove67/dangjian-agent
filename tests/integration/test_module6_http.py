@@ -3,6 +3,7 @@
 import base64
 import os
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import httpx
@@ -18,7 +19,9 @@ from app.db.session import get_db
 from app.main import app
 from app.models.audit import AuditLog
 from app.models.governance import ModelUsage
+from app.models.meeting import MeetingRecord
 from app.models.member import MemberCultivation, MemberProfile
+from app.models.study import StudyPlan, StudyPlanItem
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.services import job_service
@@ -484,3 +487,152 @@ async def test_platform_scope_school_registration_and_process_metrics_require_re
     metrics = await c["http"].get("/api/v1/admin/metrics", headers=authorization(platform_actor))
     assert metrics.status_code == 200 and "text/plain" in metrics.headers["content-type"]
     await call(c, c["admin"], "GET", "/admin/metrics", status=403)
+
+
+async def test_governed_statistics_do_not_count_drafts_or_other_schools(http_case):
+    c = http_case
+    year = 2026
+    participants = [
+        {"participant_id": "synthetic-a", "name": "合成人员甲", "attended": True},
+        {"participant_id": "synthetic-b", "name": "合成人员乙", "attended": False},
+    ]
+    async with c["maker"]() as db:
+        with bypass_tenant_filter():
+            records = []
+            for school, org, kind, status in (
+                (c["school"], c["root"], "center_group", "approved"),
+                (c["school"], c["root"], "center_group", "draft"),
+                (c["school"], c["branch"], "party_lecture", "approved"),
+                (c["school"], c["branch"], "party_lecture", "pending"),
+                (c["other_school"], c["root"], "center_group", "approved"),
+            ):
+                record = MeetingRecord(
+                    tenant_id=school.id,
+                    org_unit_id=org.id,
+                    activity_type=kind,
+                    title="合成统计证据",
+                    scheduled_on=date(year, 1, 2),
+                    held_on=date(year, 1, 2),
+                    review_status=status,
+                    reviewed_by=c["admin"].id if status == "approved" else None,
+                    host="合成主持人",
+                    participants=participants,
+                    minutes={
+                        "learning_points": "学习",
+                        "consensus": "共识",
+                        "requirements": "要求",
+                    },
+                )
+                db.add(record)
+                records.append(record)
+            plan = StudyPlan(
+                tenant_id=c["school"].id,
+                org_unit_id=c["root"].id,
+                year=year,
+                title="合成年度计划",
+                responsible="合成负责人",
+                review_status="approved",
+                reviewed_by=c["admin"].id,
+            )
+            db.add(plan)
+            await db.flush()
+            for index, record in enumerate(records[:2]):
+                db.add(
+                    StudyPlanItem(
+                        tenant_id=c["school"].id,
+                        plan_id=plan.id,
+                        topic="合成学习",
+                        scheduled_on=date(year, 1, 2),
+                        responsible="合成负责人",
+                        meeting_record_id=record.id,
+                    )
+                )
+            await db.commit()
+    metrics = await call(
+        c, c["admin"], "GET", "/study/metrics?year=2026&org_unit_id=" + c["root"].id
+    )
+    assert metrics["learning_count"]["value"] == 1
+    assert metrics["plan_completion_rate"]["value"] == 0.5
+    assert metrics["attendance_rate"]["value"] == 0.5
+    assert len(metrics["evidence"]) == 1 and metrics["missing"]
+    assert metrics["evidence"][0]["activity_id"] == records[0].id
+    meetings = await call(
+        c, c["admin"], "GET", "/meeting/stats?year=2026&org_unit_id=" + c["branch"].id
+    )
+    assert meetings["attendance_rate"]["value"] == 0.5
+    assert len(meetings["evidence"]) == 1 and meetings["missing"]
+    await call(
+        c,
+        c["admin"],
+        "GET",
+        "/study/metrics?year=2026&org_unit_id=" + str(uuid.uuid4()),
+        status=403,
+    )
+    empty = await call(c, c["other_admin"], "GET", "/study/metrics?year=2026")
+    assert empty["learning_count"]["value"] is None
+
+
+async def test_member_scheduler_repeats_without_duplicate_reminders_and_keeps_scope(
+    http_case, monkeypatch
+):
+    from app.models.member import MemberReminder
+    from app.services import member_scheduler
+
+    c = http_case
+    monkeypatch.setattr(member_scheduler, "async_session_maker", c["maker"])
+    async with c["maker"]() as db:
+        with bypass_tenant_filter():
+            profile = MemberProfile(
+                tenant_id=c["school"].id,
+                org_unit_id=c["branch"].id,
+                name="合成提醒对象",
+                org_name=c["branch"].name,
+                current_stage="applicant",
+            )
+            db.add(profile)
+            await db.commit()
+    assert await member_scheduler.scan_member_reminders() >= 1
+    async with c["maker"]() as db:
+        with bypass_tenant_filter():
+            first = (
+                (
+                    await db.execute(
+                        select(MemberReminder).where(MemberReminder.profile_id == profile.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+    assert first
+    assert await member_scheduler.scan_member_reminders() >= 1
+    async with c["maker"]() as db:
+        with bypass_tenant_filter():
+            second = (
+                (
+                    await db.execute(
+                        select(MemberReminder).where(MemberReminder.profile_id == profile.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+    assert {row.id for row in second} == {row.id for row in first}
+    assert all(row.tenant_id == c["school"].id for row in second)
+    foreign = await call(c, c["other_admin"], "GET", "/member-full/reminders")
+    assert foreign["items"] == []
+    check = await call(
+        c,
+        c["author"],
+        "POST",
+        "/member-full/archive-check",
+        {"profile_id": profile.id, "materials_note": {"入党申请书": "合成内容，无签字证据"}},
+    )
+    assert check["result"]["missing"]
+    await call(
+        c,
+        c["other_admin"],
+        "POST",
+        "/member-full/archive-check",
+        {"profile_id": profile.id, "materials_note": {}},
+        status=404,
+    )
