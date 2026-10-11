@@ -18,6 +18,8 @@ export interface ApiSurfaceItem {
 }
 
 export const API_SURFACE: ApiSurfaceItem[] = [
+  { label: '创建登录账号', method: 'POST', path: '/api/v1/admin/users', purpose: '仅系统管理员可创建当前租户内的账号并分配角色和组织', available: true },
+  { label: '账号组织选项', method: 'GET', path: '/api/v1/admin/org-units', purpose: '系统管理员读取本租户有效组织，用于创建账号', available: true },
   { label: '本人档案', method: 'GET', path: '/api/v1/member/self/archive', purpose: '普通党员按登录账号读取明确关联的本人档案', available: true },
   { label: '个人材料提交', method: 'POST', path: '/api/v1/member/self/materials', purpose: '私有保存本人原件，支持提交重试，不自动核验或流转', available: true },
   { label: '本人材料记录', method: 'GET', path: '/api/v1/member/self/materials', purpose: '仅查询本人提交记录', available: true },

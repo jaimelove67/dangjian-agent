@@ -89,6 +89,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '组织生活', group: '业务', perm: PERM.MEETING_QUERY },
       },
       {
+        path: 'accounts',
+        name: 'accounts',
+        component: () => import('@/views/AccountsView.vue'),
+        meta: { title: '创建账号', group: '系统', role: 'system_admin' },
+      },
+      {
         path: 'system',
         name: 'system',
         component: () => import('@/views/SystemView.vue'),
