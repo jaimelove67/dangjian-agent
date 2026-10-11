@@ -4,7 +4,7 @@
 
 ## 当前迁移链
 
-当前唯一头为 `007_assessment`，文件编号和 revision 不完全相同：
+当前唯一头为 `008_member_self`，文件编号和 revision 不完全相同：
 
 | revision | 内容 |
 | --- | --- |
@@ -15,6 +15,7 @@
 | `005` | 问答历史元数据和名册组织范围 |
 | `006` | `study_plans`、`study_plan_items`、`meeting_records`、`content_revisions` |
 | `007_assessment` | 指标、任务、佐证、归集版本、计划、学校策略、提醒、归档八张考核表 |
+| `008_member_self` | 名册与登录账号的唯一关联、私有个人材料表及提交重试唯一约束；保留既有档案，不自动按姓名匹配 |
 
 ## 应用与核对
 

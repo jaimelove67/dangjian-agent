@@ -1,6 +1,6 @@
 # 测试指南
 
-文档更新日期：2026-10-11。测试代码与样本保留在 `tests/`，历史测试报告见[归档](archive/README.md)。本次只执行文档一致性核对，没有重新运行后端、构建或浏览器业务回归；以下测试数字保留原执行日期和被测工作区，不能视为当前新执行结果。
+文档更新日期：2026-10-11。测试代码与样本保留在 `tests/`，历史测试报告见[归档](archive/README.md)。本次党员端的实际验证见“党员端与系统权限回归”；其他段落的历史测试数字仍限于注明的原执行日期和被测工作区。
 
 ## 执行命令
 
@@ -43,12 +43,14 @@ npm --prefix frontend run typecheck
 npm --prefix frontend run build
 ```
 
-三个浏览器工作流从 `frontend/` 执行：
+业务与角色权限浏览器回归从 `frontend/` 执行：
 
 ```bash
 node tests/business-workflows.mjs
 node tests/study-workflows.mjs
 node tests/assessment-workflows.mjs
+node tests/role-access.mjs
+node tests/member-self-workflows.mjs
 ```
 
 流程使用合成 API 响应；需要可用的 Playwright Chromium，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定。`frontend/scripts/screenshot-pages.mjs` 使用拦截响应生成设计截图，适合版面检查；真实业务联调需要实际后端、数据库、Redis 与模型调用。
@@ -64,6 +66,17 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 评测器请求真实检索与问答接口；会产生模型调用。缺令牌、未就绪或调用失败返回阻塞/失败，退出码为 2。默认输出目录 `tests/evaluation/results/` 也已加入忽略规则。
 
 当前 `tests/evaluation/qa_samples.json` 的问答样本为 20 条，其中拒答 6 条、时效 0 条，尚未达到验收要求的 200/30/20。关键词命中不能代替专家答案正确性审查，串行请求延迟不能代替负载性能。
+
+## 党员端与系统权限回归（2026-10-11）
+
+当前本地工作区将党员功能限定为本人档案、个人材料、制度问答。本人档案需组织人员明确关联，私有原件与组织登记材料分开，提交支持重试幂等；党员不能访问知识库或管理工作台。系统菜单、页面及运行/就绪详情仅平台管理员可查看，公开探针只返回整体状态及原有 200/503 状态码。
+
+- `python -m pytest tests/unit tests/security tests/integration/test_member_self_service.py -o addopts= -p no:cacheprovider -q --tb=short`：359 通过、1 跳过；跳过为缺少 `pypdf` 的 PDF 读取用例。测试进程清空两种云端密钥变量；包含组织被删除后的提交门禁和新增迁移唯一约束断言。
+- 前端类型检查通过；`npm --prefix frontend run build -- --configLoader native` 通过，使用 native 配置加载避免当前 Windows 沙箱的子进程限制。
+- `node tests/member-self-workflows.mjs`：4组检查通过，覆盖三个功能菜单、只读本人档案、原件提交、失败保留输入、提交重试编号、刷新后记录、下载原件、未关联门禁及移动布局。`role-access` 覆盖七种角色、系统页直达及授权异常；原有 business（含账号关联）、study、assessment 三个工作流也通过。
+- `test_member_self_service.py` 使用实际 HTTP、SQLite 表和 ORM 事务，覆盖明确账号关联、同名、跨账号/租户、文件大小/格式、下载、重复与唯一约束竞争、组织接收范围。PostgreSQL 迁移 SQL 离线渲染通过；系统 HTTP 测试使用替代探针。
+
+浏览器 API 为合成响应；本次截图保存在 `tmp/test-results/member-self/`。未执行真实账号联调、真实 PostgreSQL 升级、数据库集成全套或发布部署。迁移 `008_member_self` 应用后，组织人员还需在名册中明确关联现有登录账号，不会自动推断关联关系。
 
 ## 已有验证记录
 

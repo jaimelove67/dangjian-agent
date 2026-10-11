@@ -80,6 +80,7 @@ class TodoSuggestionsResponse(BaseModel):
 
 class MemberRosterItem(BaseModel):
     id: str
+    user_id: Optional[str] = None
     name: str
     org_name: str
     org_unit_id: Optional[str] = None
@@ -93,6 +94,7 @@ class MemberRosterItem(BaseModel):
     def from_profile(cls, profile: Any) -> "MemberRosterItem":
         return cls(
             id=str(profile.id),
+            user_id=getattr(profile, "user_id", None),
             name=profile.name,
             org_name=profile.org_name,
             org_unit_id=profile.org_unit_id,

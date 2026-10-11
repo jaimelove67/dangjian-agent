@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
-import { PERM } from '@/api/types'
+import { MEMBER_FUNCTION_PERMISSIONS, PERM, type PermissionCode, type UserRole } from '@/api/types'
 import AppShell from '@/layouts/AppShell.vue'
 import { session } from '@/stores/session'
 
@@ -10,7 +10,8 @@ import { session } from '@/stores/session'
  * meta 约定：
  *   - title    页面标题（写入文档 title 与顶栏面包屑）
  *   - group    侧栏分组名
- *   - perm     需要的权限码；缺失则该项对当前用户隐藏
+ *   - perm     需要的权限码
+ *   - role     限定角色；与权限码同时配置时均须满足
  *   - public   免登录页面
  */
 
@@ -18,7 +19,8 @@ declare module 'vue-router' {
   interface RouteMeta {
     title?: string
     group?: string
-    perm?: string
+    perm?: PermissionCode
+    role?: UserRole
     public?: boolean
   }
 }
@@ -35,6 +37,18 @@ const routes: RouteRecordRaw[] = [
     component: AppShell,
     children: [
       {
+        path: 'my-archive',
+        name: 'my-archive',
+        component: () => import('@/views/MyArchiveView.vue'),
+        meta: { title: '本人档案', group: '个人', perm: PERM.SELF_QUERY, role: 'member' },
+      },
+      {
+        path: 'my-materials',
+        name: 'my-materials',
+        component: () => import('@/views/MyMaterialsView.vue'),
+        meta: { title: '个人材料', group: '个人', perm: PERM.MATERIAL_SUBMIT, role: 'member' },
+      },
+      {
         path: '',
         redirect: '/ask',
       },
@@ -48,7 +62,13 @@ const routes: RouteRecordRaw[] = [
         path: 'knowledge',
         name: 'knowledge',
         component: () => import('@/views/KnowledgeView.vue'),
-        meta: { title: '知识库', group: '资料', perm: PERM.KNOWLEDGE_MANAGE },
+        meta: { title: '知识库', group: '资料', perm: PERM.KNOWLEDGE_QUERY },
+      },
+      {
+        path: 'assessment',
+        name: 'assessment',
+        component: () => import('@/views/AssessmentView.vue'),
+        meta: { title: '年度考核', group: '业务', perm: PERM.ASSESSMENT_QUERY },
       },
       {
         path: 'members',
@@ -57,10 +77,22 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '党员发展', group: '业务', perm: PERM.MEMBER_QUERY },
       },
       {
+        path: 'study',
+        name: 'study',
+        component: () => import('@/views/StudyView.vue'),
+        meta: { title: '中心组学习', group: '业务', perm: PERM.STUDY_QUERY },
+      },
+      {
         path: 'system',
         name: 'system',
         component: () => import('@/views/SystemView.vue'),
-        meta: { title: '系统状态', group: '系统' },
+        meta: { title: '系统状态', group: '系统', role: 'system_admin' },
+      },
+      {
+        path: 'forbidden',
+        name: 'forbidden',
+        component: () => import('@/views/ForbiddenView.vue'),
+        meta: { title: '访问受限' },
       },
     ],
   },
@@ -102,8 +134,12 @@ router.beforeEach(async (to) => {
     return { name: 'login', query: { next: to.fullPath } }
   }
 
-  if (to.meta.perm && !session.can(to.meta.perm as never)) {
-    return { name: 'system', query: { denied: to.path } }
+  if (
+    (to.meta.perm && !session.can(to.meta.perm)) ||
+    (session.state.user?.role === 'member' && to.meta.perm && !MEMBER_FUNCTION_PERMISSIONS.has(to.meta.perm)) ||
+    (to.meta.role && session.state.user?.role !== to.meta.role)
+  ) {
+    return { name: 'forbidden' }
   }
 
   return true

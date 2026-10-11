@@ -2,8 +2,7 @@
  * 后端接口能力矩阵。
  *
  * 用途：系统状态页据实展示"哪些接口已经具备、哪些还没提供"。
- * 这不是开发者文档，而是使用者的必要认知——界面上标了「示例数据」的地方，
- * 在这里一定能找到对应的「未提供」行。二者必须始终一致。
+ * 仅在平台管理员的系统状态页展示，不出现在普通用户界面。
  *
  * 维护约定：后端补齐接口后，把 available 改为 true，并同步移除对应界面上的
  * 示例数据来源与徽标。不允许只改一边。
@@ -11,13 +10,27 @@
 
 export interface ApiSurfaceItem {
   label: string
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   path: string
   purpose: string
   available: boolean
 }
 
 export const API_SURFACE: ApiSurfaceItem[] = [
+  { label: '本人档案', method: 'GET', path: '/api/v1/member/self/archive', purpose: '普通党员按登录账号读取明确关联的本人档案', available: true },
+  { label: '个人材料提交', method: 'POST', path: '/api/v1/member/self/materials', purpose: '私有保存本人原件，支持提交重试，不自动核验或流转', available: true },
+  { label: '本人材料记录', method: 'GET', path: '/api/v1/member/self/materials', purpose: '仅查询本人提交记录', available: true },
+  { label: '本人材料原件', method: 'GET', path: '/api/v1/member/self/materials/{material_id}/file', purpose: '校验登录账号所有权后下载原件', available: true },
+  { label: '关联党员账号', method: 'PUT', path: '/api/v1/member/roster/{profile_id}/account', purpose: '组织人员将授权档案与同组织有效党员账号关联', available: true },
+  { label: '组织接收材料', method: 'GET', path: '/api/v1/member/roster/{profile_id}/materials', purpose: '组织人员按名册授权范围查询提交记录', available: true },
+  { label: '年度考核工作台', method: 'GET', path: '/api/v1/assessment/workspace', purpose: '查看授权年度指标、任务进度、佐证缺项与人工计划草案', available: true },
+  { label: '指标归集', method: 'POST', path: '/api/v1/assessment/recalculate', purpose: '复用业务源记录，保存规则和归集版本', available: true },
+  { label: '考核材料导出', method: 'POST', path: '/api/v1/assessment/runs/{run_id}/export', purpose: '按当前权限导出指标表、任务与佐证目录', available: true },
+  { label: '中心组年度计划', method: 'GET', path: '/api/v1/study/plans', purpose: '按年度、期间和党委范围查询学习计划', available: true },
+  { label: '学习资料推荐', method: 'GET', path: '/api/v1/study/materials', purpose: '检索有效且适用的授权知识材料', available: true },
+  { label: '学习纪要审核', method: 'POST', path: '/api/v1/study/activities/{id}/review', purpose: '人工核对原文后通过或退回纪要', available: true },
+  { label: '学习历史归档', method: 'GET', path: '/api/v1/study/history', purpose: '学校确认电子效力后查询审核归档记录', available: true },
+  { label: '学习考核复用', method: 'GET', path: '/api/v1/study/metrics', purpose: '只读统计学习次数、参学率及佐证来源', available: true },
   {
     label: '登录',
     method: 'POST',
@@ -68,7 +81,21 @@ export const API_SURFACE: ApiSurfaceItem[] = [
     label: '就绪检查',
     method: 'GET',
     path: '/api/v1/health/ready',
-    purpose: '检查数据库、向量库等依赖是否就绪',
+    purpose: '仅返回整体就绪状态，供部署探针使用',
+    available: true,
+  },
+  {
+    label: '系统运行详情',
+    method: 'GET',
+    path: '/api/v1/admin/health',
+    purpose: '仅平台管理员可查看服务名称、版本与运行环境',
+    available: true,
+  },
+  {
+    label: '系统就绪详情',
+    method: 'GET',
+    path: '/api/v1/admin/health/ready',
+    purpose: '仅平台管理员可查看依赖与模型配置状态',
     available: true,
   },
   {

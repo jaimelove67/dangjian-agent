@@ -188,12 +188,23 @@ class Permission(str, Enum):
     """接口权限点（对应开发规范 8.3 接口权限要求）"""
 
     QA_ASK = "qa.ask"  # 知识问答：登录用户
-    KNOWLEDGE_QUERY = "knowledge.query"  # 知识检索：登录用户
+    KNOWLEDGE_QUERY = "knowledge.query"  # 知识库查询；普通党员仅通过制度问答检索
     KNOWLEDGE_MANAGE = "knowledge.manage"  # 知识库维护：院系级及以上管理员
     MEMBER_QUERY = "member.query"  # 党员发展查询：支部书记及以上
+    SELF_QUERY = "member.self_query"  # 普通党员查询本人档案和材料
+    MATERIAL_SUBMIT = "member.material_submit"  # 普通党员提交本人材料
     STAGE_TRANSITION = "member.stage_transition"  # 阶段流转：支部书记及以上
     SCORING = "member.scoring"  # 辅助评分：支部书记及以上
     MEETING_ARCHIVE = "meeting.archive"  # 会议归档：支部书记及以上
+    ASSESSMENT_QUERY = "assessment.query"
+    ASSESSMENT_MANAGE = "assessment.manage"
+    ASSESSMENT_CONFIGURE = "assessment.configure"
+    ASSESSMENT_REVIEW = "assessment.review"
+    ASSESSMENT_EXPORT = "assessment.export"
+    STUDY_QUERY = "study.query"
+    STUDY_MANAGE = "study.manage"
+    STUDY_REVIEW = "study.review"
+    ARCHIVE_CONFIRM = "admin.archive_confirm"
     CONFIG_MANAGE = "admin.config"  # 配置管理：系统管理员
     AUDIT_QUERY = "admin.audit"  # 审计查询：系统管理员
 
@@ -225,7 +236,9 @@ BS_ALL = "all"
 _BUSINESS_SCOPE_ORDER = {BS_SELF: 0, BS_BRANCH: 1, BS_DEPARTMENT: 2, BS_SCHOOL: 3, BS_ALL: 4}
 
 # 合并权限集合，便于复用
-_ALL_PERMISSIONS = frozenset(Permission)
+_ALL_PERMISSIONS = frozenset(Permission) - frozenset(
+    {Permission.SELF_QUERY, Permission.MATERIAL_SUBMIT}
+)
 _MANAGER_PERMISSIONS = frozenset(
     {
         Permission.QA_ASK,
@@ -235,6 +248,13 @@ _MANAGER_PERMISSIONS = frozenset(
         Permission.STAGE_TRANSITION,
         Permission.SCORING,
         Permission.MEETING_ARCHIVE,
+        Permission.STUDY_QUERY,
+        Permission.STUDY_MANAGE,
+        Permission.STUDY_REVIEW,
+        Permission.ASSESSMENT_QUERY,
+        Permission.ASSESSMENT_MANAGE,
+        Permission.ASSESSMENT_REVIEW,
+        Permission.ASSESSMENT_EXPORT,
     }
 )
 _BRANCH_PERMISSIONS = frozenset(
@@ -245,9 +265,14 @@ _BRANCH_PERMISSIONS = frozenset(
         Permission.STAGE_TRANSITION,
         Permission.SCORING,
         Permission.MEETING_ARCHIVE,
+        Permission.ASSESSMENT_QUERY,
+        Permission.ASSESSMENT_MANAGE,
+        Permission.ASSESSMENT_EXPORT,
     }
 )
-_MEMBER_PERMISSIONS = frozenset({Permission.QA_ASK, Permission.KNOWLEDGE_QUERY})
+_MEMBER_PERMISSIONS = frozenset(
+    {Permission.QA_ASK, Permission.SELF_QUERY, Permission.MATERIAL_SUBMIT}
+)
 
 # 角色画像（对应框架文档 9.1 角色与数据范围表）
 ROLE_PROFILES: dict[UserRole, RoleProfile] = {
@@ -262,7 +287,8 @@ ROLE_PROFILES: dict[UserRole, RoleProfile] = {
         role=UserRole.SCHOOL_ADMIN,
         knowledge_scopes=frozenset({KS_PUBLIC, KS_SCHOOL}),
         business_scope=BS_SCHOOL,
-        permissions=_MANAGER_PERMISSIONS,
+        permissions=_MANAGER_PERMISSIONS
+        | frozenset({Permission.ARCHIVE_CONFIRM, Permission.ASSESSMENT_CONFIGURE}),
         data_level=DataLevel.SENSITIVE,
     ),
     UserRole.DEPARTMENT_ADMIN: RoleProfile(
@@ -276,7 +302,7 @@ ROLE_PROFILES: dict[UserRole, RoleProfile] = {
         role=UserRole.BRANCH_SECRETARY,
         knowledge_scopes=frozenset({KS_PUBLIC, KS_SCHOOL, KS_DEPARTMENT, KS_BRANCH}),
         business_scope=BS_BRANCH,
-        permissions=_BRANCH_PERMISSIONS,
+        permissions=_BRANCH_PERMISSIONS | frozenset({Permission.ASSESSMENT_REVIEW}),
         data_level=DataLevel.SENSITIVE,
     ),
     UserRole.ORGANIZER: RoleProfile(
@@ -297,7 +323,7 @@ ROLE_PROFILES: dict[UserRole, RoleProfile] = {
         role=UserRole.APPLICANT,
         knowledge_scopes=frozenset({KS_PUBLIC}),
         business_scope=BS_SELF,
-        permissions=_MEMBER_PERMISSIONS,
+        permissions=frozenset({Permission.QA_ASK, Permission.KNOWLEDGE_QUERY}),
         data_level=DataLevel.PUBLIC,
     ),
 }

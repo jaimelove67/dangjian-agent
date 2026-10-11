@@ -1,4 +1,5 @@
 """权限与数据范围安全测试（对应框架文档 8.3 / 9.1）"""
+
 import pytest
 
 from app.core.constants import DataLevel
@@ -22,6 +23,19 @@ class TestInterfacePermissions:
         for role in UserRole:
             assert has_permission(role, Permission.QA_ASK)
 
+    def test_member_has_only_three_self_service_permissions(self):
+        assert get_role_profile(UserRole.MEMBER).permissions == frozenset(
+            {
+                Permission.QA_ASK,
+                Permission.SELF_QUERY,
+                Permission.MATERIAL_SUBMIT,
+            }
+        )
+
+    def test_knowledge_query_excludes_member(self):
+        for role in UserRole:
+            assert has_permission(role, Permission.KNOWLEDGE_QUERY) == (role != UserRole.MEMBER)
+
     def test_knowledge_manage_requires_department_or_above(self):
         assert has_permission(UserRole.SYSTEM_ADMIN, Permission.KNOWLEDGE_MANAGE)
         assert has_permission(UserRole.SCHOOL_ADMIN, Permission.KNOWLEDGE_MANAGE)
@@ -37,9 +51,8 @@ class TestInterfacePermissions:
 
     def test_config_and_audit_are_system_admin_only(self):
         for permission in (Permission.CONFIG_MANAGE, Permission.AUDIT_QUERY):
-            assert has_permission(UserRole.SYSTEM_ADMIN, permission)
-            assert not has_permission(UserRole.SCHOOL_ADMIN, permission)
-            assert not has_permission(UserRole.DEPARTMENT_ADMIN, permission)
+            for role in UserRole:
+                assert has_permission(role, permission) == (role == UserRole.SYSTEM_ADMIN)
 
 
 class TestDataScope:

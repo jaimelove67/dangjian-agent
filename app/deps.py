@@ -87,26 +87,9 @@ async def get_current_user(
             data_level=resolve_data_level(role).value,
         )
         await tenant_config.load(db, str(tenant_id))
-        # 知识范围为本组织及祖先组织；只沿数据库中的同租户关系向上读取。
-        org_ids, seen = [], set()
-        org_id = user.org_unit_id
-        if org_id:
-            from app.models.org import OrgUnit
+        from app.services.org_scope import knowledge_org_ids
 
-            while org_id and org_id not in seen and len(seen) < 20:
-                seen.add(org_id)
-                org = (
-                    await db.execute(
-                        select(OrgUnit).where(
-                            OrgUnit.id == org_id, OrgUnit.tenant_id == str(tenant_id)
-                        )
-                    )
-                ).scalar_one_or_none()
-                if org is None or org.is_deleted:
-                    break
-                org_ids.append(str(org.id))
-                org_id = org.parent_id
-        user.knowledge_org_ids = org_ids
+        user.knowledge_org_ids = await knowledge_org_ids(db, user)
         yield user
     finally:
         clear_tenant_context()

@@ -10,15 +10,17 @@ import {
   DOC_STATUS_LABELS,
   DOC_STATUS_TONE,
   DOC_VISIBILITY_LABELS,
+  PERM,
 } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import { session } from '@/stores/session'
 
 /**
- * 知识库管理。
+ * 知识库查询与管理。查询用户只读，维护操作须具备 knowledge.manage 权限。
  *
  * ⚠️ Section 13 边界声明：本页属于 taste-skill 明确不覆盖的「数据表 / 管理面板」
  *    类型。因此本页**不套用**展示型审美规则（大留白、非对称栅格、编辑式标题），
@@ -30,6 +32,7 @@ import PageHeader from '@/components/PageHeader.vue'
 
 type Tab = 'all' | DocStatus
 
+const canManage = computed(() => session.can(PERM.KNOWLEDGE_MANAGE))
 const docs = ref<DocumentResponse[]>([])
 const loading = ref(true)
 const error = ref<unknown>(null)
@@ -46,11 +49,12 @@ const replacementMessage = ref('')
 watch(selected, () => { replacement.value = null; replacementMessage.value = '' })
 
 function chooseReplacement(event: Event): void {
+  if (!canManage.value) return
   replacement.value = (event.target as HTMLInputElement).files?.[0] ?? null
 }
 
 async function replaceContent(): Promise<void> {
-  if (!selected.value || !replacement.value) return
+  if (!canManage.value || !selected.value || !replacement.value) return
   replacementBusy.value = true
   try {
     const response = await replaceDocumentContent(selected.value, replacement.value)
@@ -125,6 +129,7 @@ function expiringSoon(d: DocumentResponse): boolean {
 }
 
 async function changeStatus(doc: DocumentResponse, status: DocStatus): Promise<void> {
+  if (!canManage.value) return
   statusBusy.value = doc.doc_id
   try {
     await updateDocumentStatus(doc.doc_id, status)
@@ -139,6 +144,7 @@ async function changeStatus(doc: DocumentResponse, status: DocStatus): Promise<v
 }
 
 async function removeDocument(doc: DocumentResponse): Promise<void> {
+  if (!canManage.value) return
   if (!window.confirm(`确认移除《${doc.title}》？移除后不再参与检索，历史记录保留。`)) return
   statusBusy.value = doc.doc_id
   try {
@@ -218,7 +224,7 @@ function resetUpload(): void {
 }
 
 async function submitUpload(): Promise<void> {
-  if (!uploadValid.value || !upload.file) return
+  if (!canManage.value || !uploadValid.value || !upload.file) return
 
   uploadSubmitting.value = true
   uploadError.value = ''
@@ -257,14 +263,14 @@ async function submitUpload(): Promise<void> {
   <div class="kb" :data-density="compact ? 'compact' : undefined">
     <PageHeader
       title="知识库"
-      description="维护用于检索的制度文件。文件的有效状态直接决定它是否会被问答环节引用。"
+      :description="canManage ? '维护用于检索的制度文件。文件的有效状态直接决定它是否会被问答环节引用。' : '查阅授权范围内的制度目录、文件信息与摘要，可按关键词、层级和有效状态筛选。'"
     >
       <template #actions>
         <button class="btn btn--ghost" type="button" @click="compact = !compact">
           <AppIcon name="layout" :size="14" />
           <span>{{ compact ? '舒适' : '紧凑' }}</span>
         </button>
-        <button class="btn btn--primary" type="button" @click="uploadOpen = !uploadOpen">
+        <button v-if="canManage" class="btn btn--primary" type="button" @click="uploadOpen = !uploadOpen">
           <AppIcon name="upload" :size="14" />
           <span>上传文件</span>
         </button>
@@ -272,7 +278,7 @@ async function submitUpload(): Promise<void> {
     </PageHeader>
 
     <!-- ---------------------------- 上传面板 ---------------------------- -->
-    <section v-if="uploadOpen" class="upload u-card">
+    <section v-if="canManage && uploadOpen" class="upload u-card">
       <header class="u-panel-head">
         <h2 class="upload__title">上传制度文件</h2>
         <button class="btn btn--quiet" type="button" @click="uploadOpen = false">
@@ -452,7 +458,7 @@ async function submitUpload(): Promise<void> {
             <th scope="col">生效</th>
             <th scope="col">失效</th>
             <th scope="col">状态</th>
-            <th scope="col" class="td-right">操作</th>
+            <th v-if="canManage" scope="col" class="td-right">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -482,7 +488,7 @@ async function submitUpload(): Promise<void> {
               </span>
               <span v-if="expiringSoon(d)" class="badge badge--warn cell-expiring">即将到期</span>
             </td>
-            <td class="td-right" @click.stop>
+            <td v-if="canManage" class="td-right" @click.stop>
               <button
                 v-if="d.status === 'effective'"
                 class="btn btn--quiet"
@@ -566,7 +572,7 @@ async function submitUpload(): Promise<void> {
           <dd class="detail__summary">{{ selected.summary ?? '未填写' }}</dd>
         </div>
       </dl>
-      <footer class="detail__foot">
+      <footer v-if="canManage" class="detail__foot">
         <p class="u-meta">状态变更会直接影响该文件是否被问答环节检索到。</p>
         <label class="field">
           <span>更新文件内容（当前版本 {{ selected.content_revision ?? 1 }}）</span>

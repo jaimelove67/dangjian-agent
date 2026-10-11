@@ -34,7 +34,7 @@
 
    使用已有服务时以实际连接参数为准，避免端口冲突。
 
-4. 对新建或已迁移的数据库执行迁移，当前迁移头为 `007_assessment`（依次包含 `006` 学习记录与 `007_assessment` 年度考核）：
+4. 对新建或已迁移的数据库执行迁移，当前迁移头为 `008_member_self`（包含学习、年度考核与党员本人档案/材料）：
 
    ```powershell
    .\.venv\Scripts\python.exe -m alembic upgrade head
@@ -58,6 +58,7 @@ curl http://127.0.0.1:8000/api/v1/health/ready
 ```
 
 - `live` 只检查进程存活；`ready` 检查数据库、核心结构、Redis 与模型注册，缺少依赖时返回 503。
+- 公开健康接口仅返回整体 `status`。服务名称、版本和运行环境见 `/api/v1/admin/health`，依赖与模型配置详情见 `/api/v1/admin/health/ready`；两者均要求平台管理员登录令牌，其他角色返回 403。平台管理员可在前端“系统状态”页查看详情。
 - `ready` 只检查六张基础核心表与全文检索，不核对学习/考核表或完整迁移头；业务使用前仍需执行 `python -m alembic current`。200 也不代表实际云调用或答案质量已验收，见[测试指南](TESTING.md)。
 - API 文档位于 `/docs`，仅在开发调试 `DEBUG=true` 时启用。
 - 登录需要已登记的用户；正式账号应关联实际组织与租户。

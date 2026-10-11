@@ -14,9 +14,9 @@ export function listQASessions(params: { page?: number; page_size?: number } = {
 /** app/api/v1/health.py */
 
 export function checkHealth(): Promise<HealthResponse> {
-  return http.get('/health')
+  return http.get('/admin/health')
 }
 
 export function checkReady(): Promise<ReadyResponse> {
-  return http.get('/health/ready', { validateStatus: (status) => status === 200 || status === 503 })
+  return http.get('/admin/health/ready', { validateStatus: (status) => status === 200 || status === 503 })
 }

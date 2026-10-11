@@ -12,6 +12,7 @@ import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -48,6 +49,7 @@ def business_url(storage_url):
                     config.set_main_option("script_location", "migrations")
                     config.attributes["connection"] = sync_connection
                     command.upgrade(config, revision)
+                    return ScriptDirectory.from_config(config).get_current_head()
 
                 await connection.run_sync(migrate, "004")
                 # 模拟协作者 004 已部署并保存过没有 doc_id/index 的旧引用。
@@ -71,10 +73,10 @@ def business_url(storage_url):
                         )
                     },
                 )
-                await connection.run_sync(migrate, "head")
+                expected_revision = await connection.run_sync(migrate, "head")
                 assert (
                     await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                    == "005"
+                    == expected_revision
                 )
             async with AsyncSession(engine, expire_on_commit=False) as db:
                 orgs = [

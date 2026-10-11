@@ -65,6 +65,9 @@ class KeywordRetriever(Retriever):
                 doc_id=row.doc_id,
                 article=row.article,
                 sequence=row.sequence,
+                doc_status=row.status,
+                effective_date=row.effective_date,
+                expiration_date=row.expiration_date,
                 score=min(1.0, max(0.0, float(row.score))),
                 metadata=source_metadata(row, "keyword"),
             )

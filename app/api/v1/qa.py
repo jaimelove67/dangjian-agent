@@ -32,7 +32,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # 问答需要基本的查询权限
-_require_query = require_permissions(Permission.KNOWLEDGE_QUERY)
+_require_query = require_permissions(Permission.QA_ASK)
 
 
 class QuestionRequest(BaseModel):
