@@ -587,7 +587,8 @@ async def test_member_scheduler_repeats_without_duplicate_reminders_and_keeps_sc
                 org_unit_id=c["branch"].id,
                 name="合成提醒对象",
                 org_name=c["branch"].name,
-                current_stage="applicant",
+                current_stage="activist",
+                stage_joined_on=date(2025, 1, 1),
             )
             db.add(profile)
             await db.commit()
