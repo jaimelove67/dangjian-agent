@@ -1,93 +1,59 @@
 # 数据库迁移指南
 
-## 初始化迁移环境
+更新日期：2026-10-11。从项目根目录、安装项目依赖的 Python 环境执行。目标数据库为支持 pgvector 的 PostgreSQL，连接读取 `DATABASE_URL`。
+
+## 当前迁移链
+
+当前唯一头为 `007_assessment`，文件编号和 revision 不完全相同：
+
+| revision | 内容 |
+| --- | --- |
+| `001` | 租户、组织、用户、审计、知识文档、向量片段与扩展 |
+| `002` | 中文全文检索配置和索引 |
+| `003` | `qa_sessions` 持久历史 |
+| `004` | `member_profiles` 名册 |
+| `005` | 问答历史元数据和名册组织范围 |
+| `006` | `study_plans`、`study_plan_items`、`meeting_records`、`content_revisions` |
+| `007_assessment` | 指标、任务、佐证、归集版本、计划、学校策略、提醒、归档八张考核表 |
+
+## 应用与核对
+
+迁移前确认目标库和备份；项目已有 Alembic 环境，无需重新初始化。
 
 ```bash
-# 使用 Alembic 初始化迁移
-alembic init migrations
-
-# 或者使用已配置好的环境（已完成）
+python -m alembic heads
+python -m alembic current
+python -m alembic upgrade head
+python -m alembic current
 ```
 
-## 创建迁移脚本
+容器开发环境：
 
 ```bash
-# 自动生成迁移脚本
-alembic revision --autogenerate -m "描述信息"
-
-# 手动创建迁移脚本
-alembic revision -m "描述信息"
+docker compose -f docker-compose.dev.yml exec app python -m alembic upgrade head
+docker compose -f docker-compose.dev.yml exec app python -m alembic current
 ```
 
-## 应用迁移
+生产容器去掉 `-f docker-compose.dev.yml`。应用启动不会自动执行迁移；`/api/v1/health/ready` 只核对基础核心表与全文检索，不核对学习/考核表及完整迁移头，仍须检查 `alembic current`。
+
+## 旧数据库接管
+
+仅包含手工创建 `users` 表的旧库，备份并核对后按[运行指南](../docs/RUNNING.md)执行：
 
 ```bash
-# 升级到最新版本
-alembic upgrade head
-
-# 升级到指定版本
-alembic upgrade +1  # 升级一个版本
-alembic upgrade revision_id  # 升级到指定版本
-
-# 降级
-alembic downgrade -1  # 降级一个版本
-alembic downgrade base  # 降级到初始状态
+python -m alembic -x adopt_existing_users=true upgrade head
 ```
 
-## 查看迁移历史
+不要通过 `alembic stamp head` 跳过建表。`scripts/init_db.py` 先执行 `Base.metadata.drop_all`，会删除已有表和数据，只适用于经明确确认的可丢弃开发库，不能用于升级或接管。根目录临时建表 SQL 不能替代完整迁移。
+
+## 开发迁移与回退
 
 ```bash
-# 查看当前版本
-alembic current
-
-# 查看迁移历史
-alembic history
-
-# 查看待应用的迁移
-alembic show head
+python -m alembic revision --autogenerate -m "描述变更"
+python -m alembic history
+python -m alembic show head
 ```
 
-## Docker 环境中运行迁移
+人工检查生成结果的租户字段、外键、索引、默认值及数据影响，保持连续单头。`downgrade` 可能删除表，应先在独立库验证；空表回退不能证明已有数据可安全回退。生产回滚须匹配代码、结构和已确认的备份恢复方案。
 
-```bash
-# 进入应用容器
-docker-compose -f docker-compose.dev.yml exec app bash
-
-# 运行迁移
-alembic upgrade head
-```
-
-## 初始化脚本
-
-### 方式1：使用 Python 脚本（开发环境）
-
-```bash
-python scripts/init_db.py
-```
-
-### 方式2：使用 Alembic（生产环境推荐）
-
-```bash
-alembic upgrade head
-```
-
-## 数据库表结构
-
-### 核心表
-
-- `tenants` - 租户表（支持多级租户）
-- `org_units` - 组织单元表（学校/院系/支部）
-- `users` - 用户表
-- `audit_logs` - 审计日志表（只追加）
-
-### 知识库表
-
-- `knowledge_docs` - 知识文档表
-- `embedding_chunks` - 向量化片段表
-
-## 注意事项
-
-1. **生产环境**：始终使用 Alembic 进行迁移，不要直接运行 `init_db.py`
-2. **迁移前备份**：生产环境迁移前务必备份数据库
-3. **审计表**：`audit_logs` 表只追加，不可更新或删除
-4. **pgvector**：确保数据库已启用 pgvector 扩展
+学习和考核迁移历史证据来自独立测试库，不代表业务库已升级。验证边界见[测试指南](../docs/TESTING.md)。

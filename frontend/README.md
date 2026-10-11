@@ -1,55 +1,64 @@
-# 党建工作智能体 · 前端（独立设计工程）
+# 党建工作智能体 · 正式前端
 
-基于 Vite + Vue 3 + TypeScript 的独立前端，从零搭建，不依赖任何脚手架基座。
-视觉体系遵循 `.workbuddy/skills/design-taste-frontend/SKILL.md`（taste-skill）的
-反模板化规范，调性为**编辑式浅色**。
+更新日期：2026-10-11。正式业务工程使用 Vite、Vue 3、TypeScript 和 Vue Router；`frontend-test/` 为旧登录联调工程。本文依据当前工作区，不代表其他分支或远端版本。
 
-## 启动
+## 安装与启动
 
-完整环境配置见[运行指南](../docs/RUNNING.md)，验证命令与验收范围见[测试指南](../docs/TESTING.md)。以下命令在 `frontend/` 中执行。
+从项目根目录执行：
 
 ```bash
-npm install
-npm run dev        # http://localhost:5666
-npm run build      # 类型检查 + 生产构建
-npm run typecheck  # 仅类型检查
+npm --prefix frontend ci
+npm --prefix frontend run dev
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
 ```
 
-需要后端在 `http://localhost:8000` 运行；开发代理把 `/api` 重写到 `/api/v1`。
+开发端口为 5666，代理默认连接 `http://localhost:8000`，把 `/api` 改写为 `/api/v1`；启动 Vite 进程时设置 `VITE_API_TARGET` 可覆盖后端地址。完整配置见[运行指南](../docs/RUNNING.md)。生产输出为 `frontend/dist/`，静态服务器须配置 SPA 路由回退及 `/api` 到后端 `/api/v1` 的代理；开发代理不会进入生产构建。当前 Compose 不包含前端托管。
 
-## 结构
+## 页面与实现边界
 
+| 路由 | 功能 | 当前边界 |
+| --- | --- | --- |
+| `/login` | 登录与会话恢复 | 需要已登记用户、后端与 Redis |
+| `/ask` | 引用问答、会话及持久历史 | 非流式，语义质量需真实评测 |
+| `/knowledge` | 上传、列表、详情、状态与软删除 | 向量化使用后端 API，没有原始文件下载 |
+| `/members` | 授权名册、人工登记、资格校验及流转/待办建议 | 已接真实名册；没有阶段变更、评分或档案检查工作台 |
+| `/study` | 年度计划、材料、提纲、参学、纪要审核、归档与 TXT 导出 | 独立人员审核，归档需要学校效力确认 |
+| `/assessment` | 指标版本、任务、归集、佐证、审核、计划、提醒与目录 ZIP | 真实指标须人工登记；导出不含原文件附件 |
+| `/system` | 服务状态与接口能力矩阵 | 就绪不等于业务验收 |
+
+菜单与守卫使用 `src/api/types.ts` 中的权限码，服务端仍负责租户、组织及资料授权。完整范围见[项目状态](../docs/STATUS.md)。
+
+## 工程结构
+
+```text
+src/api/          类型、HTTP 封装及 auth/qa/knowledge/member/study/assessment 接口
+src/components/   图标、引用卡、页头及加载/错误/空状态
+src/layouts/      AppShell
+src/router/       路由与权限守卫
+src/stores/       会话、用户与权限
+src/styles/       tokens.css、base.css
+src/views/        正式业务页面
+tests/           business/study/assessment 浏览器流程
+scripts/          设计与页面截图
 ```
-src/
-  api/          接口层：types.ts（契约）、http.ts（axios 封装）、按路由拆分的模块
-  components/   通用组件（图标、引用卡、状态块、页头）
-  layouts/      AppShell（顶栏 + 侧栏 + 主区）
-  router/       路由与守卫（按权限码显隐菜单）
-  stores/       session（会话与权限）
-  styles/       tokens.css（设计令牌）、base.css（原子类）
-  views/        登录 / 问答 / 知识库 / 党员发展 / 系统状态 / 404
-scripts/        Playwright 截图与交互验证脚本（node scripts/screenshot-pages.mjs）
+
+`src/api/mock.ts` 保留开发辅助资料，名册页面读取真实 API。接口变化需同步维护 `src/api/surface.ts`、页面和文档。
+
+## 设计与业务约定
+
+采用编辑式浅色界面，设计令牌集中在 `src/styles/tokens.css`，强调色使用暖砖红 `--accent`，优先复用既有组件、圆角档位和样式。
+
+问答提供引用与风险提示；党员发展仅给人工确认建议。学习材料推荐采用授权检索，提纲采用模板，纪要采用原文摘录，没有调用外部模型。审核、归档和导出重新检查资料权限；学校电子效力未确认时不能归档。
+
+## 验证
+
+在 `frontend/` 执行：
+
+```bash
+node tests/business-workflows.mjs
+node tests/study-workflows.mjs
+node tests/assessment-workflows.mjs
 ```
 
-## 设计令牌
-
-全部颜色、间距、圆角、动效时长集中在 `src/styles/tokens.css`，组件内不写字面量色值。
-三条硬约束：
-
-- 全站唯一强调色 `--accent: #a03230`（暖砖红，饱和度 44%）
-- 圆角仅四档：4 / 6 / 8 / 999
-- 单一浅色主题，任何区块不得中途反色
-
-## 与后端的诚实约定
-
-知识库列表与问答历史已接入持久化 API；此前验收的党员名册页使用
-`src/api/mock.ts` 的示例数据，并在界面上以「示例数据」徽标标注。
-名册等接口在本次文档整理期间另有并行更新，新增对接完成后需补充验证记录。
-「系统状态」页的接口能力矩阵（`src/api/surface.ts`）与页面实现保持一致。
-后端补齐接口后，两处同步更新。完整功能边界见[项目状态](../docs/STATUS.md)。
-
-## 合规红线在界面的落点
-
-- 问答页：每条回答附依据充分性结论与免责声明，引用角标可点击回溯原文
-- 党员发展页：决策边界声明常驻，结果一律表述为「待人工确认」，不提供流转操作入口
-- 登录页与侧栏：声明「辅助不代决」的产品边界
+流程使用合成 API 响应，验证界面和请求契约；真实后端、学校数据和用户验收另行执行。可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定已有 Chromium。历史结果见[测试指南](../docs/TESTING.md)。
