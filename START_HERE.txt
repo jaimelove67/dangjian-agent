@@ -11,6 +11,9 @@
 正式前端为 frontend/，默认地址 http://127.0.0.1:5666。
 服务是否运行，以实际启动和 /api/v1/health/ready 检查为准。
 
-当前迁移头：007_assessment，迁移说明：migrations/README.md。
+当前迁移头：012_member_self，迁移说明：migrations/README.md。
 学习工作台：/study；年度考核：/assessment；实际组织与权限必须先登记。
 历史报告和其他分支的通过记录不代表当前工作区已重新验收。
+
+系统管理员开户：/accounts；治理与审核：/governance；权限和本人材料说明：docs/ADMINISTRATION.md。
+本地管理员工作台扩展尚未合入，不能按009_admin_workspace升级主分支。

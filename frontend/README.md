@@ -75,3 +75,7 @@ node tests/admin-accounts.mjs
 ```
 
 流程使用合成 API 响应，验证界面和请求契约；真实后端、学校数据和用户验收另行执行。可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定已有 Chromium。历史结果见[测试指南](../docs/TESTING.md)。
+
+## 文档合并边界
+
+主分支已有组织生活 `/meeting`、治理审核 `/governance`、账号开户 `/accounts`、党员 `/my-archive` 和 `/my-materials` 页面。平台系统详情限 `system_admin`，治理功能另按服务端权限限制。当前路由尚未提供本地扩展的 `/admin` 首页、独立 `/organizations`、`/audit` 和账号启停/密码重置页面；默认仍进入 `/ask`。这些扩展不能因文档合并而视为页面已交付，见[使用指南](../docs/ADMINISTRATION.md)。
