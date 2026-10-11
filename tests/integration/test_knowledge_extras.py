@@ -42,7 +42,7 @@ def kb_url(storage_url):
                     cfg = Config()
                     cfg.set_main_option("script_location", "migrations")
                     cfg.attributes["connection"] = sync
-                    command.upgrade(cfg, "009_member_workflow")
+                    command.upgrade(cfg, "head")
 
                 await connection.run_sync(migrate)
             async with AsyncSession(engine, expire_on_commit=False) as db:
@@ -89,9 +89,7 @@ def kb_url(storage_url):
     return storage_url
 
 
-def actor(
-    user_id="kb-manager", role=UserRole.SCHOOL_ADMIN, org="school-a", tenant="kb-a"
-):
+def actor(user_id="kb-manager", role=UserRole.SCHOOL_ADMIN, org="school-a", tenant="kb-a"):
     user = User(
         id=user_id,
         tenant_id=tenant,
@@ -215,9 +213,7 @@ async def test_file_download_respects_tenant_and_file_missing(kb_url):
     # 另一租户不可见
     async with client_for(kb_url, actor(tenant="kb-b", org="school-b")) as (client, _):
         assert (await client.get("/api/v1/knowledge-docs/M1-EXTRA-T2")).status_code == 404
-        assert (
-            await client.get("/api/v1/knowledge-docs/M1-EXTRA-T2/file")
-        ).status_code == 404
+        assert (await client.get("/api/v1/knowledge-docs/M1-EXTRA-T2/file")).status_code == 404
         assert (
             await client.get("/api/v1/knowledge-docs/M1-EXTRA-T2/processing-status")
         ).status_code == 404

@@ -78,6 +78,7 @@ def study_url(storage_url):
                         sync.execute(text("SELECT version_num FROM alembic_version")).scalar()
                         == "006"
                     )
+                    command.upgrade(cfg, "head")
 
                 await connection.run_sync(migrate)
             async with AsyncSession(engine, expire_on_commit=False) as db:

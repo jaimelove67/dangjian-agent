@@ -110,3 +110,6 @@ cachetools==5.3.2
 
 # 并发
 aiofiles==23.2.1
+
+# Pin build tooling too; Python 3.11 images may seed an older vulnerable version.
+setuptools==83.0.0

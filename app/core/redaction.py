@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+import uuid
 from typing import Any
 
 PRIVATE_FIELDS = {
@@ -44,6 +45,26 @@ PRIVATE_FIELDS = {
 def summary(value: Any) -> dict[str, Any]:
     encoded = json.dumps(value, ensure_ascii=False, default=str, sort_keys=True).encode()
     return {"sha256": hashlib.sha256(encoded).hexdigest(), "bytes": len(encoded)}
+
+
+def audit_summary(value: Any) -> dict[str, Any]:
+    """Keep immutable version pointers and deletion flags, hashing all business content."""
+    result = summary(value)
+    if not isinstance(value, dict):
+        return result
+    for field in ("revision", "content_revision", "config_version"):
+        item = value.get(field)
+        if type(item) is int and item >= 0:
+            result[field] = item
+    if type(value.get("is_deleted")) is bool:
+        result["is_deleted"] = value["is_deleted"]
+    snapshot_id = value.get("snapshot_id")
+    if isinstance(snapshot_id, str):
+        try:
+            result["snapshot_id"] = str(uuid.UUID(snapshot_id))
+        except ValueError:
+            pass
+    return result
 
 
 def redact(value: Any, *, level: int = 0) -> Any:

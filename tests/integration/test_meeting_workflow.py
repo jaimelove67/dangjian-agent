@@ -37,7 +37,7 @@ def life_url(storage_url):
                     cfg = Config()
                     cfg.set_main_option("script_location", "migrations")
                     cfg.attributes["connection"] = sync
-                    command.upgrade(cfg, "008_org_life_tasks")
+                    command.upgrade(cfg, "head")
 
                 await connection.run_sync(migrate)
             async with AsyncSession(engine, expire_on_commit=False) as db:
@@ -81,7 +81,15 @@ def life_url(storage_url):
                         "branch-a",
                         False,
                     ),
-                    ("LIFE-OTHER-DEPT", "life-a", "department", "department", "internal", "department-b", False),
+                    (
+                        "LIFE-OTHER-DEPT",
+                        "life-a",
+                        "department",
+                        "department",
+                        "internal",
+                        "department-b",
+                        False,
+                    ),
                     ("LIFE-EXPIRED", "life-a", "school", "school", "internal", None, True),
                     ("LIFE-CLASSIFIED", "life-a", "school", "school", "classified", None, False),
                     ("LIFE-PRIVATE", "life-b", "school", "school", "internal", None, False),
@@ -217,7 +225,10 @@ async def test_full_record_lifecycle_review_archive_and_stats(life_url):
         assert "待补" in record["missing"][0]
 
         recommended = await ok(
-            client, "GET", f"/meeting/records/{record['id']}/recommendations", params={"q": "组织生活"}
+            client,
+            "GET",
+            f"/meeting/records/{record['id']}/recommendations",
+            params={"q": "组织生活"},
         )
         assert recommended["sources"] and recommended["sources"][0]["doc_id"] == "LIFE-VALID"
 
@@ -354,7 +365,11 @@ async def test_task_workflow_requires_exact_excerpt_and_manual_confirm(life_url)
             client,
             "PATCH",
             f"/meeting/tasks/{task['id']}",
-            {"owner_name": "合成责任人", "due_on": f"{date.today().year}-12-31", "reason": "人工补齐"},
+            {
+                "owner_name": "合成责任人",
+                "due_on": f"{date.today().year}-12-31",
+                "reason": "人工补齐",
+            },
         )
         task = task["task"]
         assert task["status"] == "active" and task["confirmed_by"] == "life-author"
@@ -422,9 +437,7 @@ async def test_missing_evidence_and_review_gates(life_url):
     async with client_for(life_url, actor()) as (client, _):
         # 无依据材料不得虚构推荐
         record = await new_record(client, source=None)
-        recommended = await ok(
-            client, "GET", f"/meeting/records/{record['id']}/recommendations"
-        )
+        recommended = await ok(client, "GET", f"/meeting/records/{record['id']}/recommendations")
         assert recommended["sources"] == []
         assert any("待补" in item for item in recommended["missing"])
         # 未登记原文/参学不能提交
@@ -436,7 +449,11 @@ async def test_missing_evidence_and_review_gates(life_url):
         # 草稿内容不完整时审核被校验拦截（不进入待审核状态机）
         response = await client.post(
             "/api/v1" + f"/meeting/records/{record['id']}/review",
-            json={"expected_revision": record["revision"], "decision": "approved", "reason": "越权审核"},
+            json={
+                "expected_revision": record["revision"],
+                "decision": "approved",
+                "reason": "越权审核",
+            },
         )
         assert response.status_code == 422
         # 补全内容后提交，提交人不能自审
@@ -468,7 +485,11 @@ async def test_missing_evidence_and_review_gates(life_url):
         assert record["review_status"] == "pending"
         response = await client.post(
             "/api/v1" + f"/meeting/records/{record['id']}/review",
-            json={"expected_revision": record["revision"], "decision": "approved", "reason": "自审"},
+            json={
+                "expected_revision": record["revision"],
+                "decision": "approved",
+                "reason": "自审",
+            },
         )
         assert response.status_code == 403
 
@@ -520,7 +541,9 @@ async def test_records_filter_by_type_year_and_status(life_url):
                     "reason": "筛选测试",
                 },
             )
-        by_type = await ok(client, "GET", f"/meeting/records?activity_type=party_lecture&year={year}")
+        by_type = await ok(
+            client, "GET", f"/meeting/records?activity_type=party_lecture&year={year}"
+        )
         assert by_type["total"] >= 1 and all(
             item["activity_type"] == "party_lecture" for item in by_type["items"]
         )

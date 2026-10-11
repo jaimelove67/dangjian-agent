@@ -63,7 +63,44 @@ def governance_url():
                 def upgrade(sync):
                     config = Config("alembic.ini")
                     config.attributes["connection"] = sync
+                    command.upgrade(config, "010_security_governance")
+                    sync.execute(
+                        text(
+                            "INSERT INTO config_revisions "
+                            "(id,tenant_id,version,actor_id,reason,values,created_at,updated_at) "
+                            "VALUES ('legacy-revision','legacy-tenant',1,'legacy-actor',"
+                            "'isolated upgrade evidence','{}','2026-01-01','2026-01-01')"
+                        )
+                    )
+                    before = (
+                        sync.execute(
+                            text("SELECT * FROM config_revisions WHERE id='legacy-revision'")
+                        )
+                        .mappings()
+                        .one()
+                    )
                     command.upgrade(config, "head")
+                    assert (
+                        sync.execute(
+                            text("SELECT * FROM config_revisions WHERE id='legacy-revision'")
+                        )
+                        .mappings()
+                        .one()
+                        == before
+                    )
+                    defaults = (
+                        sync.execute(
+                            text(
+                                "SELECT column_default FROM information_schema.columns "
+                                "WHERE table_name IN "
+                                "('config_revisions','human_reviews','durable_jobs','model_usage') "
+                                "AND column_name IN ('created_at','updated_at')"
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    assert len(defaults) == 8 and all(defaults)
 
                 await conn.run_sync(upgrade)
         finally:

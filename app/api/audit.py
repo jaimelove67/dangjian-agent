@@ -6,7 +6,7 @@ from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
-from app.core.redaction import summary
+from app.core.redaction import audit_summary
 from app.models.user import User
 
 
@@ -25,7 +25,7 @@ async def audit_operation(
     request.state.audit_data_level = data_level
     for key in ("old_value", "new_value"):
         if key in values and values[key] is not None:
-            values[key] = summary(values[key])
+            values[key] = audit_summary(values[key])
     await write_audit(
         db,
         tenant_id=str(user.tenant_id),

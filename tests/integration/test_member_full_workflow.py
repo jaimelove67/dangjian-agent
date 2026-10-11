@@ -36,7 +36,7 @@ def member_url(storage_url):
                     cfg = Config()
                     cfg.set_main_option("script_location", "migrations")
                     cfg.attributes["connection"] = sync
-                    command.upgrade(cfg, "009_member_workflow")
+                    command.upgrade(cfg, "head")
 
                 await connection.run_sync(migrate)
             async with AsyncSession(engine, expire_on_commit=False) as db:
@@ -148,7 +148,13 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
             client,
             "POST",
             "/member-full/batches",
-            {"year": 2026, "batch_no": "B1", "label": "2026年第一批发展对象", "org_unit_id": "branch-a", "reason": "建立年度批次"},
+            {
+                "year": 2026,
+                "batch_no": "B1",
+                "label": "2026年第一批发展对象",
+                "org_unit_id": "branch-a",
+                "reason": "建立年度批次",
+            },
         )
         assert batch["batch_no"] == "B1"
         profile = await new_profile(client, "合成学员甲")
@@ -168,7 +174,9 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
                 {"material_type": material_type, "submit_date": today, "reason": "登记材料"},
             )
         listed = await ok(client, "GET", f"/member-full/profiles/{profile['id']}/materials")
-        assert listed["items"] and all(item["review_status"] == "pending" for item in listed["items"])
+        assert listed["items"] and all(
+            item["review_status"] == "pending" for item in listed["items"]
+        )
         for item in listed["items"]:
             if not item.get("legacy_material"):
                 await ok(
@@ -180,14 +188,29 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
         # 非法流转被拒（未满足合法顺序）
         response = await client.post(
             "/api/v1" + f"/member-full/profiles/{profile['id']}/transition",
-            json={"target_stage": "member", "decision_date": today, "basis": "越权一步到位", "opinion": ""},
+            json={
+                "target_stage": "member",
+                "decision_date": today,
+                "basis": "越权一步到位",
+                "opinion": "",
+            },
         )
         assert response.status_code == 422
         # 材料未齐时流转被拒
-        await ok(client, "POST", f"/member-full/profiles/{profile['id']}/materials", {"material_type": "思想汇报", "submit_date": today, "reason": "登记材料"})
+        await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/materials",
+            {"material_type": "思想汇报", "submit_date": today, "reason": "登记材料"},
+        )
         response = await client.post(
             "/api/v1" + f"/member-full/profiles/{profile['id']}/transition",
-            json={"target_stage": "candidate", "decision_date": today, "basis": "材料未齐越级", "opinion": ""},
+            json={
+                "target_stage": "candidate",
+                "decision_date": today,
+                "basis": "材料未齐越级",
+                "opinion": "",
+            },
         )
         assert response.status_code == 422
         # 具备全部积极分子材料后流转成功
@@ -195,7 +218,12 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
             client,
             "POST",
             f"/member-full/profiles/{profile['id']}/transition",
-            {"target_stage": "activist", "decision_date": today, "basis": "支委会研究确定，培养联系人形成结论", "opinion": "同意列为入党积极分子"},
+            {
+                "target_stage": "activist",
+                "decision_date": today,
+                "basis": "支委会研究确定，培养联系人形成结论",
+                "opinion": "同意列为入党积极分子",
+            },
         )
         assert profile["current_stage"] == "activist"
         detail = await ok(client, "GET", f"/member-full/profiles/{profile['id']}")
@@ -210,7 +238,11 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
 async def test_scoring_requires_evidence_and_flags_risks(member_url):
     async with client_for(member_url, actor()) as (client, _):
         profile = await new_profile(client, "合成学员乙")
-        for category, score in (("theory_test", 80), ("volunteer_service", 90), ("public_review", 70)):
+        for category, score in (
+            ("theory_test", 80),
+            ("volunteer_service", 90),
+            ("public_review", 70),
+        ):
             record = await ok(
                 client,
                 "POST",
@@ -248,7 +280,9 @@ async def test_scoring_requires_evidence_and_flags_risks(member_url):
         assert "party_review" in result["missing"] and "academic" in result["missing"]
         assert any(row["risk_note"] == "挂科" for row in result["risks"])
         assert result["weighted_score"] is not None
-        assert result["dimensions"]["theory_test"]["evidence"][0]["source_id"].startswith("member_cultivation:")
+        assert result["dimensions"]["theory_test"]["evidence"][0]["source_id"].startswith(
+            "member_cultivation:"
+        )
 
 
 @pytest.mark.asyncio
@@ -269,7 +303,9 @@ async def test_votes_deduplicate_and_summarize(member_url):
         # 同一投票人重复提交被拒绝
         response = await client.post("/api/v1/member-full/votes", json=body)
         assert response.status_code == 409
-    async with client_for(member_url, actor("member-voter2", UserRole.BRANCH_SECRETARY, "branch-a")) as (client, _):
+    async with client_for(
+        member_url, actor("member-voter2", UserRole.BRANCH_SECRETARY, "branch-a")
+    ) as (client, _):
         await ok(
             client,
             "POST",
@@ -290,8 +326,18 @@ async def test_reminders_sync_deduplicate_and_resolve(member_url):
     today = date.today().isoformat()
     async with client_for(member_url, actor()) as (client, _):
         profile = await new_profile(client, "提醒对象甲")
-        await ok(client, "POST", f"/member-full/profiles/{profile['id']}/materials", {"material_type": "入党申请书", "submit_date": today, "reason": "登记材料"})
-        await ok(client, "POST", f"/member-full/profiles/{profile['id']}/materials", {"material_type": "党组织谈话记录", "submit_date": today, "reason": "登记材料"})
+        await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/materials",
+            {"material_type": "入党申请书", "submit_date": today, "reason": "登记材料"},
+        )
+        await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/materials",
+            {"material_type": "党组织谈话记录", "submit_date": today, "reason": "登记材料"},
+        )
         listed = await ok(client, "GET", f"/member-full/profiles/{profile['id']}/materials")
         for item in listed["items"]:
             await ok(
@@ -304,7 +350,12 @@ async def test_reminders_sync_deduplicate_and_resolve(member_url):
             client,
             "POST",
             f"/member-full/profiles/{profile['id']}/transition",
-            {"target_stage": "activist", "decision_date": today, "basis": "支委会研究确定", "opinion": "同意"},
+            {
+                "target_stage": "activist",
+                "decision_date": today,
+                "basis": "支委会研究确定",
+                "opinion": "同意",
+            },
         )
         first = await ok(client, "POST", f"/member-full/profiles/{profile['id']}/sync-reminders")
         assert first["created"] >= 3
@@ -354,7 +405,10 @@ async def test_archive_check_lists_missing_and_risk(member_url):
                 "materials_note": {"入党申请书": "只写了几个字", "党组织谈话记录": "无"},
             },
         )
-        assert any("风险" in item or "人工核验" in item or "未提供" in item for item in result2["result"]["risks"])
+        assert any(
+            "风险" in item or "人工核验" in item or "未提供" in item
+            for item in result2["result"]["risks"]
+        )
 
 
 @pytest.mark.asyncio

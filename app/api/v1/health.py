@@ -102,7 +102,7 @@ async def readiness_check() -> JSONResponse:
             checks["schema"] = "healthy" if tables_ready and fts_ready else "migration_required"
             if tables_ready:
                 head = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                if head != "010_security_governance":
+                if head != "011_governance_timestamps":
                     checks["schema"] = "migration_required"
             if settings.ENV == "production" and tables_ready:
                 safe_role = await conn.scalar(

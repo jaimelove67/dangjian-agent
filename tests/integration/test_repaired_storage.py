@@ -148,9 +148,14 @@ async def test_content_update_keeps_old_chunks_and_retrieves_new_version(storage
                     for row in rows
                 )
                 user = User(id="content-reader", tenant_id="content-tenant", role=UserRole.MEMBER)
-                assert not await KeywordRetriever(db).retrieve(
+                matches = await KeywordRetriever(db).retrieve(
                     "旧版本测试专用规则", filters=knowledge_filters(user)
                 )
+                # pg_trgm can match the shared words in the new version; no old chunk may return.
+                assert all("旧版本" not in match.content for match in matches)
+                assert not {match.chunk_id for match in matches} & {
+                    row.id for row in rows if row.is_deleted
+                }
                 assert await KeywordRetriever(db).retrieve(
                     "新版本测试专用规则", filters=knowledge_filters(user)
                 )
