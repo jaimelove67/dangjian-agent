@@ -14,6 +14,9 @@ class Base(DeclarativeBase):
 
     # 由子类提供表名
     __table__: ClassVar[Table]
+    # UPDATE timestamps are server-generated too; async response serialization must
+    # not implicitly fetch expired attributes outside an awaited database operation.
+    __mapper_args__ = {"eager_defaults": True}
 
     @declared_attr.directive
     def __tablename__(cls) -> str:

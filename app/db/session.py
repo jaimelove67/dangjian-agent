@@ -8,6 +8,7 @@ from typing import Any, AsyncGenerator
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
@@ -20,14 +21,23 @@ connect_args: dict[str, Any] = {"ssl": ssl_mode} if ssl_mode else {}
 database_url = database_url.set(
     query={key: value for key, value in database_url.query.items() if key not in {"sslmode", "ssl"}}
 )
+# Pytest and synchronous HTTP test clients use multiple event loops. Never reuse
+# an asyncpg connection from a closed test loop; the production pool stays bounded.
+pool_options: dict[str, Any] = (
+    {"poolclass": NullPool}
+    if settings.ENV == "testing"
+    else {
+        "pool_size": settings.DB_POOL_SIZE,
+        "max_overflow": settings.DB_MAX_OVERFLOW,
+        "pool_recycle": settings.DB_POOL_RECYCLE,
+    }
+)
 engine = create_async_engine(
     database_url,
     connect_args=connect_args,
     echo=settings.DEBUG,
     hide_parameters=True,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-    pool_recycle=settings.DB_POOL_RECYCLE,
+    **pool_options,
     pool_pre_ping=True,  # 连接健康检查
 )
 
