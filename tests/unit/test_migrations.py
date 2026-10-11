@@ -40,6 +40,7 @@ def test_migration_chain_renders_core_tables(offline_sql):
         "embedding_chunks",
         "qa_sessions",
         "member_profiles",
+        "member_materials",
     ):
         assert f"CREATE TABLE {table}" in offline_sql
 
@@ -50,3 +51,12 @@ def test_chinese_fts_ddl_rendered(offline_sql):
     assert "ADD COLUMN IF NOT EXISTS search_vector tsvector" in offline_sql
     assert "ix_knowledge_docs_search_vector" in offline_sql
     assert "ix_knowledge_docs_title_trgm" in offline_sql
+
+
+def test_self_service_migration_has_explicit_account_and_retry_constraints(offline_sql):
+    assert "ALTER TABLE member_profiles ADD COLUMN user_id" in offline_sql
+    assert "uq_member_profiles_tenant_user UNIQUE (tenant_id, user_id)" in offline_sql
+    assert (
+        "uq_member_material_submission UNIQUE (tenant_id, user_id, submission_key)" in offline_sql
+    )
+    assert "DROP TABLE member_profiles" not in offline_sql

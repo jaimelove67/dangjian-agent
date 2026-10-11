@@ -3,15 +3,18 @@
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings, tenant_config
 from app.core.database_privileges import UNSAFE_RUNTIME_ROLE
+from app.deps import require_roles
+from app.models.user import UserRole
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_require_system = require_roles(UserRole.SYSTEM_ADMIN)
 
 
 @router.get(
@@ -26,6 +29,17 @@ async def health_check() -> Dict[str, Any]:
     Returns:
         服务状态信息
     """
+    return {"status": "healthy"}
+
+
+@router.get(
+    "/admin/health",
+    summary="系统运行信息",
+    description="仅平台管理员可查看服务名称、版本与运行环境",
+    dependencies=[Depends(_require_system)],
+)
+async def system_health_check() -> Dict[str, Any]:
+    """向平台管理员返回系统运行详情。"""
     return {
         "status": "healthy",
         "service": settings.PROJECT_NAME,
@@ -37,17 +51,31 @@ async def health_check() -> Dict[str, Any]:
 @router.get(
     "/health/ready",
     summary="就绪检查",
-    description="检查服务是否准备好接收请求（数据库、Redis等依赖服务是否可用）",
+    description="公开探针，仅返回整体就绪状态，依赖详情需平台管理员查看",
     response_description="服务就绪状态",
 )
 async def readiness_check() -> JSONResponse:
-    """就绪检查接口
+    """公开就绪探针，保留 HTTP 状态码且不暴露依赖详情。"""
+    details = await _readiness_details()
+    return JSONResponse(
+        status_code=details.status_code,
+        content={"status": "ready" if details.status_code == status.HTTP_200_OK else "not_ready"},
+    )
 
-    检查所有依赖服务是否可用
 
-    Returns:
-        就绪状态
-    """
+@router.get(
+    "/admin/health/ready",
+    summary="系统就绪详情",
+    description="仅平台管理员可查看数据库、Redis、结构与模型配置状态",
+    dependencies=[Depends(_require_system)],
+)
+async def system_readiness_check() -> JSONResponse:
+    """向平台管理员返回各依赖的就绪详情。"""
+    return await _readiness_details()
+
+
+async def _readiness_details() -> JSONResponse:
+    """检查所有依赖，仅由公开摘要和管理员详情接口调用。"""
     connectivity_verified = False
     checks = {
         "database": "unknown",

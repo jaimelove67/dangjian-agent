@@ -96,6 +96,8 @@ export type PermissionCode =
   | 'knowledge.query'
   | 'knowledge.manage'
   | 'member.query'
+  | 'member.self_query'
+  | 'member.material_submit'
   | 'member.stage_transition'
   | 'member.scoring'
   | 'meeting.query'
@@ -125,6 +127,8 @@ export const PERM = {
   KNOWLEDGE_QUERY: 'knowledge.query',
   KNOWLEDGE_MANAGE: 'knowledge.manage',
   MEMBER_QUERY: 'member.query',
+  SELF_QUERY: 'member.self_query',
+  MATERIAL_SUBMIT: 'member.material_submit',
   STAGE_TRANSITION: 'member.stage_transition',
   SCORING: 'member.scoring',
   MEETING_QUERY: 'meeting.query',
@@ -143,6 +147,11 @@ export const PERM = {
   CONFIG_MANAGE: 'admin.config',
   AUDIT_QUERY: 'admin.audit',
 } as const satisfies Record<string, PermissionCode>
+
+/** 普通党员的功能上限；即使收到旧权限码，也不展示组织管理功能。 */
+export const MEMBER_FUNCTION_PERMISSIONS: ReadonlySet<PermissionCode> = new Set([
+  PERM.QA_ASK, PERM.SELF_QUERY, PERM.MATERIAL_SUBMIT,
+])
 
 /* ============================ 问答 ===================================== */
 
@@ -340,6 +349,7 @@ export const STAGE_ORDER: MemberStage[] = [
 ]
 
 export interface MemberRosterItem {
+  user_id?: string | null
   id: string
   name: string
   org_name: string
@@ -423,7 +433,7 @@ export const TODO_CATEGORY_LABELS: Record<TodoItem['category'], string> = {
 
 /* ============================ 健康检查 ================================= */
 
-/** app/api/v1/health.py::GET /health */
+/** app/api/v1/health.py::GET /admin/health，仅平台管理员可读 */
 export interface HealthResponse {
   status: string
   service: string
@@ -431,6 +441,7 @@ export interface HealthResponse {
   environment: string
 }
 
+/** app/api/v1/health.py::GET /admin/health/ready，包含管理员可读的依赖详情 */
 export interface ReadyResponse {
   status: 'ready' | 'not_ready'
   checks: Record<string, string>

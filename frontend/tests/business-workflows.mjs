@@ -51,6 +51,14 @@ try {
     if (path === '/auth/me') data = user
     else if (path === '/auth/codes') data = ['qa.ask', 'knowledge.query', 'knowledge.manage', 'member.query', 'member.stage_transition']
     else if (path === '/member/org-units') data = organizations
+    else if (/^\/member\/roster\/[^/]+\/materials$/.test(path)) data = { items: [], total: 0, page: 1, page_size: 20 }
+    else if (/^\/member\/roster\/[^/]+\/account$/.test(path) && request.method() === 'PUT') {
+      const id = path.split('/')[3]
+      const profile = roster.find((member) => member.id === id)
+      assert.ok(profile)
+      profile.user_id = 'ui-linked-user'
+      data = profile
+    }
     else if (path === '/member/roster' && request.method() === 'GET') data = { items: roster, total: roster.length, page: 1, page_size: 40 }
     else if (path === '/member/roster' && request.method() === 'POST') {
       const body = request.postDataJSON()
@@ -125,6 +133,11 @@ try {
   const registration = requests.find((request) => request.path === '/member/roster' && request.method === 'POST')
   assert.equal(registration.body.org_unit_id, 'ui-org')
   assert.deepEqual(registration.body.materials, ['入党申请书', '思想汇报'])
+  await page.getByRole('button', { name: '账号与个人提交', exact: true }).click()
+  await page.getByLabel('党员登录账号', { exact: true }).fill('synthetic-member-account')
+  await page.getByRole('button', { name: '关联本人档案', exact: true }).click()
+  await page.getByText('账号已关联，党员可登录查看本人档案并提交材料。', { exact: true }).waitFor()
+  assert.ok(requests.some((request) => request.path.endsWith('/account') && request.body.username === 'synthetic-member-account'))
   await page.getByRole('tab', { name: '待办建议', exact: true }).click()
   const todoResponse = page.waitForResponse((response) => response.url().includes('/member/todo-suggestions'))
   await page.getByRole('button', { name: '生成待办建议', exact: true }).click()

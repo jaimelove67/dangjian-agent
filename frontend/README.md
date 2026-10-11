@@ -1,73 +1,73 @@
-# 党建工作智能体 · 前端（独立设计工程）
+# 党建工作智能体 · 正式前端
 
-基于 Vite + Vue 3 + TypeScript 的独立前端，从零搭建，不依赖任何脚手架基座。
-视觉体系遵循 `.workbuddy/skills/design-taste-frontend/SKILL.md`（taste-skill）的
-反模板化规范，调性为**编辑式浅色**。
+更新日期：2026-10-11。正式业务工程使用 Vite、Vue 3、TypeScript 和 Vue Router；`frontend-test/` 为旧登录联调工程。本文依据当前工作区，不代表其他分支或远端版本。
 
-## 启动
+## 安装与启动
 
-完整环境配置见[运行指南](../docs/RUNNING.md)，验证命令与验收范围见[测试指南](../docs/TESTING.md)。以下命令在 `frontend/` 中执行。
+从项目根目录执行：
 
 ```bash
-npm install
-npm run dev        # http://localhost:5666
-npm run build      # 类型检查 + 生产构建
-npm run typecheck  # 仅类型检查
+npm --prefix frontend ci
+npm --prefix frontend run dev
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
 ```
 
-需要后端在 `http://localhost:8000` 运行；开发代理把 `/api` 重写到 `/api/v1`。
+开发端口为 5666，代理默认连接 `http://localhost:8000`，把 `/api` 改写为 `/api/v1`；启动 Vite 进程时设置 `VITE_API_TARGET` 可覆盖后端地址。完整配置见[运行指南](../docs/RUNNING.md)。生产输出为 `frontend/dist/`，静态服务器须配置 SPA 路由回退及 `/api` 到后端 `/api/v1` 的代理；开发代理不会进入生产构建。当前 Compose 不包含前端托管。
 
-## 结构
+## 页面与实现边界
 
+| 路由 | 功能 | 当前边界 |
+| --- | --- | --- |
+| `/login` | 登录与会话恢复 | 需要已登记用户、后端与 Redis |
+| `/ask` | 引用问答、会话及持久历史 | 非流式，语义质量需真实评测 |
+| `/my-archive` | 本人档案查询 | 仅普通党员；组织人员明确关联账号后可读，不按姓名匹配 |
+| `/my-materials` | 个人材料提交、记录与原件下载 | 仅普通党员；私有原件不进入知识库，提交不等于组织核验 |
+| `/knowledge` | 授权制度目录、详情与摘要；管理员可上传、改状态及软删除 | 查询用户只读；维护需 `knowledge.manage`，没有原始文件下载 |
+| `/members` | 授权名册、登记、账号关联、提交原件查询及规则建议 | 组织人员按授权范围操作；没有自动阶段变更、评分或档案检查工作台 |
+| `/study` | 年度计划、材料、提纲、参学、纪要审核、归档与 TXT 导出 | 独立人员审核，归档需要学校效力确认 |
+| `/assessment` | 指标版本、任务、归集、佐证、审核、计划、提醒与目录 ZIP | 真实指标须人工登记；导出不含原文件附件 |
+| `/system` | 服务状态与接口能力矩阵 | 仅平台管理员（`system_admin`）可访问；就绪不等于业务验收 |
+| `/forbidden` | 权限不足提示与返回问答入口 | 无权限访问页面时进入此页，不请求系统信息 |
+
+菜单与守卫使用 `src/api/types.ts` 中的权限码；系统入口与路由直接限定 `system_admin` 角色。服务端仍负责租户、组织及资料授权。完整范围见[项目状态](../docs/STATUS.md)。
+
+普通党员端仅提供本人档案、个人材料、制度问答三个功能。党员没有 `knowledge.query` 或组织管理权限，直接访问知识库或管理工作台也会被拒绝。问答仍依据公共政策和本校授权资料，使用 `qa.ask` 权限；申请人的原有公共资料查询范围保持。系统页面及 `/api/v1/admin/health*` 详情直接校验平台管理员角色（`system_admin`），校级及院系管理员也不能查看；其他角色即使收到 `admin.config` 权限码，也不会显示系统入口或获得详情访问权。
+
+应用迁移 `012_member_self` 后，组织人员在 `/members` 选中本人台账，打开“账号与个人提交”，输入同一组织的有效普通党员登录账号并关联。已有档案不自动绑定，已有不同账号关联不能覆盖。材料默认限 10MB，原件存于私有数据库表；提交记录与组织登记的已具备材料分开，不自动核验、流转或向外部模型发送。
+
+## 工程结构
+
+```text
+src/api/          类型、HTTP 封装及 auth/qa/knowledge/member/study/assessment 接口
+src/components/   图标、引用卡、页头及加载/错误/空状态
+src/layouts/      AppShell
+src/router/       路由与权限守卫
+src/stores/       会话、用户与权限
+src/styles/       tokens.css、base.css
+src/views/        正式业务页面
+tests/           business/study/assessment 业务流程与 role-access 角色权限回归
+scripts/          设计与页面截图
 ```
-src/
-  api/          接口层：types.ts（契约）、http.ts（axios 封装）、按路由拆分的模块
-  components/   通用组件及知识库、党员发展、组织生活业务工作区
-  layouts/      AppShell（顶栏 + 侧栏 + 主区）
-  router/       路由与守卫（按权限码显隐菜单）
-  stores/       session（会话与权限）
-  styles/       tokens.css（设计令牌）、base.css、workbench.css（业务表单与表格）
-  views/        登录 / 问答 / 知识库 / 党员发展 / 组织生活 / 系统状态 / 404
-scripts/        Playwright 截图与交互验证脚本
-```
 
-## 设计令牌
+`src/api/mock.ts` 保留开发辅助资料，名册页面读取真实 API。接口变化需同步维护 `src/api/surface.ts`、页面和文档。
 
-全部颜色、间距、圆角、动效时长集中在 `src/styles/tokens.css`，组件内不写字面量色值。
-三条硬约束：
+## 设计与业务约定
 
-- 全站唯一强调色 `--accent: #a03230`（暖砖红，饱和度 44%）
-- 圆角仅四档：4 / 6 / 8 / 999
-- 单一浅色主题，任何区块不得中途反色
+采用编辑式浅色界面，设计令牌集中在 `src/styles/tokens.css`，强调色使用暖砖红 `--accent`，优先复用既有组件、圆角档位和样式。
 
-## 与后端的诚实约定
+问答提供引用与风险提示；党员发展仅给人工确认建议。学习材料推荐采用授权检索，提纲采用模板，纪要采用原文摘录，没有调用外部模型。审核、归档和导出重新检查资料权限；学校电子效力未确认时不能归档。
 
-知识库、党员名册与组织生活均调用真实 API，查询失败时显示错误，不用样例填充业务页面。
-知识库新增处理状态、授权原件下载与元数据维护；党员发展新增年度批次、材料人工审核、
-培养记录、辅助评分、人工阶段登记、提醒、投票与档案检查；组织生活新增资料与出勤编辑、
-参考文件选择、纪要提交与人工审核、任务办理、版本记录及归档导出。
-「系统状态」页的接口能力矩阵（`src/api/surface.ts`）与页面实现保持一致。
-接口能力表示存在可调用入口，完整业务验收仍需数据库、规则及外部服务就绪。
+## 验证
 
-本轮设计与验证范围见[模块 1 至 3 界面设计记录](../docs/MODULES123_UI_DESIGN_2026-10-10.md)。
-`taste-skill` 的 Section 13 不覆盖管理面板、数据表和复杂业务表单；本次复用其字体、
-颜色、信息层级、克制动效与响应式原则，沿用现有 Vue 设计系统。
-
-以下浏览器检查使用明确标注的接口样例，不写真实数据库，也不调用模型。启动前端后运行：
+在 `frontend/` 执行：
 
 ```bash
-node scripts/verify-modules123.mjs http://127.0.0.1:5666 ../tmp/modules123-ui
+node tests/business-workflows.mjs
+node tests/study-workflows.mjs
+node tests/assessment-workflows.mjs
+node tests/role-access.mjs
+node tests/member-self-workflows.mjs
 ```
 
-在仓库根目录校验浏览器捕获的请求与实际后端输入模型：
-
-```bash
-python scripts/validate_modules123_ui_contracts.py tmp/modules123-ui/contract-requests.json
-```
-
-## 合规红线在界面的落点
-
-- 问答页：每条回答附依据充分性结论与免责声明，引用角标可点击回溯原文
-- 党员发展页：决策边界声明常驻；规则分析与评分仅供核验，阶段登记必须由有权限的人工确认并记录依据、日期和意见
-- 组织生活页：资料须先保存再处理当前版本；提交人不能自审；审核和归档分别核验权限与条件
-- 登录页与侧栏：声明「辅助不代决」的产品边界
+流程使用合成 API 响应，验证界面和请求契约；真实后端、学校数据和用户验收另行执行。可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定已有 Chromium。历史结果见[测试指南](../docs/TESTING.md)。

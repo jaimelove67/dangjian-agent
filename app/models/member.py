@@ -9,14 +9,16 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, deferred, mapped_column
 
 from app.db.base import Base
 
@@ -27,9 +29,13 @@ class MemberProfile(Base):
     __table_args__ = (
         Index("ix_member_profiles_stage", "tenant_id", "current_stage", "created_at"),
         Index("ix_member_profiles_org_created", "tenant_id", "org_unit_id", "created_at"),
+        UniqueConstraint("tenant_id", "user_id", name="uq_member_profiles_tenant_user"),
     )
 
     name: Mapped[str] = mapped_column(String(50), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
     org_name: Mapped[str] = mapped_column(String(200), nullable=False)
     org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     current_stage: Mapped[str] = mapped_column(String(20), nullable=False, default="applicant")
@@ -62,17 +68,34 @@ class MemberMaterial(Base):
     """材料记录；补交、退回与版本追踪，不能虚构原始文件或通过状态。"""
 
     __tablename__ = "member_materials"
-    __table_args__ = (Index("ix_member_materials_profile", "tenant_id", "profile_id", "stage"),)
+    __table_args__ = (
+        Index("ix_member_materials_profile", "tenant_id", "profile_id", "stage"),
+        Index("ix_member_materials_owner", "tenant_id", "user_id", "created_at"),
+        UniqueConstraint(
+            "tenant_id", "user_id", "submission_key", name="uq_member_material_submission"
+        ),
+    )
 
     profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    stage: Mapped[str] = mapped_column(String(20), nullable=False)
-    material_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+    org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    material_type: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     file_version: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     submit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     submitter_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    category: Mapped[str] = mapped_column(String(30), nullable=False, default="other")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    submission_key: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content: Mapped[bytes | None] = deferred(mapped_column(LargeBinary, nullable=True))
 
 
 class MemberStageHistory(Base):

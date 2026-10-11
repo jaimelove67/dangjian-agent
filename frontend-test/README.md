@@ -1,11 +1,13 @@
 # 党建工作智能体 - 前端测试平台
 
-这是一个用于测试党建工作智能体后端API的前端测试平台。
+更新日期：2026-10-11。此工程保留旧登录/健康检查联调功能；正式业务页面使用 [`frontend/`](../frontend/README.md)，完整启动说明见[运行指南](../docs/RUNNING.md)。
+
+本工程和正式前端默认都占用5666端口，不能同时使用该端口；需要并行时使用 `npm run dev -- --port 5667 --strictPort`。健康接口仅检查存活，业务就绪另请求 `/api/v1/health/ready`。
 
 ## 🚀 快速开始
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -79,7 +81,7 @@ src/
 
 ```bash
 # 安装依赖
-npm install
+npm ci
 
 # 启动开发服务器
 npm run dev

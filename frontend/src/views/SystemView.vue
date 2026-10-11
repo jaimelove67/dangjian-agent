@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
 
 import { checkHealth, checkReady } from '@/api/qa'
 import { API_SURFACE } from '@/api/surface'
@@ -16,15 +15,11 @@ import { session } from '@/stores/session'
  * 系统状态。
  *
  * 三重职责：
- *   1. 后端连通性与就绪状态（真实接口 /health 与 /health/ready）
+ *   1. 后端连通性与就绪状态（管理员接口 /admin/health 与 /admin/health/ready）
  *   2. 当前账号的身份与权限码一览，便于自查"为什么看不到某个菜单"
  *   3. **接口能力矩阵**：把后端"已具备 / 未提供"的接口如实列出来。
- *      这不是开发文档，而是使用者的必要认知：界面上标注"示例数据"的地方，
- *      对应的接口就在这张表里显示为未提供。
+ *      仅平台管理员可查看，用于维护与排查问题。
  */
-
-const route = useRoute()
-const deniedPath = computed(() => (typeof route.query.denied === 'string' ? route.query.denied : ''))
 
 interface Probe {
   label: string
@@ -90,18 +85,6 @@ const CHECK_STATUS: Record<string, string> = { healthy: '正常', unhealthy: '�
         </button>
       </template>
     </PageHeader>
-
-    <!-- 权限不足提示：被路由守卫拦下来时给出可执行的解释 -->
-    <section v-if="deniedPath" class="denied" role="alert">
-      <AppIcon name="shield" :size="16" />
-      <div>
-        <p class="denied__title">无法访问该页面</p>
-        <p class="denied__text">
-          当前账号缺少访问 <code class="u-mono">{{ deniedPath }}</code> 所需的权限。
-          如需开通，请联系本单位组织部门管理员。
-        </p>
-      </div>
-    </section>
 
     <div class="sys__grid">
       <!-- ---------------------------- 连通性 ---------------------------- -->
@@ -298,34 +281,6 @@ const CHECK_STATUS: Record<string, string> = { healthy: '正常', unhealthy: '�
   gap: var(--space-5);
   padding: var(--space-6) var(--space-6) var(--space-10);
   width: 100%;
-}
-
-.denied {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--warn-wash);
-  border: 1px solid var(--warn-edge);
-  border-left-width: 3px;
-  border-radius: var(--radius-sm);
-  color: var(--warn-ink);
-}
-
-.denied__title {
-  font-size: var(--text-base);
-  font-weight: 600;
-}
-
-.denied__text {
-  margin-top: 2px;
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-  color: var(--ink-soft);
-}
-
-.denied code {
-  color: var(--ink);
 }
 
 .sys__grid {

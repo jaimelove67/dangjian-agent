@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
-import { PERM, ROLE_LABELS, type PermissionCode } from '@/api/types'
+import { MEMBER_FUNCTION_PERMISSIONS, PERM, ROLE_LABELS, type PermissionCode, type UserRole } from '@/api/types'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import { session } from '@/stores/session'
 
@@ -11,6 +11,7 @@ interface NavItem {
   label: string
   icon: IconName
   perm?: PermissionCode
+  role?: UserRole
 }
 
 interface NavGroup {
@@ -24,13 +25,20 @@ interface NavGroup {
  */
 const NAV: NavGroup[] = [
   {
+    label: '个人',
+    items: [
+      { to: '/my-archive', label: '本人档案', icon: 'people', perm: PERM.SELF_QUERY, role: 'member' },
+      { to: '/my-materials', label: '个人材料', icon: 'book', perm: PERM.MATERIAL_SUBMIT, role: 'member' },
+    ],
+  },
+  {
     label: '问答',
     items: [{ to: '/ask', label: '制度问答', icon: 'ask', perm: PERM.QA_ASK }],
   },
   {
     label: '资料',
     items: [
-      { to: '/knowledge', label: '知识库', icon: 'book', perm: PERM.KNOWLEDGE_MANAGE },
+      { to: '/knowledge', label: '知识库', icon: 'book', perm: PERM.KNOWLEDGE_QUERY },
     ],
   },
   {
@@ -46,7 +54,7 @@ const NAV: NavGroup[] = [
     label: '系统',
     items: [
       { to: '/governance', label: '管理与审核', icon: 'check', perm: PERM.REVIEW_MANAGE },
-      { to: '/system', label: '系统状态', icon: 'pulse' },
+      { to: '/system', label: '系统状态', icon: 'pulse', role: 'system_admin' },
     ],
   },
 ]
@@ -59,7 +67,11 @@ const signOutError = ref('')
 const visibleGroups = computed(() =>
   NAV.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !item.perm || session.can(item.perm)),
+    items: group.items.filter((item) =>
+      (!item.perm || session.can(item.perm)) &&
+      (session.state.user?.role !== 'member' || !!item.perm && MEMBER_FUNCTION_PERMISSIONS.has(item.perm)) &&
+      (!item.role || session.state.user?.role === item.role),
+    ),
   })).filter((group) => group.items.length > 0),
 )
 

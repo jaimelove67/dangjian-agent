@@ -12,16 +12,16 @@ function ok(data) {
 
 const USER = {
   id: 'u-001',
-  username: 'organizer_wang',
+  username: 'admin_preview',
   name: '王砚秋',
-  role: 'organizer',
+  role: 'system_admin',
   tenant_id: 'tenant-main',
   org_unit_id: 'org-jisuanji',
   email: 'w***@example.edu.cn',
   phone: '138****0000',
 }
 
-const PERMISSIONS = ['qa.ask', 'knowledge.query', 'knowledge.manage', 'member.query', 'member.stage_transition']
+const PERMISSIONS = ['qa.ask', 'knowledge.query', 'knowledge.manage', 'member.query', 'member.stage_transition', 'admin.config']
 
 /** 问答接口：返回一份与真实结构一致的回答 + 引用 */
 const QA_RESPONSE = {
@@ -68,6 +68,8 @@ const routes = [
   { url: '**/api/auth/codes', body: PERMISSIONS },
   { url: '**/api/user/info', body: USER },
   { url: '**/api/qa', body: QA_RESPONSE },
+  { url: '**/api/admin/health', body: { status: 'healthy', service: '党建工作智能体', version: '1.0.0', environment: 'development' } },
+  { url: '**/api/admin/health/ready', body: { status: 'ready', checks: { database: 'healthy', redis: 'healthy', schema: 'healthy', models: 'healthy' }, model_capabilities: { chat: 'configured', embedding: 'configured', reranker: 'configured' } } },
 ]
 
 const pages = [

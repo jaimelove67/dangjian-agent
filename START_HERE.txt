@@ -1,0 +1,16 @@
+文档更新：2026-10-11，以当前本地工作区为依据。
+
+党建工作智能体：从 README.md 开始。
+
+安装与启动：docs/RUNNING.md
+功能与待办：docs/STATUS.md
+测试与验证：docs/TESTING.md
+全部文档导航：docs/README.md
+历史报告索引：docs/archive/README.md
+
+正式前端为 frontend/，默认地址 http://127.0.0.1:5666。
+服务是否运行，以实际启动和 /api/v1/health/ready 检查为准。
+
+当前迁移头：007_assessment，迁移说明：migrations/README.md。
+学习工作台：/study；年度考核：/assessment；实际组织与权限必须先登记。
+历史报告和其他分支的通过记录不代表当前工作区已重新验收。

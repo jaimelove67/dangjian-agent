@@ -11,13 +11,19 @@
 
 export interface ApiSurfaceItem {
   label: string
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   path: string
   purpose: string
   available: boolean
 }
 
 export const API_SURFACE: ApiSurfaceItem[] = [
+  { label: '本人档案', method: 'GET', path: '/api/v1/member/self/archive', purpose: '普通党员按登录账号读取明确关联的本人档案', available: true },
+  { label: '个人材料提交', method: 'POST', path: '/api/v1/member/self/materials', purpose: '私有保存本人原件，支持提交重试，不自动核验或流转', available: true },
+  { label: '本人材料记录', method: 'GET', path: '/api/v1/member/self/materials', purpose: '仅查询本人提交记录', available: true },
+  { label: '本人材料原件', method: 'GET', path: '/api/v1/member/self/materials/{material_id}/file', purpose: '校验登录账号所有权后下载原件', available: true },
+  { label: '关联党员账号', method: 'PUT', path: '/api/v1/member/roster/{profile_id}/account', purpose: '组织人员将授权档案与同组织有效党员账号关联', available: true },
+  { label: '组织接收材料', method: 'GET', path: '/api/v1/member/roster/{profile_id}/materials', purpose: '组织人员按名册授权范围查询提交记录', available: true },
   { label: '文件处理状态', method: 'GET', path: '/api/v1/knowledge-docs/{doc_id}/processing-status', purpose: '查看正文片段处理状态与待处理数量', available: true },
   { label: '元数据维护', method: 'PATCH', path: '/api/v1/knowledge-docs/{doc_id}/metadata', purpose: '修正来源、时效与可见范围并保留理由', available: true },
   { label: '授权原件下载', method: 'GET', path: '/api/v1/knowledge-docs/{doc_id}/file', purpose: '按当前权限下载指定版本原件', available: true },
@@ -88,7 +94,21 @@ export const API_SURFACE: ApiSurfaceItem[] = [
     label: '就绪检查',
     method: 'GET',
     path: '/api/v1/health/ready',
-    purpose: '检查数据库、向量库等依赖是否就绪',
+    purpose: '仅返回整体就绪状态，供部署探针使用',
+    available: true,
+  },
+  {
+    label: '系统运行详情',
+    method: 'GET',
+    path: '/api/v1/admin/health',
+    purpose: '仅平台管理员可查看服务名称、版本与运行环境',
+    available: true,
+  },
+  {
+    label: '系统就绪详情',
+    method: 'GET',
+    path: '/api/v1/admin/health/ready',
+    purpose: '仅平台管理员可查看依赖与模型配置状态',
     available: true,
   },
   {

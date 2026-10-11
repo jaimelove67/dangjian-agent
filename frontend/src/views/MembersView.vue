@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { checkQualification, createMember, getTodoSuggestions, getTransitionSuggestion, listMembers, listMemberOrganizations } from '@/api/member'
 import { ApiError } from '@/api/http'
+import { linkMemberAccount, listSubmittedMaterials, downloadMaterial, MATERIAL_CATEGORIES, type MaterialList, type PersonalMaterial } from '@/api/member-self'
 import type {
   MemberStage,
   MemberRosterItem,
@@ -93,6 +94,55 @@ const MATERIAL_POOL = [
 ]
 
 const selected = computed(() => members.value.find((m) => m.id === selectedId.value) ?? null)
+const personalOpen = ref(false)
+const personalBusy = ref(false)
+const personalError = ref<unknown>(null)
+const personalMessage = ref('')
+const accountUsername = ref('')
+const submittedMaterials = ref<MaterialList | null>(null)
+const materialPage = ref(1)
+
+async function loadSubmitted(): Promise<void> {
+  if (!selected.value) return
+  personalBusy.value = true
+  personalError.value = null
+  const id = selected.value.id
+  try {
+    const data = await listSubmittedMaterials(id, materialPage.value)
+    if (selected.value?.id === id) submittedMaterials.value = data
+  } catch (error) { if (selected.value?.id === id) personalError.value = error }
+  finally { personalBusy.value = false }
+}
+
+function openPersonal(): void {
+  personalOpen.value = !personalOpen.value
+  if (personalOpen.value) void loadSubmitted()
+}
+
+async function linkAccount(): Promise<void> {
+  if (!selected.value || !accountUsername.value.trim() || personalBusy.value) return
+  personalBusy.value = true
+  personalError.value = null
+  const id = selected.value.id
+  try {
+    const profile = await linkMemberAccount(id, accountUsername.value.trim())
+    const index = members.value.findIndex((member) => member.id === id)
+    if (index >= 0) members.value[index] = profile
+    if (selected.value?.id === id) personalMessage.value = '账号已关联，党员可登录查看本人档案并提交材料。'
+  } catch (error) { if (selected.value?.id === id) personalError.value = error }
+  finally { personalBusy.value = false }
+}
+
+async function downloadSubmitted(material: PersonalMaterial): Promise<void> {
+  if (!selected.value || personalBusy.value) return
+  personalBusy.value = true
+  personalError.value = null
+  try { await downloadMaterial(material, selected.value.id) }
+  catch (error) { personalError.value = error }
+  finally { personalBusy.value = false }
+}
+
+function turnMaterialPage(delta: number): void { materialPage.value += delta; void loadSubmitted() }
 
 /** 可选目标阶段：只允许流程中的下一步，避免出现"跳级"这种不存在的情形 */
 const targetOptions = computed(() => {
@@ -178,6 +228,12 @@ async function registerMember(): Promise<void> {
 }
 
 function select(id: string): void {
+  personalOpen.value = false
+  personalError.value = null
+  personalMessage.value = ''
+  accountUsername.value = ''
+  submittedMaterials.value = null
+  materialPage.value = 1
   selectedId.value = id
   qualification.value = null
   transition.value = null
@@ -416,6 +472,37 @@ const todoTone: Record<TodoItem['category'], string> = {
           <MemberFilePanel :key="selected.id" :profile-id="selected.id" @updated="load" @busy="flowBusy = $event" />
           <details class="wb-disclosure"><summary>材料与时限辅助核对</summary>
           <!-- 校验输入 -->
+          <section class="personal-submissions">
+            <button class="btn btn--ghost" :aria-expanded="personalOpen" @click="openPersonal">账号与个人提交</button>
+            <div v-if="personalOpen" class="personal-submissions__body">
+              <h3>本人档案账号关联</h3>
+              <p v-if="selected.user_id" class="u-meta">已关联党员登录账号。</p>
+              <template v-else-if="canCreate">
+                <label class="field" for="account-username">党员登录账号<input id="account-username" v-model="accountUsername" class="input" maxlength="50" placeholder="同一组织内的普通党员账号" :disabled="personalBusy" /></label>
+                <button class="btn btn--primary" :disabled="!accountUsername.trim() || personalBusy" @click="linkAccount">关联本人档案</button>
+              </template>
+              <p v-else class="u-meta">尚未关联账号，请联系具备人员维护权限的组织管理员。</p>
+              <p v-if="personalMessage" role="status">{{ personalMessage }}</p>
+              <ErrorState v-if="personalError" :error="personalError" />
+              <h3>党员提交材料</h3>
+              <p class="u-meta">提交原件供组织核验，不自动计入已具备材料清单。</p>
+              <LoadingBlock v-if="personalBusy" variant="list" :rows="2" />
+              <template v-else>
+                <p v-if="!submittedMaterials?.items.length" class="u-meta">暂无个人提交材料。</p>
+                <article v-for="material in submittedMaterials?.items" :key="material.id">
+                  <strong>{{ material.title }}</strong><p class="u-meta">{{ MATERIAL_CATEGORIES[material.category] }} · {{ material.file_name }} · 已提交，待组织核验</p>
+                  <p v-if="material.description">{{ material.description }}</p>
+                  <button class="btn btn--ghost" @click="downloadSubmitted(material)">下载提交原件</button>
+                </article>
+                <div v-if="submittedMaterials && submittedMaterials.total > 20">
+                  <button class="btn btn--ghost" :disabled="materialPage === 1" @click="turnMaterialPage(-1)">上一页材料</button>
+                  <span>第 {{ materialPage }} 页</span>
+                  <button class="btn btn--ghost" :disabled="materialPage * 20 >= submittedMaterials.total" @click="turnMaterialPage(1)">下一页材料</button>
+                </div>
+                <button v-if="personalError" class="btn btn--ghost" @click="loadSubmitted">重试材料查询</button>
+              </template>
+            </div>
+          </section>
           <div class="form-grid">
             <div class="field">
               <label class="field__label" for="cur">当前阶段</label>
@@ -672,6 +759,10 @@ const todoTone: Record<TodoItem['category'], string> = {
 </template>
 
 <style scoped>
+.personal-submissions { padding: var(--space-4); border-bottom: var(--border); }
+.personal-submissions__body { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-4); }
+.personal-submissions__body .btn { align-self: flex-start; }
+.personal-submissions__body article { padding: var(--space-3); border: var(--border); overflow-wrap: anywhere; }
 .registration__body {
   display: flex;
   flex-direction: column;
