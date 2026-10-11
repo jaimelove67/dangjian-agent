@@ -117,6 +117,8 @@ asyncio_mode = "auto"  # 需要 pytest-asyncio 插件
 # ==================== Coverage 配置 ====================
 [tool.coverage.run]
 source = ["app"]
+# FastAPI uses threads and SQLAlchemy async sessions switch through greenlets.
+concurrency = ["thread", "greenlet"]
 omit = [
     "*/tests/*",
     "*/migrations/*",
