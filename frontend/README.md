@@ -20,6 +20,7 @@ npm --prefix frontend run build
 | 路由 | 功能 | 当前边界 |
 | --- | --- | --- |
 | `/login` | 登录与会话恢复 | 需要已登记用户、后端与 Redis |
+| `/admin` | 系统管理员默认工作台：实际概况、待处理项、常用入口和最近操作 | 仅 `system_admin`；概况限当前单位，运行状态独立检测 |
 | `/ask` | 引用问答、会话及持久历史 | 非流式，语义质量需真实评测 |
 | `/my-archive` | 本人档案查询 | 仅普通党员；组织人员明确关联账号后可读，不按姓名匹配 |
 | `/my-materials` | 个人材料提交、记录与原件下载 | 仅普通党员；私有原件不进入知识库，提交不等于组织核验 |
@@ -27,29 +28,34 @@ npm --prefix frontend run build
 | `/members` | 授权名册、登记、账号关联、提交原件查询及规则建议 | 组织人员按授权范围操作；没有自动阶段变更、评分或档案检查工作台 |
 | `/study` | 年度计划、材料、提纲、参学、纪要审核、归档与 TXT 导出 | 独立人员审核，归档需要学校效力确认 |
 | `/assessment` | 指标版本、任务、归集、佐证、审核、计划、提醒与目录 ZIP | 真实指标须人工登记；导出不含原文件附件 |
-| `/accounts` | 系统管理员创建登录账号，设置角色、密码与所属组织 | 仅 `system_admin`；账号与组织限当前租户，不创建租户或组织 |
-| `/system` | 服务状态与接口能力矩阵 | 仅平台管理员（`system_admin`）可访问；就绪不等于业务验收 |
+| `/accounts` | 搜索、分页、开户、姓名/角色/组织编辑、启停与密码重置 | 仅 `system_admin`；安全变更使旧登录失效，禁止停用自己或修改自己的角色 |
+| `/organizations` | 学校、院系、支部结构与账号计数；登记和名称维护 | 限当前单位；不移动或删除组织 |
+| `/audit` | 按账号、北京时间日期、操作与对象筛选日志，分页查看详情 | 仅系统管理员；只读，范围限当前单位 |
+| `/system` | 服务状态、单位检索/业务配置与接口能力矩阵 | 仅 `system_admin`；就绪不等于业务验收 |
 | `/forbidden` | 权限不足提示与返回问答入口 | 无权限访问页面时进入此页，不请求系统信息 |
 
 菜单与守卫使用 `src/api/types.ts` 中的权限码；系统入口与路由直接限定 `system_admin` 角色。服务端仍负责租户、组织及资料授权。完整范围见[项目状态](../docs/STATUS.md)。
 
 普通党员端仅提供本人档案、个人材料、制度问答三个功能。党员没有 `knowledge.query` 或组织管理权限，直接访问知识库或管理工作台也会被拒绝。问答仍依据公共政策和本校授权资料，使用 `qa.ask` 权限；申请人的原有公共资料查询范围保持。系统页面及 `/api/v1/admin/health*` 详情直接校验平台管理员角色（`system_admin`），校级及院系管理员也不能查看；其他角色即使收到 `admin.config` 权限码，也不会显示系统入口或获得详情访问权。
 
-应用迁移 `012_member_self` 后，组织人员在 `/members` 选中本人台账，打开“账号与个人提交”，输入同一组织的有效普通党员登录账号并关联。已有档案不自动绑定，已有不同账号关联不能覆盖。材料默认限 10MB，原件存于私有数据库表；提交记录与组织登记的已具备材料分开，不自动核验、流转或向外部模型发送。
+应用迁移 `008_member_self` 后，组织人员在 `/members` 选中本人台账，打开“账号与个人提交”，输入同一组织的有效普通党员登录账号并关联。已有档案不自动绑定，已有不同账号关联不能覆盖。材料默认限 10MB，原件存于私有数据库表；提交记录与组织登记的已具备材料分开，不自动核验、流转或向外部模型发送。
 
-系统管理员在“系统 → 创建账号”开通账号，输入用户名、姓名、密码与确认密码，选择角色和有效组织。默认角色为普通党员；学校/院系管理员分别绑定学校/院系，支部书记、组织员、党员及申请人绑定支部。密码至少 8 个字符且不超过 72 个 UTF-8 字节，仅以 bcrypt 哈希保存，创建结果不返回密码。失败时保留表单，成功后清空用户名、姓名和密码。用户名全局唯一，重复创建返回冲突；普通党员开户后仍需在名册中明确关联本人档案。
+系统管理员登录后默认进入 `/admin` 管理首页；明确指定的登录回跳地址仍保留。其他角色默认入口继续为制度问答。管理员从“管理工作台 → 账号管理 → 创建账号”开通账号，输入用户名、姓名、密码与确认密码，选择角色和有效组织。默认角色为普通党员；学校/院系管理员分别绑定学校/院系，支部书记、组织员、党员及申请人绑定支部。密码至少 8 个字符且不超过 72 个 UTF-8 字节，仅以 bcrypt 哈希保存，创建结果不返回密码。失败时保留表单，成功后清空用户名、姓名和密码。用户名全局唯一，重复创建返回冲突；普通党员开户后仍需在名册中明确关联本人档案。
+
+先应用迁移 `009_admin_workspace`，再启动新版后端。账号权限、组织、状态或密码变更会更新持久会话版本，使访问及刷新令牌失效；重新启用不会恢复旧令牌。已关联本人档案的账号不能直接调整角色或组织，避免改变档案归属。管理员重置自己的密码会退出并返回登录页。组织按学校→院系→支部登记，修改名称会同步同单位名册；若旧初始化账号所属单位未登记，首次登记学校仅补齐当前登录单位。工作台不读取个人原件或私人问答。
 
 ## 工程结构
 
 ```text
-src/api/          类型、HTTP 封装及 auth/qa/knowledge/member/study/assessment 接口
-src/components/   图标、引用卡、页头及加载/错误/空状态
+src/api/          类型、HTTP 封装及 auth/qa/knowledge/member/member-self/study/assessment/admin 接口
+src/components/   图标、引用卡、页头、状态块、AccountCreateForm及AdminSettingsPanel
 src/layouts/      AppShell
 src/router/       路由与权限守卫
 src/stores/       会话、用户与权限
-src/styles/       tokens.css、base.css
+src/utils/        管理表单与展示辅助
+src/styles/       tokens.css、base.css、admin.css
 src/views/        正式业务页面
-tests/           business/study/assessment 业务流程与 role-access 角色权限回归
+tests/            business/study/assessment、member-self、role-access、admin-accounts/admin-workspace
 scripts/          设计与页面截图
 ```
 
@@ -72,6 +78,9 @@ node tests/assessment-workflows.mjs
 node tests/role-access.mjs
 node tests/member-self-workflows.mjs
 node tests/admin-accounts.mjs
+node tests/admin-workspace.mjs
 ```
 
 流程使用合成 API 响应，验证界面和请求契约；真实后端、学校数据和用户验收另行执行。可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定已有 Chromium。历史结果见[测试指南](../docs/TESTING.md)。
+
+管理员与党员的具体使用顺序见[管理与党员自助指南](../docs/ADMINISTRATION.md)。

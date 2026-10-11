@@ -16,6 +16,7 @@
 | [开发规范](../开发规范文档.md) | 代码、接口、安全与协作约定 |
 | [需求清单](../require.txt) | 原始需求 |
 | [正式前端说明](../frontend/README.md) | 前端结构与设计约定 |
+| [管理与党员自助](ADMINISTRATION.md) | 平台管理、账号/组织、会话吊销、本人档案与私有材料的使用边界 |
 | [数据库迁移](../migrations/README.md) | 当前迁移链、旧库接管与删表风险 |
 | [Docker 部署](../deploy/docker/README.md) | 容器部署与运维命令 |
 | [镜像源排障](../deploy/docker/MIRROR_GUIDE.md) | 镜像拉取与构建问题 |

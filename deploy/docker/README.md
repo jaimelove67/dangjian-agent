@@ -36,7 +36,7 @@ docker compose exec app python -m alembic current
 docker compose ps
 ```
 
-应用以非 root `appuser` 运行，`ENV=production` 强制关闭 DEBUG。迁移不自动执行，当前唯一头为 `007_assessment`。[迁移指南](../../migrations/README.md)说明旧库接管；`init_db.sql` 只在空数据卷首次启动时运行，不能替代 Alembic。
+应用以非 root `appuser` 运行，`ENV=production` 强制关闭 DEBUG。迁移不自动执行，当前唯一头为 `009_admin_workspace`。[迁移指南](../../migrations/README.md)说明旧库接管；`init_db.sql` 只在空数据卷首次启动时运行，不能替代 Alembic。
 
 正式前端执行 `npm --prefix frontend ci` 和 `npm --prefix frontend run build`，托管 `frontend/dist/`，配置 SPA 路由回退及 `/api` 到后端 `/api/v1` 的代理。Dockerfile 只打包后端，Compose 没有前端、HTTPS 或反向代理服务。
 
@@ -64,7 +64,7 @@ docker compose exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping'
 
 开发 Docker 命令加 `-f docker-compose.dev.yml`，数据库名改为 `party_agent_dev`，Redis 使用 `redis-cli ping`。
 
-`ready` 检查 Redis、数据库、六张核心表/全文检索和模型注册，不检查完整迁移链、学习/考核表或实际云调用。200 不能代替 `alembic current`、真实模型和业务验收。认证存储故障时不能绕过 Redis 登录。
+`ready` 检查Redis、数据库、六张核心表/全文检索、`users.auth_version`与模型注册，只返回整体状态。平台管理员通过 `/api/v1/admin/health/ready` 查看依赖详情；不检查完整迁移链、学习/考核表或实际云调用。200 不能代替 `alembic current`、真实模型和业务验收。认证存储故障时不能绕过 Redis 登录。
 
 云端接入不需要 `/models` 挂载。排障只检查必要项，避免输出完整环境变量中的密码、令牌和 API Key。镜像拉取问题见[镜像源指南](MIRROR_GUIDE.md)。
 
@@ -78,7 +78,9 @@ docker compose exec -T postgres pg_dump -U party_user -d party_agent > backup.sq
 docker compose exec -T postgres psql -U party_user -d party_agent < backup.sql
 ```
 
-同时记录部署代码和迁移版本。备份加密、位置、保留期及 Redis 恢复以实际运维方案为准。Redis 已启用 AOF，仓库没有已验证的自动备份恢复脚本。
+先应用 `008_member_self` 和 `009_admin_workspace` 再启动新版。前者增加本人档案账号关联与私有材料，后者增加持久会话版本；普通党员既有档案不会自动关联。
+
+同时记录部署代码和迁移版本，数据库备份须覆盖 `member_materials` 的私有原件。备份加密、位置、保留期及 Redis 恢复以实际运维方案为准。Redis 已启用 AOF，仓库没有已验证的自动备份恢复脚本。
 
 升级先备份并核对兼容性，再构建、在维护窗口迁移、重启和核对核心业务。回滚须匹配代码和数据库结构，不能只切回代码就假定兼容。
 

@@ -1,6 +1,6 @@
 # 测试指南
 
-文档更新日期：2026-10-11。测试代码与样本保留在 `tests/`，历史测试报告见[归档](archive/README.md)。本次党员端的实际验证见“党员端与系统权限回归”；其他段落的历史测试数字仍限于注明的原执行日期和被测工作区。
+文档更新日期：2026-10-11。测试代码与样本保留在 `tests/`，历史测试报告见[归档](archive/README.md)。党员端与管理员的已有验证见下方对应段落；本轮文档更新只核对现有XML与代码，没有重跑业务测试。其他段落的历史测试数字仍限于注明的原执行日期和被测工作区。
 
 ## 执行命令
 
@@ -52,12 +52,24 @@ node tests/assessment-workflows.mjs
 node tests/role-access.mjs
 node tests/member-self-workflows.mjs
 node tests/admin-accounts.mjs
+node tests/admin-workspace.mjs
 ```
 
 流程使用合成 API 响应；需要可用的 Playwright Chromium，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定。`frontend/scripts/screenshot-pages.mjs` 使用拦截响应生成设计截图，适合版面检查；真实业务联调需要实际后端、数据库、Redis 与模型调用。
 
-## 业务评测
+## 系统管理员工作台回归（2026-10-11）
 
+工作台以 `/admin` 为系统管理员默认首页，覆盖真实管理摘要、账号分页/搜索/编辑/启停/密码重置、组织登记/名称维护、审计筛选和单位配置。其他角色继续使用原业务入口；管理路由和接口直接限制 `system_admin`，资料范围限当前单位。
+
+- 后端执行以下范围，179 通过、0 失败、0 跳过：`tests/integration/test_admin_accounts.py`、`test_admin_workspace.py`、`test_auth_lifecycle.py`、`test_auth_api.py`、`test_member_self_service.py`，以及 `tests/security/test_system_access.py`、`test_permission.py`、`test_tenant_isolation.py` 和 `tests/unit/test_migrations.py`。工作台专项使用实际 JWT、HTTP、SQLite ORM 和事务，验证跨单位隔离、角色门禁、旧访问/刷新令牌失效、重启用不会恢复旧登录、审计失败回滚、组织层级及北京时间日期边界。取得管理锁后的身份复核使用模拟并发变更，未验证 PostgreSQL 锁竞争。
+- 结果位于 `tmp/test-results/admin-workspace-isolated.xml`。测试进程清空 `DASHSCOPE_API_KEY` 和 `QWEN_API_KEY`，没有调用云端模型。
+- `npm --prefix frontend run typecheck` 和 `npm --prefix frontend run build -- --configLoader native` 通过；相关新增 Python 代码 Ruff 检查通过，`git diff --check` 通过。
+- `node frontend/tests/admin-workspace.mjs` 11 组、`admin-accounts.mjs` 7 组、`role-access.mjs` 18 组浏览器检查通过，共 36 组；使用合成 API 响应，验证默认首页与登录回跳、六种其他角色的门禁、失败重试、表单确认及提交保护、本人密码重置退出与 390px 移动布局。截图位于 `tmp/test-results/admin-workspace/` 和 `tmp/test-results/admin-accounts/`，桌面及移动首页已人工查看。
+- 扩大范围时，`tests/integration/test_selected_business_features.py` 的 30 项用例因 PostgreSQL 连接被拒绝而在准备阶段报错，记录位于 `tmp/test-results/admin-workspace-backend.xml`。不计为通过；该数据库相关范围、真实账号联调和业务库迁移未执行。
+
+上线或启动新版后端前，先按[迁移指南](../migrations/README.md)升级至 `009_admin_workspace`；本次仅渲染 PostgreSQL 离线迁移 SQL，没有修改业务数据库。
+
+## 业务评测
 后端就绪后，通过进程环境变量 `EVALUATION_ACCESS_TOKEN` 提供已有登录令牌，再执行：
 
 ```bash
@@ -77,7 +89,7 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 - `node tests/member-self-workflows.mjs`：4组检查通过，覆盖三个功能菜单、只读本人档案、原件提交、失败保留输入、提交重试编号、刷新后记录、下载原件、未关联门禁及移动布局。`role-access` 覆盖七种角色、系统页直达及授权异常；原有 business（含账号关联）、study、assessment 三个工作流也通过。
 - `test_member_self_service.py` 使用实际 HTTP、SQLite 表和 ORM 事务，覆盖明确账号关联、同名、跨账号/租户、文件大小/格式、下载、重复与唯一约束竞争、组织接收范围。PostgreSQL 迁移 SQL 离线渲染通过；系统 HTTP 测试使用替代探针。
 
-浏览器 API 为合成响应；本次截图保存在 `tmp/test-results/member-self/`。未执行真实账号联调、真实 PostgreSQL 升级、数据库集成全套或发布部署。迁移 `012_member_self` 应用后，组织人员还需在名册中明确关联现有登录账号，不会自动推断关联关系。
+浏览器 API 为合成响应；本次截图保存在 `tmp/test-results/member-self/`。未执行真实账号联调、真实 PostgreSQL 升级、数据库集成全套或发布部署。迁移 `008_member_self` 应用后（当前迁移编号，替代旧分支记录中的 `012_member_self`），组织人员还需在名册中明确关联现有登录账号，不会自动推断关联关系。
 
 ## 已有验证记录
 
@@ -134,3 +146,16 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 - 浏览器测试指定本机已安装的 Chromium，并在允许启动浏览器子进程的环境执行；没有浏览器运行错误或意外接口请求。
 
 开户复用现有用户表，无新增数据库迁移。未在业务库创建实际账号，未执行生产部署、真实 PostgreSQL 并发或负载测试；正式租户/组织与真实账号人工验收仍需完成。
+
+## 本轮文档证据核对（2026-10-11）
+
+按当前工作区读取以下已有JUnit XML，未重新执行对应测试：
+
+| 已有结果文件 | XML计数 | 适用边界 |
+| --- | --- | --- |
+| `tmp/test-results/admin-workspace-isolated.xml` | 179测试、0失败、0错误、0跳过 | SQLite HTTP/JWT等隔离回归；不代表全项目或PostgreSQL验收 |
+| `tmp/test-results/admin-workspace-backend.xml` | 205测试、0失败、30准备错误、0跳过 | 包含PostgreSQL连接被拒绝的30项，不能称全部通过 |
+| `tmp/test-results/admin-accounts-api.xml` | 43测试、0失败、0错误、0跳过 | 已有开户专项 |
+| `tmp/test-results/admin-accounts-regression.xml` | 122测试、0失败、0错误、0跳过 | 后续扩展的相关回归，不覆盖全部数据库范围 |
+
+各文件可包含重复用例，不能相加成互不重叠的通过总数。此前“91项”等记录属于当时单独执行范围，不改写成后来文件计数。当前管理员工作台还有未提交代码，以上结果与文档只能用于注明的本地工作区。

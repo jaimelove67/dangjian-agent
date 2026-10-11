@@ -34,7 +34,7 @@
 
    使用已有服务时以实际连接参数为准，避免端口冲突。
 
-4. 对新建或已迁移的数据库执行迁移，当前迁移头为 `012_member_self`（包含组织生活、学习、年度考核、治理和党员本人档案/材料）：
+4. 对新建或已迁移的数据库执行迁移，当前迁移头为 `009_admin_workspace`（包含学习、年度考核、党员本人档案/材料与管理员工作台会话版本）：
 
    ```powershell
    .\.venv\Scripts\python.exe -m alembic upgrade head
@@ -59,10 +59,11 @@ curl http://127.0.0.1:8000/api/v1/health/ready
 
 - `live` 只检查进程存活；`ready` 检查数据库、核心结构、Redis 与模型注册，缺少依赖时返回 503。
 - 公开健康接口仅返回整体 `status`。服务名称、版本和运行环境见 `/api/v1/admin/health`，依赖与模型配置详情见 `/api/v1/admin/health/ready`；两者均要求平台管理员登录令牌，其他角色返回 403。平台管理员可在前端“系统状态”页查看详情。
-- `ready` 只检查六张基础核心表与全文检索，不核对学习/考核表或完整迁移头；业务使用前仍需执行 `python -m alembic current`。200 也不代表实际云调用或答案质量已验收，见[测试指南](TESTING.md)。
+- `ready` 检查六张基础核心表、全文检索和用户 `auth_version` 字段，不核对学习/考核表或完整迁移头；业务使用前仍需执行 `python -m alembic current`。200 也不代表实际云调用或答案质量已验收，见[测试指南](TESTING.md)。
 - API 文档位于 `/docs`，仅在开发调试 `DEBUG=true` 时启用。
 - 登录需要已登记的用户；正式账号应关联实际组织与租户。
-- 已有系统管理员登录后，可在“系统 → 创建账号”（`/accounts`）开通本租户账号，设置用户名、姓名、角色、所属组织和密码。创建需要有效组织；学校/院系管理员分别绑定学校/院系，其他组织角色及普通党员、申请人绑定支部。密码至少 8 个字符且不超过 72 个 UTF-8 字节，无默认密码。创建成功即可登录；普通党员使用本人档案及材料功能前还需关联名册档案。
+- 已有系统管理员登录后，可在“管理工作台 → 账号管理 → 创建账号”（`/accounts`）开通本租户账号，设置用户名、姓名、角色、所属组织和密码。创建需要有效组织；学校/院系管理员分别绑定学校/院系，其他组织角色及普通党员、申请人绑定支部。密码至少 8 个字符且不超过 72 个 UTF-8 字节，无默认密码。创建成功即可登录；普通党员使用本人档案及材料功能前还需关联名册档案。
+- 新版后端启动前先迁移到 `009_admin_workspace`。系统管理员默认进入 `/admin`，可搜索/调整/启停账号和重置密码、登记组织、查询 `/audit` 日志及维护 `/system` 配置。重置密码、启停和角色/组织变化均使旧登录失效；管理员重置自己的密码需重新登录。
 - 培养对象登记需要真实学校、院系、支部记录；组织角色还需绑定正确的 `org_unit_id`。未配置组织时，页面会给出提示。
 - `frontend-test/` 是旧登录联调辅助工程，正式业务页面使用 `frontend/`。
 
@@ -82,14 +83,14 @@ python -m alembic -x adopt_existing_users=true upgrade head
 
 ## 开发账号与合成数据
 
-首次没有任何系统管理员账号时，开发环境仍需按下方脚本初始化；已有管理员后优先使用页面开户。页面和后端开户接口适用于正常运行环境，`scripts/create_test_user.py` 的限制仅针对开发脚本。开户功能不负责初始化租户或组织。
+首次没有任何系统管理员账号时，开发环境在已有测试租户/组织上可按下方 `--role system_admin` 脚本初始化；已有管理员后优先使用页面开户。页面和后端开户接口适用于正常运行环境，`scripts/create_test_user.py` 的限制仅针对开发脚本。工作台组织管理（`/organizations`）可登记当前单位的学校、院系与支部；旧脚本创建的管理员若所属单位记录缺失，首次登记学校只补齐其登录所属单位，不能指定其他租户。
 
 先准备有效测试租户和组织。以下脚本只允许 `ENV=development/testing`；使用专用开发库，不导入真实人员资料。
 
 ```bash
-python scripts/create_test_user.py --username test-reviewer --tenant TEST_TENANT --org-unit-id TEST_ORG --role school_admin
+python scripts/create_test_user.py --username test-admin --tenant TEST_TENANT --org-unit-id TEST_ORG --role system_admin
 python scripts/seed_member_profiles.py --tenant TEST_TENANT --org-unit-id TEST_BRANCH
-python scripts/seed_knowledge_docs.py --username test-reviewer
+python scripts/seed_knowledge_docs.py --username test-admin
 ```
 
 密码省略时交互输入，没有默认管理员密码。账号脚本不负责创建租户/组织；名册脚本要求有效支部，已有名册时跳过。知识脚本导入未核验演示资料，不属于批准的权威知识基线；只有加 `--embed` 才请求云端向量化，可能产生费用。正式组织、人员与年度指标应人工核对后登记。
@@ -99,3 +100,5 @@ python scripts/seed_knowledge_docs.py --username test-reviewer
 ## 容器部署
 
 完整开发容器启动、生产部署、备份与排障统一见 [Docker 指南](../deploy/docker/README.md)；镜像拉取问题见[镜像源指南](../deploy/docker/MIRROR_GUIDE.md)。
+
+管理操作、账号会话吊销及党员材料使用顺序见[管理与党员自助指南](ADMINISTRATION.md)。脚本不负责从空库创建租户和组织，生产初始账号需按已批准的初始化流程建立。

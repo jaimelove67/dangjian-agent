@@ -4,7 +4,7 @@
 
 ## 当前迁移链
 
-当前唯一头为 `008_member_self`，文件编号和 revision 不完全相同：
+当前唯一头为 `009_admin_workspace`，文件编号和 revision 不完全相同：
 
 | revision | 内容 |
 | --- | --- |
@@ -16,6 +16,7 @@
 | `006` | `study_plans`、`study_plan_items`、`meeting_records`、`content_revisions` |
 | `007_assessment` | 指标、任务、佐证、归集版本、计划、学校策略、提醒、归档八张考核表 |
 | `008_member_self` | 名册与登录账号的唯一关联、私有个人材料表及提交重试唯一约束；保留既有档案，不自动按姓名匹配 |
+| `009_admin_workspace` | 用户持久会话版本 `auth_version`，默认 0 保留既有账号；管理安全变更后使旧访问及刷新令牌失效 |
 
 ## 应用与核对
 
@@ -35,7 +36,7 @@ docker compose -f docker-compose.dev.yml exec app python -m alembic upgrade head
 docker compose -f docker-compose.dev.yml exec app python -m alembic current
 ```
 
-生产容器去掉 `-f docker-compose.dev.yml`。应用启动不会自动执行迁移；`/api/v1/health/ready` 只核对基础核心表与全文检索，不核对学习/考核表及完整迁移头，仍须检查 `alembic current`。
+生产容器去掉 `-f docker-compose.dev.yml`。应用启动不会自动执行迁移；`/api/v1/health/ready` 核对基础核心表、全文检索与用户会话版本字段，不核对学习/考核表及完整迁移头，仍须检查 `alembic current`。
 
 ## 旧数据库接管
 
