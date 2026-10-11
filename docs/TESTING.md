@@ -51,6 +51,7 @@ node tests/study-workflows.mjs
 node tests/assessment-workflows.mjs
 node tests/role-access.mjs
 node tests/member-self-workflows.mjs
+node tests/admin-accounts.mjs
 ```
 
 流程使用合成 API 响应；需要可用的 Playwright Chromium，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定。`frontend/scripts/screenshot-pages.mjs` 使用拦截响应生成设计截图，适合版面检查；真实业务联调需要实际后端、数据库、Redis 与模型调用。
@@ -121,3 +122,15 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 [模块4/5审查](MODULE4_MODULE5_REVIEW_2026-10-10.md)记录独立分支 `codex/modules4-5-review-20261010` 的最终整合：422通过、0失败、1跳过，缺少 `pypdf`；未验证覆盖率、mypy、锁定Python3.11环境或生产部署。这是历史分支结果，本次没有重跑或将其视为当前工作区验收。
 
 [模块1—3审查](MODULE1_MODULE2_MODULE3_REVIEW_2026-10-10.md)针对另一固定上传版本和独立修补分支，包含本工作区没有的文件存储、全流程党员发展与独立组织生活代码。报告的测试数和修补不能直接套用到当前项目。以实际检出的代码、明确版本和新执行日志为准。
+
+## 系统管理员开户回归
+
+2026-10-11，当前工作区新增 `/accounts`、`POST /api/v1/admin/users` 和 `GET /api/v1/admin/org-units`。测试进程清空云端密钥；使用合成人员、实际 SQLite ORM、真实 JWT 鉴权及内存吊销存储，不连接业务数据库或 Redis。
+
+- `tests/integration/test_admin_accounts.py`：43 项通过，覆盖七种角色分配、未登录和非系统管理员拒绝、跨租户/已删除组织拦截、角色与组织类型、输入校验、不回显密码、重名与唯一性冲突恢复、失败事务回滚、审计以及创建后登录。并发冲突通过模拟预检查后插入同名账号并由实际 SQLite 唯一约束验证。
+- 与 `tests/security/test_system_access.py`、`tests/security/test_permission.py` 和 `tests/unit/test_migrations.py` 一并执行：91 项通过；这是相关回归，未重跑全项目测试，未执行真实 PostgreSQL 升级。
+- `npm --prefix frontend run typecheck` 与 `npm --prefix frontend run build` 通过；构建在允许 Vite 启动子进程的环境执行。
+- `node frontend/tests/admin-accounts.mjs` 的 7 组流程通过，使用合成 API 响应，覆盖六种其他角色的菜单/路由拒绝、角色组织选择、Unicode 密码边界及确认、重名后修正、重复提交拦截、成功后清空凭证、组织加载重试和空组织阻止开户。桌面与 390px 手机截图已检查，位于 `tmp/test-results/admin-accounts/`。
+- 浏览器测试指定本机已安装的 Chromium，并在允许启动浏览器子进程的环境执行；没有浏览器运行错误或意外接口请求。
+
+开户复用现有用户表，无新增数据库迁移。未在业务库创建实际账号，未执行生产部署、真实 PostgreSQL 并发或负载测试；正式租户/组织与真实账号人工验收仍需完成。
