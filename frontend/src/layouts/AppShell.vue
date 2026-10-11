@@ -51,7 +51,10 @@ const NAV: NavGroup[] = [
   },
   {
     label: '系统',
-    items: [{ to: '/system', label: '系统状态', icon: 'pulse', role: 'system_admin' }],
+    items: [
+      { to: '/accounts', label: '创建账号', icon: 'people', role: 'system_admin' },
+      { to: '/system', label: '系统状态', icon: 'pulse', role: 'system_admin' },
+    ],
   },
 ]
 

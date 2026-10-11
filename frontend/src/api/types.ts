@@ -90,6 +90,25 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   applicant: '申请人',
 }
 
+/** app/schemas/admin.py —— 账号归属由系统管理员登录态确定。 */
+export interface AccountCreateRequest {
+  username: string
+  name: string
+  password: string
+  role: UserRole
+  org_unit_id: string
+}
+
+export interface AccountOrgOption {
+  id: string
+  name: string
+  org_type: 'school' | 'department' | 'branch'
+}
+
+export interface AccountCreated extends UserInfo {
+  org_name: string
+}
+
 /** app/core/security.py::Permission —— 前端仅用于按权限显隐，不代替服务端校验 */
 export type PermissionCode =
   | 'qa.ask'
