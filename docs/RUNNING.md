@@ -99,3 +99,5 @@ python scripts/seed_knowledge_docs.py --username test-reviewer
 ## 容器部署
 
 完整开发容器启动、生产部署、备份与排障统一见 [Docker 指南](../deploy/docker/README.md)；镜像拉取问题见[镜像源指南](../deploy/docker/MIRROR_GUIDE.md)。
+
+管理与本人资料使用见[指南](ADMINISTRATION.md)。主分支迁移至 `012_member_self`，本地 `009_admin_workspace` 与该迁移链不同，不能直接用于主分支；扩展工作台需先重新编排迁移并合入代码。

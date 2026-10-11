@@ -36,7 +36,7 @@ docker compose exec app python -m alembic current
 docker compose ps
 ```
 
-应用以非 root `appuser` 运行，`ENV=production` 强制关闭 DEBUG。迁移不自动执行，当前唯一头为 `007_assessment`。[迁移指南](../../migrations/README.md)说明旧库接管；`init_db.sql` 只在空数据卷首次启动时运行，不能替代 Alembic。
+应用以非 root `appuser` 运行，`ENV=production` 强制关闭 DEBUG。迁移不自动执行，当前唯一头为 `012_member_self`。[迁移指南](../../migrations/README.md)说明旧库接管；`init_db.sql` 只在空数据卷首次启动时运行，不能替代 Alembic。
 
 正式前端执行 `npm --prefix frontend ci` 和 `npm --prefix frontend run build`，托管 `frontend/dist/`，配置 SPA 路由回退及 `/api` 到后端 `/api/v1` 的代理。Dockerfile 只打包后端，Compose 没有前端、HTTPS 或反向代理服务。
 

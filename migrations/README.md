@@ -62,3 +62,7 @@ python -m alembic show head
 人工检查生成结果的租户字段、外键、索引、默认值及数据影响，保持连续单头。`downgrade` 可能删除表，应先在独立库验证；空表回退不能证明已有数据可安全回退。生产回滚须匹配代码、结构和已确认的备份恢复方案。
 
 学习和考核迁移历史证据来自独立测试库，不代表业务库已升级。验证边界见[测试指南](../docs/TESTING.md)。
+
+## 文档分支合并说明
+
+本次保留主分支的 `008_org_life_tasks → 009_member_workflow → 010_security_governance → 011_governance_timestamps → 012_member_self` 连续迁移链。本地工作台的 `008_member_self/009_admin_workspace` 属于另一开发基线，没有合入此主分支，不能替代以上迁移。新增会话版本能力须另行设计兼容迁移，不能直接复制旧编号脚本。
