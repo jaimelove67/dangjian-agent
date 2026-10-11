@@ -1,6 +1,10 @@
 """共用活动记录；中心组学习与组织生活复用同一记录、原文和审核版本。"""
 
-from sqlalchemy import JSON, Column, Date, DateTime, Index, Integer, String, Text, UniqueConstraint
+from datetime import date, datetime
+from typing import Any
+
+from sqlalchemy import JSON, Date, DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
@@ -12,26 +16,26 @@ class MeetingRecord(Base):
     __mapper_args__ = {"eager_defaults": True}
     __table_args__ = (Index("ix_meeting_scope_date", "tenant_id", "org_unit_id", "held_on"),)
 
-    org_unit_id = Column(String(36), nullable=False)
-    activity_type = Column(String(40), nullable=False)
-    title = Column(String(300), nullable=False)
-    scheduled_on = Column(Date, nullable=False)
-    held_on = Column(Date, nullable=True)
-    host = Column(String(100), nullable=False, default="")
-    participants = Column(JSON, nullable=False, default=list)
-    source_doc_ids = Column(JSON, nullable=False, default=list)
-    sources = Column(JSON, nullable=False, default=list)
-    context = Column(JSON, nullable=False, default=dict)
-    transcript = Column(Text, nullable=False, default="")
-    minutes = Column(JSON, nullable=False, default=dict)
-    revision = Column(Integer, nullable=False, default=1)
-    review_status = Column(String(20), nullable=False, default="draft")
-    submitted_by = Column(String(36), nullable=True)
-    reviewed_by = Column(String(36), nullable=True)
-    reviewed_at = Column(DateTime, nullable=True)
-    review_comment = Column(Text, nullable=False, default="")
-    archived_at = Column(DateTime, nullable=True)
-    archive_policy_version = Column(Integer, nullable=True)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    activity_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    scheduled_on: Mapped[date] = mapped_column(Date, nullable=False)
+    held_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    host: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    participants: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
+    source_doc_ids: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
+    sources: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
+    context: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    transcript: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    minutes: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    submitted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archive_policy_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class MeetingTask(Base):
@@ -44,18 +48,20 @@ class MeetingTask(Base):
         Index("ix_meeting_tasks_record", "tenant_id", "record_id"),
     )
 
-    record_id = Column(String(36), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    task_text = Column(Text, nullable=False)
-    source_start = Column(Integer, nullable=False)
-    source_end = Column(Integer, nullable=False)
-    owner_name = Column(String(100), nullable=False, default="")
-    due_on = Column(Date, nullable=True)
-    status = Column(String(20), nullable=False, default="pending")  # pending/active/done/cancelled
-    confirmed_by = Column(String(36), nullable=True)
-    confirmed_at = Column(DateTime, nullable=True)
-    handled_at = Column(DateTime, nullable=True)
-    handle_note = Column(Text, nullable=False, default="")
+    record_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    task_text: Mapped[str] = mapped_column(Text, nullable=False)
+    source_start: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    owner_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    due_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # pending/active/done/cancelled
+    confirmed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    handle_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class ContentRevision(Base):
@@ -70,10 +76,10 @@ class ContentRevision(Base):
         Index("ix_content_revision_resource", "tenant_id", "resource_type", "resource_id"),
     )
 
-    resource_type = Column(String(40), nullable=False)
-    resource_id = Column(String(36), nullable=False)
-    revision = Column(Integer, nullable=False)
-    action = Column(String(30), nullable=False)
-    actor_id = Column(String(36), nullable=False)
-    reason = Column(Text, nullable=False)
-    snapshot = Column(JSON, nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    action: Mapped[str] = mapped_column(String(30), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot: Mapped[Any] = mapped_column(JSON, nullable=False)

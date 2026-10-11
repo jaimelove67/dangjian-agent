@@ -25,7 +25,7 @@ class CloudHTTPProvider(BaseModelProvider):
                 timeout=settings.MODEL_TIMEOUT_SECONDS, follow_redirects=False
             ) as client:
                 response = await client.post(
-                    self.config.endpoint,
+                    self.config.endpoint or "",
                     headers={"Authorization": f"Bearer {self.config.api_key}"},
                     json=payload,
                 )
@@ -40,10 +40,10 @@ class CloudHTTPProvider(BaseModelProvider):
         except (httpx.HTTPError, ValueError):
             raise ModelUnavailableError("云端模型连接失败或响应无效") from None
 
-    async def generate(self, prompt: str, **kwargs) -> ModelResponse:
+    async def generate(self, prompt: str, **kwargs: Any) -> ModelResponse:
         raise NotImplementedError("该模型不支持文本生成")
 
-    async def embed(self, texts: list[str], **kwargs) -> EmbeddingResponse:
+    async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         raise NotImplementedError("该模型不支持向量化")
 
     async def health_check(self) -> bool:

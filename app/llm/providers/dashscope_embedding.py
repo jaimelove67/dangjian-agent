@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import math
+from typing import Any
 
 from app.llm.base import DeploymentType, EmbeddingResponse, ModelConfig, ModelType
 from app.llm.errors import ModelUnavailableError
@@ -16,7 +17,7 @@ class DashScopeEmbeddingProvider(CloudHTTPProvider):
         super().__init__(config)
         self._single_input_only = False
 
-    async def embed(self, texts: list[str], **kwargs) -> EmbeddingResponse:
+    async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         embeddings: list[list[float]] = []
         for start in range(0, len(texts), 20):
             batch = texts[start : start + 20]
@@ -107,7 +108,7 @@ class DashScopeEmbeddingProvider(CloudHTTPProvider):
 def create_dashscope_embedding_provider(
     model_id: str = "cloud-embedding",
     model_name: str = "qwen3.7-text-embedding-flash",
-    api_key: str = None,
+    api_key: str | None = None,
 ) -> DashScopeEmbeddingProvider:
     return DashScopeEmbeddingProvider(
         ModelConfig(

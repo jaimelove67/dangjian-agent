@@ -5,31 +5,31 @@
 
 # ==================== 代码质量 ====================
 # 代码格式化
-black==24.1.1
+black==26.10.1
 isort==5.13.2
 
 # 代码检查
 flake8==7.0.0
 pylint==3.0.3
-mypy==1.8.0
+mypy==1.20.2
 
 # 类型检查插件
 types-redis==4.6.0.20240106
 types-PyYAML==6.0.12.12
-sqlalchemy[mypy]==2.0.25
 
 # ==================== 测试 ====================
 # 测试框架
-pytest==7.4.4
-pytest-asyncio==0.23.3
-pytest-cov==4.1.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
 pytest-mock==3.12.0
 
 # HTTP 测试
 httpx==0.26.0
 
 # 数据库测试
-pytest-postgresql==5.0.0
+pytest-postgresql==9.1.1
+psycopg[binary]==3.3.6
 
 # ==================== 调试 ====================
 # 调试工具
@@ -41,8 +41,9 @@ py-spy==0.3.14
 
 # ==================== 文档 ====================
 # API 文档生成
-mkdocs==1.5.3
-mkdocs-material==9.5.6
+mkdocs==1.6.1
+mkdocs-material==9.7.7
+pymdown-extensions==12.1
 
 # ==================== Git Hooks ====================
 pre-commit==3.6.0
@@ -57,14 +58,14 @@ watchfiles==0.21.0
 
 # ==================== 安全扫描 ====================
 # 依赖安全扫描
-safety==3.0.1
+pip-audit==2.10.1
 
 # 密钥扫描
 detect-secrets==1.4.0
 
 # ==================== 其他工具 ====================
 # 环境变量管理
-python-dotenv==1.0.1
+python-dotenv==1.2.4
 
 # 命令行工具
 click==8.1.7

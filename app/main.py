@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
@@ -16,6 +17,7 @@ from app.api.v1 import (
     assessment,
     auth,
     embeddings,
+    governance,
     health,
     knowledge,
     meeting,
@@ -29,6 +31,9 @@ from app.core import tenant as _tenant  # noqa: F401  导入即注册租户隔�
 from app.core.cache import redis_manager
 from app.core.config import settings
 from app.core.logging_config import setup_logging
+from app.core.metrics import observe_request
+from app.core.rate_limit import check_rate_limit
+from app.core.request_audit import event_for_request, persist
 from app.core.security import SecurityError
 from app.core.tenant import TenantIsolationError
 from app.core.token_revocation import AuthStoreUnavailable
@@ -56,7 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     try:
         await redis_manager.connect()
     except Exception as e:
-        logger.warning(f"Redis connection failed: {e}")
+        logger.warning(f"Redis connection failed: {type(e).__name__}")
 
     # 初始化数据库连接
     try:
@@ -64,23 +69,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
 
         await init_db()
     except Exception as e:
-        logger.warning(f"Database connection failed: {e}")
+        logger.warning(f"Database connection failed: {type(e).__name__}")
 
     from app.llm.init_models import init_models
 
     init_models()
 
-    from app.services.assessment_scheduler import assessment_reminder_loop
-    from app.services.member_scheduler import member_reminder_loop
+    from app.services.job_service import worker_loop
 
-    reminder_task = asyncio.create_task(assessment_reminder_loop())
-    member_task = asyncio.create_task(member_reminder_loop())
+    tasks = [asyncio.create_task(worker_loop())] if settings.JOB_WORKER_ENABLED else []
     try:
         yield
     finally:
-        for task in (reminder_task, member_task):
+        for task in tasks:
             task.cancel()
-        for task in (reminder_task, member_task):
+        for task in tasks:
             with suppress(asyncio.CancelledError):
                 await task
 
@@ -96,7 +99,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
 
         await close_db()
     except Exception as e:
-        logger.warning(f"Database close failed: {e}")
+        logger.warning(f"Database close failed: {type(e).__name__}")
 
 
 # 创建 FastAPI 应用
@@ -131,7 +134,71 @@ async def trace_id_middleware(
         provided_id if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", provided_id) else uuid.uuid4().hex
     )
     request.state.trace_id = trace_id
-    response = await call_next(request)
+    started = time.monotonic()
+    response: Response | None = None
+    audited = request.url.path.startswith("/api/v1/") and request.url.path not in {
+        "/api/v1/health",
+        "/api/v1/health/live",
+        "/api/v1/health/ready",
+    }
+    try:
+        try:
+            if audited:
+                received = event_for_request(request, 200, 0)
+                received["action"], received["result"] = "request_received", "started"
+                await persist(received)
+            await check_rate_limit(request)
+        except HTTPException as exc:
+            response = JSONResponse(
+                {
+                    "code": (
+                        ErrorCode.RATE_LIMITED
+                        if exc.status_code == 429
+                        else ErrorCode.SERVICE_UNAVAILABLE
+                    ),
+                    "message": str(exc.detail),
+                    "data": None,
+                    "trace_id": trace_id,
+                },
+                status_code=exc.status_code,
+                headers=exc.headers,
+            )
+        except Exception:
+            response = JSONResponse(
+                {
+                    "code": ErrorCode.SERVICE_UNAVAILABLE,
+                    "data": None,
+                    "message": "审计保存不可用，请联系管理员",
+                    "trace_id": trace_id,
+                },
+                status_code=503,
+            )
+        if response is None:
+            response = await call_next(request)
+    finally:
+        if audited:
+            duration = time.monotonic() - started
+            event = event_for_request(request, response.status_code if response else 500, duration)
+            observe_request(
+                event["resource_type"],
+                request.method,
+                response.status_code if response else 500,
+                duration,
+            )
+            try:
+                await persist(event)
+            except Exception:
+                # 两个持久路径都失效时，失败不能伪装成成功。
+                response = JSONResponse(
+                    {
+                        "code": ErrorCode.SERVICE_UNAVAILABLE,
+                        "data": None,
+                        "message": "审计保存不可用，请联系管理员",
+                        "trace_id": trace_id,
+                    },
+                    status_code=503,
+                )
+    assert response is not None
     response.headers["X-Request-ID"] = trace_id
     return response
 
@@ -148,6 +215,7 @@ app.include_router(meeting.router, prefix="/api/v1", tags=["组织生活"])
 app.include_router(assessment.router, prefix="/api/v1", tags=["年度考核"])
 app.include_router(user.router, prefix="/api/v1", tags=["兼容用户接口"])
 app.include_router(admin.router, prefix="/api/v1", tags=["管理"])
+app.include_router(governance.router, prefix="/api/v1", tags=["安全与运维"])
 app.include_router(study.router, prefix="/api/v1", tags=["中心组学习"])
 
 
@@ -237,12 +305,12 @@ async def gateway_exception_handler(request: Request, exc: GatewayError) -> JSON
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """全局异常处理"""
     import logging
 
     logger = logging.getLogger(__name__)
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    logger.error(f"Unhandled exception: {type(exc).__name__}", exc_info=True)
 
     return JSONResponse(
         status_code=500,

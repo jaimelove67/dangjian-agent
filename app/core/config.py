@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class Settings(BaseSettings):
@@ -105,9 +106,21 @@ class Settings(BaseSettings):
     # ==================== 安全配置 ====================
     ENABLE_DATA_LEVEL_GATEWAY: bool = Field(default=True, description="启用数据级别出网闸门")
     ALLOWED_EXTERNAL_MODELS: list[str] = Field(default=[], description="允许的外部模型域名")
+    ALLOWED_LOCAL_MODEL_HOSTS: list[str] = Field(default=[], description="获准的校内模型主机")
 
     # ==================== 业务配置 ====================
     FILE_STORAGE_DIR: str = Field(default="uploads", description="原始文件留存目录")
+    FILE_ENCRYPTION_KEYS: dict[str, str] = Field(default_factory=dict, repr=False)
+    FILE_ENCRYPTION_ACTIVE_KEY: str = ""
+    ALLOW_LEGACY_PLAINTEXT_FILES: bool = False
+    AUDIT_SPOOL_DIR: str = "audit-spool"
+    AUDIT_RETENTION_DAYS: int = Field(default=365, ge=365)
+    JOB_WORKER_ENABLED: bool = True
+    JOB_TIMEOUT_SECONDS: int = Field(default=120, ge=10, le=3600)
+    RATE_LIMIT_PER_MINUTE: int = Field(default=120, ge=1, le=10000)
+    MODEL_RATE_LIMIT_PER_MINUTE: int = Field(default=20, ge=1, le=1000)
+    MODEL_CALL_LIMIT_PER_MINUTE: int = Field(default=120, ge=1, le=10000)
+    LOGIN_RATE_LIMIT_PER_MINUTE: int = Field(default=10, ge=1, le=100)
     ACTIVIST_TRAINING_DAYS: int = Field(default=365, description="入党积极分子培养期上限（天）")
     PROBATIONARY_PERIOD_DAYS: int = Field(default=365, description="预备党员预备期上限（天）")
     ASSESSMENT_REMINDER_SCAN_SECONDS: int = Field(
@@ -116,6 +129,42 @@ class Settings(BaseSettings):
     MEMBER_REMINDER_SCAN_SECONDS: int = Field(
         default=3600, ge=60, le=86400, description="党员发展提醒扫描周期（秒）"
     )
+
+    @model_validator(mode="after")
+    def production_security(self) -> "Settings":
+        if self.ENV != "production":
+            return self
+        import base64
+
+        from sqlalchemy.engine import make_url
+
+        db_url = make_url(self.DATABASE_URL)
+        mode = db_url.query.get("sslmode") or db_url.query.get("ssl")
+        if db_url.drivername != "postgresql+asyncpg" or mode not in {
+            "require",
+            "verify-ca",
+            "verify-full",
+        }:
+            raise ValueError("生产数据库必须使用明确的PostgreSQL TLS连接")
+        if not self.REDIS_URL.startswith("rediss://"):
+            raise ValueError("生产Redis必须使用TLS连接")
+        if len(self.SECRET_KEY) < 32 or self.SECRET_KEY.startswith(("dev_", "please_change")):
+            raise ValueError("生产JWT密钥必须单独配置且至少32字符")
+        if not self.ALLOWED_HOSTS or "*" in self.ALLOWED_HOSTS:
+            raise ValueError("生产访问来源必须明确配置")
+        if (
+            not self.FILE_ENCRYPTION_KEYS
+            or self.FILE_ENCRYPTION_ACTIVE_KEY not in self.FILE_ENCRYPTION_KEYS
+        ):
+            raise ValueError("生产必须配置独立文件加密密钥环和当前版本")
+        if any(
+            len(base64.b64decode(key, validate=True)) != 32
+            for key in self.FILE_ENCRYPTION_KEYS.values()
+        ):
+            raise ValueError("文件密钥必须为Base64编码的32字节")
+        if self.ALLOW_LEGACY_PLAINTEXT_FILES:
+            raise ValueError("生产服务禁止直接读取未迁移明文；请使用独立迁移工具")
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -195,7 +244,7 @@ class TenantConfig:
     租户配置 > 上级租户配置 > 全局默认配置
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """初始化配置管理器"""
         self._cache: dict[str, dict[str, Any]] = {}
         self._parents: dict[str, Optional[str]] = {}
@@ -212,7 +261,7 @@ class TenantConfig:
             配置值
         """
         visited: set[str] = set()
-        current = tenant_id
+        current: str | None = tenant_id
         while current and current not in visited:
             visited.add(current)
             if key in self._cache.get(current, {}):
@@ -244,14 +293,31 @@ class TenantConfig:
 
         self._cache[tenant_id][key] = value
 
-    async def load(self, db, tenant_id: str) -> None:
+    def school_id(self, tenant_id: str) -> str | None:
+        """只在当前祖先链查找学校，不继承平台或其他学校的审批。"""
+        current: str | None = tenant_id
+        visited: set[str] = set()
+        while current and current not in visited:
+            visited.add(current)
+            if self.local(current, "_tenant_type") == "school":
+                return current
+            current = self._parents.get(current)
+        return None
+
+    def local(self, tenant_id: str, key: str, default: Any = None) -> Any:
+        """合规确认只读取当前租户，不能继承他校或平台的审批。"""
+        return self._cache.get(tenant_id, {}).get(key, default)
+
+    async def load(self, db: AsyncSession, tenant_id: str) -> None:
         """逐请求加载当前租户及其父级，跨进程配置变更也能及时生效。"""
         from sqlalchemy import select
 
         from app.core.tenant import bypass_tenant_filter
         from app.models.tenant import Tenant
 
-        current, visited = tenant_id, set()
+        current: str | None = tenant_id
+        visited: set[str] = set()
+        chain_active = True
         with bypass_tenant_filter():
             while current:
                 if current in visited or len(visited) >= 20:
@@ -263,10 +329,16 @@ class TenantConfig:
                     )
                 ).scalar_one_or_none()
                 self._cache[current] = dict(tenant.config or {}) if tenant else {}
+                self._cache[current]["_present"] = tenant is not None
+                self._cache[current]["_active"] = bool(tenant.is_active) if tenant else False
+                self._cache[current]["_tenant_type"] = tenant.tenant_type if tenant else None
+                self._cache[current]["_config_version"] = tenant.config_version if tenant else 0
                 self._parents[current] = tenant.parent_id if tenant else None
+                chain_active = chain_active and tenant is not None and bool(tenant.is_active)
                 current = self._parents[current]
+        self._cache[tenant_id]["_chain_active"] = chain_active
 
-    async def save(self, db, tenant_id: str, values: dict[str, Any]) -> None:
+    async def save(self, db: AsyncSession, tenant_id: str, values: dict[str, Any]) -> None:
         """保留未更新键，写入数据库后重新加载；提交由调用方管理。"""
         from sqlalchemy import select
 
@@ -283,6 +355,19 @@ class TenantConfig:
         if tenant is None:
             raise LookupError("当前账号所属租户尚未登记，请先完成租户初始化")
         tenant.config = {**(tenant.config or {}), **values}
+        from app.core.tenant import current_user_id
+        from app.models.governance import ConfigRevision
+
+        tenant.config_version += 1
+        db.add(
+            ConfigRevision(
+                tenant_id=tenant_id,
+                version=tenant.config_version,
+                actor_id=current_user_id.get() or "maintenance",
+                reason="维护租户业务配置",
+                values=dict(tenant.config),
+            )
+        )
         await db.flush()
         await self.load(db, tenant_id)
 

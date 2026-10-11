@@ -80,6 +80,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/SystemView.vue'),
         meta: { title: '系统状态', group: '系统' },
       },
+      {
+        path: 'governance',
+        name: 'governance',
+        component: () => import('@/views/GovernanceView.vue'),
+        meta: { title: '管理与审核', group: '系统', perm: PERM.REVIEW_MANAGE },
+      },
     ],
   },
   {

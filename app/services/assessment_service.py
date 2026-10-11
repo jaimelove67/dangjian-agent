@@ -5,7 +5,7 @@ import io
 import json
 import zipfile
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -66,13 +66,28 @@ def _json(value: Any) -> Any:
 
 def row_view(row: Any) -> dict[str, Any]:
     """仅返回业务字段，不返回数据库租户字段。"""
-    return _json(
-        {key: value for key, value in row.dict().items() if key not in {"tenant_id", "is_deleted"}}
+    return cast(
+        dict[str, Any],
+        _json(
+            {
+                key: value
+                for key, value in row.dict().items()
+                if key not in {"tenant_id", "is_deleted"}
+            }
+        ),
     )
 
 
 def run_view(run: AssessmentRun) -> dict[str, Any]:
     return {key: value for key, value in row_view(run).items() if key not in {"inputs", "results"}}
+
+
+AssessmentRecord = TypeVar(
+    "AssessmentRecord",
+    bound=(
+        AssessmentTask | AssessmentRun | AssessmentPlan | AssessmentReminder | AssessmentEvidence
+    ),
+)
 
 
 class AssessmentService:
@@ -161,8 +176,9 @@ class AssessmentService:
             if children <= ids:
                 break
             ids |= children
-        school, seen = selected, set()
-        while school.org_type != "school":
+        school: OrgUnit | None = selected
+        seen: set[str] = set()
+        while school is not None and school.org_type != "school":
             if not school.parent_id or school.id in seen:
                 raise HTTPException(409, "组织未关联有效学校，请先配置组织树")
             seen.add(school.id)
@@ -177,6 +193,7 @@ class AssessmentService:
             ).scalar_one_or_none()
             if school is None:
                 raise HTTPException(409, "组织祖先无效，请先配置组织树")
+        assert school is not None
         return selected, school, ids
 
     async def _lock_org(self, org_id: str) -> None:
@@ -189,7 +206,9 @@ class AssessmentService:
             .with_for_update()
         )
 
-    async def _get(self, model: type, record_id: str, *, lock: bool = False) -> Any:
+    async def _get(
+        self, model: type[AssessmentRecord], record_id: str, *, lock: bool = False
+    ) -> AssessmentRecord:
         statement = select(model).where(
             model.id == record_id,
             model.tenant_id == self.tenant_id,
@@ -400,13 +419,13 @@ class AssessmentService:
     async def _evidence_views(self, evidence: list[AssessmentEvidence]) -> list[dict[str, Any]]:
         docs = {}
         for org_id in sorted({item.org_unit_id for item in evidence}):
-            for doc in await authorized_documents(
+            for authorized_doc in await authorized_documents(
                 self.db,
                 self.user,
                 [row.doc_id for row in evidence if row.org_unit_id == org_id],
                 org_unit_id=org_id,
             ):
-                docs[(org_id, doc.doc_id)] = doc
+                docs[(org_id, authorized_doc.doc_id)] = authorized_doc
         views = []
         for item in evidence:
             doc = docs.get((item.org_unit_id, item.doc_id))
@@ -697,7 +716,7 @@ class AssessmentService:
                 runs.insert(0, current)
         plan = await self._latest_plan(org_id, year)
         plan_data = row_view(plan) if plan else None
-        if plan:
+        if plan and plan_data is not None:
             run = await self._get(AssessmentRun, plan.run_id)
             plan_data["stale"] = run.fingerprint != data["fingerprint"]
             if plan_data["stale"]:
@@ -863,7 +882,13 @@ class AssessmentService:
 
     async def review(self, kind: str, record_id: str, body: ReviewRequest) -> Any:
         """每次审核读取当前源版本；录入人/修订人不能自行审核。"""
-        models = {
+        models: dict[
+            str,
+            type[AssessmentTask]
+            | type[AssessmentEvidence]
+            | type[AssessmentRun]
+            | type[AssessmentPlan],
+        ] = {
             "tasks": AssessmentTask,
             "evidence": AssessmentEvidence,
             "runs": AssessmentRun,
@@ -876,13 +901,13 @@ class AssessmentService:
             raise HTTPException(403, "录入或修订人须提交另一位授权人员审核")
         if record.revision != body.expected_revision:
             raise HTTPException(409, "对象已被修改，请刷新后重新审核")
-        if kind == "plans":
+        if isinstance(record, AssessmentPlan):
             await self.fresh_run(record.run_id)
         if body.status == "approved":
-            if kind == "tasks":
+            if isinstance(record, AssessmentTask):
                 if record.manual_value is not None and not record.basis:
                     raise HTTPException(409, "人工值缺少录入依据")
-            elif kind == "evidence":
+            elif isinstance(record, AssessmentEvidence):
                 view = (await self._evidence_views([record]))[0]
                 if view["status"] not in {"pending", "returned", "approved"}:
                     raise HTTPException(409, "材料无效、越权或已更新，须重新绑定有效版本")
@@ -893,7 +918,7 @@ class AssessmentService:
                         raise HTTPException(409, "归集仍有缺项，补齐并重算后才能确认评价")
                 if kind == "plans":
                     latest = await self._latest_plan(record.org_unit_id, record.year)
-                    if latest.id != record.id:
+                    if latest is None or latest.id != record.id:
                         raise HTTPException(409, "该计划已修订，请审核最新版本")
         old = row_view(record)
         record.review_status, record.review_opinion = body.status, body.opinion
@@ -1087,6 +1112,13 @@ class AssessmentService:
             )
             self.db.add(record)
             await self.db.flush()
+            import asyncio
+
+            from app.services.file_store import save_archive
+
+            await asyncio.to_thread(
+                save_archive, self.tenant_id, str(record.id), 1, row_view(record)
+            )
         return record
 
     async def export(self, run_id: str) -> tuple[bytes, dict[str, Any]]:

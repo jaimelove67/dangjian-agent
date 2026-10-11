@@ -4,17 +4,25 @@
 """
 
 import logging
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 创建异步引擎
+# sslmode 是 libpq 参数；转换为 asyncpg 原生 ssl，避免生产 URL 被错误传递。
+database_url = make_url(settings.DATABASE_URL)
+ssl_mode = database_url.query.get("sslmode") or database_url.query.get("ssl")
+connect_args: dict[str, Any] = {"ssl": ssl_mode} if ssl_mode else {}
+database_url = database_url.set(
+    query={key: value for key, value in database_url.query.items() if key not in {"sslmode", "ssl"}}
+)
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    database_url,
+    connect_args=connect_args,
     echo=settings.DEBUG,
     hide_parameters=True,
     pool_size=settings.DB_POOL_SIZE,
@@ -55,8 +63,8 @@ async def init_db() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(lambda _: None)
         logger.info("Database connected successfully")
-    except Exception as e:
-        logger.error(f"Failed to connect to database: {e}")
+    except Exception:
+        logger.error("database_initialization_failed")
         raise
 
 

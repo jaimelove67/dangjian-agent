@@ -2,13 +2,28 @@
 
 实现结构化日志（JSON格式），支持追踪ID、租户ID等上下文信息。
 """
+
+import json
 import logging
 import sys
-import json
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, MutableMapping, Optional, cast
+
+import structlog
 
 from app.core.config import settings
+from app.core.redaction import redact, redact_text
+
+
+def _safe_event(logger: Any, method: str, event: MutableMapping[str, Any]) -> dict[str, Any]:
+    """所有 structlog 输出统一脱敏，供应商异常正文只保留摘要。"""
+    protected = dict(event)
+    for key in ("error", "exception", "exc_info", "stack"):
+        if key in protected:
+            from app.core.redaction import summary
+
+            protected[key] = summary(protected[key])
+    return cast(dict[str, Any], redact(protected))
 
 
 class JSONFormatter(logging.Formatter):
@@ -23,11 +38,11 @@ class JSONFormatter(logging.Formatter):
         Returns:
             JSON 格式的日志
         """
-        log_data = {
+        log_data: dict[str, Any] = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": redact_text(record.getMessage()),
             "module": record.module,
             "function": record.funcName,
             "line": record.lineno,
@@ -47,11 +62,15 @@ class JSONFormatter(logging.Formatter):
 
         # 添加额外字段
         if hasattr(record, "extra_fields"):
-            log_data.update(record.extra_fields)
+            log_data.update(redact(record.extra_fields))
 
         # 添加异常信息
         if record.exc_info:
-            log_data["exception"] = self.formatException(record.exc_info)
+            log_data["exception"] = (
+                type(record.exc_info[1]).__name__
+                if settings.ENV == "production"
+                else redact_text(self.formatException(record.exc_info))
+            )
 
         return json.dumps(log_data, ensure_ascii=False)
 
@@ -59,7 +78,7 @@ class JSONFormatter(logging.Formatter):
 class TextFormatter(logging.Formatter):
     """文本格式化器（开发环境使用）"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
@@ -83,13 +102,20 @@ def setup_logging() -> None:
     console_handler.setLevel(log_level)
 
     # 根据配置选择格式化器
-    if settings.LOG_FORMAT == "json":
+    formatter: logging.Formatter
+    if settings.LOG_FORMAT == "json" or settings.ENV == "production":
         formatter = JSONFormatter()
     else:
         formatter = TextFormatter()
 
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
+    structlog.configure(
+        processors=[_safe_event, structlog.processors.JSONRenderer(ensure_ascii=False)],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=False,
+    )
 
     # 设置第三方库日志级别（减少噪音）
     logging.getLogger("uvicorn").setLevel(logging.INFO)
@@ -103,7 +129,7 @@ def get_logger(
     trace_id: Optional[str] = None,
     tenant_id: Optional[str] = None,
     user_id: Optional[str] = None,
-    **extra_fields: Any
+    **extra_fields: Any,
 ) -> logging.LoggerAdapter:
     """获取带上下文的日志器
 
@@ -120,7 +146,7 @@ def get_logger(
     logger = logging.getLogger(name)
 
     # 构建额外信息
-    extra = {}
+    extra: dict[str, Any] = {}
     if trace_id:
         extra["trace_id"] = trace_id
     if tenant_id:

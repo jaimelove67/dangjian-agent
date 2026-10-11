@@ -1,5 +1,7 @@
 """检索相关Schema定义"""
-from typing import List, Optional, Dict, Any
+
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 from app.llm.base import DataLevel
@@ -7,6 +9,7 @@ from app.llm.base import DataLevel
 
 class RetrievalFilters(BaseModel):
     """检索过滤条件"""
+
     tenant_id: str = Field(..., description="租户ID")
     data_level: DataLevel = Field(..., description="数据级别")
     visibility_levels: List[str] = Field(..., description="可见范围列表")
@@ -17,6 +20,7 @@ class RetrievalFilters(BaseModel):
 
 class RetrievalResult(BaseModel):
     """单个检索结果"""
+
     chunk_id: str = Field(..., description="片段ID")
     doc_id: str = Field(..., description="文档ID")
     content: str = Field(..., description="片段内容")
@@ -35,6 +39,7 @@ class RetrievalResult(BaseModel):
 
 class RetrievalResponse(BaseModel):
     """检索响应"""
+
     results: List[RetrievalResult] = Field(default_factory=list, description="检索结果列表")
     has_evidence: bool = Field(..., description="是否有足够依据")
     total_count: int = Field(..., description="结果总数")

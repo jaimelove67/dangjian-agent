@@ -70,8 +70,7 @@ sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
 
 # ==================== mypy 配置 ====================
 [tool.mypy]
-python_version = "3.11"
-plugins = ["sqlalchemy.ext.mypy.plugin"]
+# 使用当前矩阵解释器版本与依赖原生类型；SQLAlchemy 2 的 Mapped 不需要旧插件。
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

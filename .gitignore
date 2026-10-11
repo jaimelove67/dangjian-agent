@@ -140,6 +140,8 @@ data/
 /models/
 !models/.gitkeep
 uploads/
+audit-spool/
+.venv-module6/
 backups/
 
 # Database
@@ -171,3 +173,5 @@ htmlcov/
 
 # Agent tooling state
 .sisyphus/
+
+.venv*/

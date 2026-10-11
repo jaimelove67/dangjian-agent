@@ -81,7 +81,7 @@ async def authorized_documents(
             if org is None:
                 break
             ancestors.append(str(org.id))
-            current = org.parent_id
+            current = org.parent_id or ""
         statement = statement.where(
             or_(
                 KnowledgeDoc.visibility.in_(["public", "school"]),
@@ -107,7 +107,7 @@ async def load_source(
     if source in {"meetings", "studies"}:
         return await activity_source(db, user, rule, org_ids)
     if source == "organizations":
-        rows = list(
+        org_rows = list(
             (
                 await db.execute(
                     select(OrgUnit).where(
@@ -121,7 +121,7 @@ async def load_source(
             .all()
         )
         if options["org_types"]:
-            rows = [row for row in rows if row.org_type in options["org_types"]]
+            org_rows = [row for row in org_rows if row.org_type in options["org_types"]]
         records = tuple(
             SourceRecord(
                 id=str(row.id),
@@ -138,7 +138,7 @@ async def load_source(
                 ),
                 facts=(("org_type", row.org_type), ("period_basis", "当前组织快照")),
             )
-            for row in rows
+            for row in org_rows
         )
         historical = end < date.today()
         return SourceBatch(
@@ -159,7 +159,7 @@ async def load_source(
             # 前端沿用 formal；现有人员阶段枚举在数据库中保存为 member。
             stages = ["member" if stage == "formal" else stage for stage in options["stages"]]
             statement = statement.where(MemberProfile.current_stage.in_(stages))
-        rows = list((await db.execute(statement.order_by(MemberProfile.id))).scalars().all())
+        member_rows = list((await db.execute(statement.order_by(MemberProfile.id))).scalars().all())
         records = tuple(
             SourceRecord(
                 id=str(row.id),
@@ -182,16 +182,16 @@ async def load_source(
                     ("period_basis", "当前阶段进入日期；非完整发展历史"),
                 ),
             )
-            for row in rows
+            for row in member_rows
         )
         missing = []
-        if not rows:
+        if not member_rows:
             missing.append("暂无人员记录，尚不能确认真实零值")
         if end < date.today():
             missing.append("人员组织转接/阶段历史尚未接入，历史年度口径待核验")
         if source == "member_materials":
             missing.append("现有材料仅登记名称，文件及审核证据待接入")
-        return SourceBatch(records, bool(rows) and not missing, tuple(missing))
+        return SourceBatch(records, bool(member_rows) and not missing, tuple(missing))
     if source == "documents":
         rows = await authorized_documents(db, user, options["document_ids"] or None)
         rows = [
@@ -236,8 +236,7 @@ async def authorized_historical_sources(
 ) -> set[tuple[str, str]]:
     """按原来源独立核对当前访问权，不用新指标口径代替历史资料授权。"""
     permitted: set[tuple[str, str]] = set()
-    models = {
-        "organizations": OrgUnit,
+    models: dict[str, type[MemberProfile] | type[AssessmentTask] | type[MeetingRecord]] = {
         "members": MemberProfile,
         "member_materials": MemberProfile,
         "manual": AssessmentTask,
@@ -265,6 +264,23 @@ async def authorized_historical_sources(
                 )
             )
             continue
+        if source == "organizations":
+            visible_ids = (
+                (
+                    await db.execute(
+                        select(OrgUnit.id).where(
+                            OrgUnit.id.in_(ids),
+                            OrgUnit.id.in_(org_ids),
+                            OrgUnit.tenant_id == str(user.tenant_id),
+                            OrgUnit.is_deleted.is_(False),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            permitted.update((source, str(item)) for item in visible_ids)
+            continue
         model = models.get(source)
         if model is None:
             continue
@@ -281,7 +297,7 @@ async def authorized_historical_sources(
                 continue
             study_service = await StudyService(db, user).initialize()
         for row in rows:
-            if source in {"meetings", "studies"}:
+            if source in {"meetings", "studies"} and isinstance(row, MeetingRecord):
                 if (row.activity_type == "center_group") != (source == "studies"):
                     continue
                 if study_service:
@@ -338,6 +354,8 @@ async def activity_source(
         .all()
     )
     for row in rows:
+        if row.held_on is None:
+            continue
         if study_service:
             activity = await study_service.activity_data(row)
             sources, warnings, restricted = (

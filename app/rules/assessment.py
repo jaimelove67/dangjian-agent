@@ -112,7 +112,10 @@ def calculate_indicator(
         if any(record.value is None for record in approved):
             missing.append("人工特色项缺少有依据的数值")
         else:
-            actual = sum((Decimal(record.value) for record in approved), Decimal(0))
+            actual = sum(
+                (Decimal(record.value) for record in approved if record.value is not None),
+                Decimal(0),
+            )
     elif measure == "material_rate":
         if not approved:
             missing.append("材料完整率分母为零，不能判断达标")
@@ -120,7 +123,7 @@ def calculate_indicator(
             missing.append("材料完整性尚未核验")
         else:
             actual = (
-                Decimal(sum(record.material_complete for record in approved))
+                Decimal(sum(record.material_complete is True for record in approved))
                 / Decimal(len(approved))
                 * 100
             )

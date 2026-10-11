@@ -1,0 +1,124 @@
+name: Module 6 quality and recovery
+on:
+  push:
+    branches: [master, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: module6-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12']
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: module6_native_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_ci_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d module6_native_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ENV: testing
+      DATABASE_URL: postgresql+asyncpg://postgres:isolated_ci_only@127.0.0.1:5432/module6_native_ci
+      REDIS_URL: redis://127.0.0.1:6379/0
+      JOB_WORKER_ENABLED: 'false'
+      DASHSCOPE_API_KEY: ''
+      FILE_STORAGE_DIR: ${{ github.workspace }}/tmp/ci-originals
+      AUDIT_SPOOL_DIR: ${{ github.workspace }}/tmp/ci-audit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Clean hash-locked install
+        run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Frontend dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Migrate isolated database
+        run: python -m alembic upgrade head
+      - name: Strict checks and full backend with 80% gate
+        run: python scripts/module6_acceptance.py quality --report-dir tmp/module6-quality
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: module6-quality-python-${{ matrix.python }}
+          path: tmp/module6-quality/
+          retention-days: 14
+          if-no-files-found: error
+  container-recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: module6_native_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_ci_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d module6_native_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ENV: testing
+      DATABASE_URL: postgresql+asyncpg://postgres:isolated_ci_only@127.0.0.1:5432/module6_native_ci
+      REDIS_URL: redis://127.0.0.1:6379/14
+      JOB_WORKER_ENABLED: 'false'
+      DASHSCOPE_API_KEY: ''
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked tools and PostgreSQL 16 client
+        run: |
+          python -m pip install --require-hashes -r requirements-dev.lock
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client-16
+      - name: Actual image build, migration rollback, encrypted recovery and runtime permissions
+        env:
+          PG_DUMP_BIN: /usr/lib/postgresql/16/bin/pg_dump
+          PG_RESTORE_BIN: /usr/lib/postgresql/16/bin/pg_restore
+        run: python scripts/module6_container_check.py --isolated --output tmp/module6-container/report.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: module6-container-recovery
+          path: tmp/module6-container/
+          retention-days: 14
+          if-no-files-found: error

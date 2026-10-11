@@ -1,5 +1,7 @@
 """按项目配置注册三个云端模型；没有密钥时不发起请求。"""
 
+from typing import Any
+
 from app.core.config import settings
 from app.llm.base import ModelType
 from app.llm.registry import get_model_registry
@@ -19,7 +21,7 @@ def init_models() -> None:
         (create_dashscope_reranker_provider, "cloud-reranker", settings.RERANKER_MODEL_NAME),
     ):
         if registry.get_provider(model_id) is None:
-            params = {
+            params: dict[str, Any] = {
                 "model_id": model_id,
                 "model_name": model_name,
                 "api_key": settings.DASHSCOPE_API_KEY,

@@ -4,11 +4,12 @@
 改写通过注入的 LLM 调用实现（模型接入由开发者B提供），本模块只负责提示词组织
 与结果清洗，因此可脱离模型单测。
 """
+
 from __future__ import annotations
 
 from typing import Awaitable, Callable, Optional, Protocol, Sequence
 
-from app.prompts.qa import REWRITE_PROMPT
+from app.prompts.qa import rewrite_prompt
 
 # LLM 调用签名：给定提示词，返回生成文本
 LLMCall = Callable[[str], Awaitable[str]]
@@ -16,6 +17,7 @@ LLMCall = Callable[[str], Awaitable[str]]
 
 class QATurnLike(Protocol):
     """问答轮次协议（用于类型标注）"""
+
     question: str
     answer: str
 
@@ -46,10 +48,7 @@ async def rewrite_question(
     if not turns or llm_call is None:
         return current
 
-    history_text = "\n".join(
-        f"问：{turn.question}\n答：{turn.answer}"
-        for turn in turns
-    )
-    prompt = REWRITE_PROMPT.format(history=history_text, question=current)
+    history_text = "\n".join(f"问：{turn.question}\n答：{turn.answer}" for turn in turns)
+    prompt = rewrite_prompt().format(history=history_text, question=current)
     rewritten = (await llm_call(prompt) or "").strip()
     return rewritten or current

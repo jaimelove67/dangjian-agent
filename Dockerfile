@@ -1,54 +1,26 @@
-# 党建工作智能体 - 生产环境 Dockerfile
-#
-# 基础镜像默认使用官方 Docker Hub 镜像，可直接构建。
-# 网络受限时不必改代码，通过 build arg 指定加速源即可：
-#   docker build --build-arg BASE_IMAGE=docker.m.daocloud.io/library/python:3.11-slim .
-# 或使用 compose 变量：在 .env 中设置 DOCKERHUB_MIRROR=docker.m.daocloud.io
-ARG BASE_IMAGE=python:3.11-slim
+# 运行镜像只安装经哈希锁定的生产依赖；学校登记与模型审批由管理入口完成。
+ARG BASE_IMAGE=python:3.11-slim-bookworm
 FROM ${BASE_IMAGE}
-
-# 设置工作目录
 WORKDIR /app
-
-# 设置环境变量
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
-
-# 安装系统依赖
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    curl \
+    ca-certificates curl libpq5 \
     && rm -rf /var/lib/apt/lists/*
-
-# 复制依赖文件
-COPY requirements.txt .
-
-# 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 复制项目代码
-COPY ./app ./app
-COPY ./migrations ./migrations
-COPY ./config ./config
-COPY ./scripts ./scripts
-COPY alembic.ini ./alembic.ini
-
-# 创建非 root 用户
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
-
-# 切换到非 root 用户
-USER appuser
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health/ready || exit 1
-
-# 暴露端口
+COPY requirements.lock ./
+RUN pip install --require-hashes --no-cache-dir -r requirements.lock
+COPY app ./app
+COPY migrations ./migrations
+COPY config ./config
+COPY scripts ./scripts
+COPY alembic.ini ./
+RUN useradd --uid 1000 --create-home appuser \
+    && mkdir -p /app/uploads /app/audit-spool \
+    && chown -R appuser:appuser /app \
+    && chmod 700 /app/uploads /app/audit-spool
+USER 1000:1000
 EXPOSE 8000
-
-# 启动命令
+# 存活与业务就绪分开；待配置会在 /health/ready 返回503。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl --fail --silent http://127.0.0.1:8000/api/v1/health/live || exit 1
+ENTRYPOINT ["python", "scripts/module6_entrypoint.py"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

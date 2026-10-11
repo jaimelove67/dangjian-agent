@@ -44,7 +44,9 @@ class MaterialReview(MemberInput):
 
 
 class TransitionRequest(MemberInput):
-    target_stage: Literal["applicant", "activist", "candidate", "probationary", "member", "rejected"]
+    target_stage: Literal[
+        "applicant", "activist", "candidate", "probationary", "member", "rejected"
+    ]
     decision_date: date
     basis: str = Field(min_length=1, max_length=2000)
     opinion: str = Field(default="", max_length=2000)

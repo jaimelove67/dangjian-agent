@@ -1,11 +1,12 @@
 # 党建工作智能体 - 生产环境依赖
 
 # ==================== Web 框架 ====================
-fastapi==0.109.0
+fastapi==0.143.0
+starlette==1.7.0
 uvicorn[standard]==0.27.0
-python-multipart==0.0.20
-pydantic==2.5.3
-pydantic-settings==2.1.0
+python-multipart==0.0.32
+pydantic==2.14.0
+pydantic-settings==2.15.0
 
 # ==================== 数据库 ====================
 # PostgreSQL 驱动（异步）
@@ -24,10 +25,11 @@ redis==5.0.1
 hiredis==2.3.2
 
 # ==================== LangChain ====================
-langchain==0.1.4
-langchain-community==0.0.17
-langchain-core==0.1.17
-langgraph==0.0.20
+langchain==1.4.4
+langchain-community==0.4.2
+langchain-core==1.6.9
+langgraph==1.2.14
+langsmith==0.14.7
 
 # ==================== 模型接入 ====================
 # 通义千问
@@ -48,8 +50,8 @@ jieba==0.42.1
 
 # ==================== 文档处理 ====================
 # PDF 解析
-pypdf==3.17.4
-pdfplumber==0.10.3
+pypdf==6.20.0
+pdfplumber==0.11.10
 
 # Word 解析
 python-docx==1.1.0
@@ -59,7 +61,8 @@ python-docx==1.1.0
 
 # ==================== 安全与认证 ====================
 # JWT
-python-jose[cryptography]==3.3.0
+PyJWT==2.15.1
+cryptography==50.0.2
 passlib[bcrypt]==1.7.4
 bcrypt==4.1.2
 
@@ -92,7 +95,7 @@ pytz==2024.1
 
 # 配置文件解析
 pyyaml==6.0.1
-python-dotenv==1.0.1
+python-dotenv==1.2.4
 
 # UUID
 shortuuid==1.0.11

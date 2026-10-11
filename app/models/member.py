@@ -1,11 +1,12 @@
 """培养对象台账；阶段登记由组织人员完成，规则建议不修改台账。"""
 
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
     JSON,
     Boolean,
-    Column,
     Date,
     DateTime,
     Index,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
@@ -27,16 +29,16 @@ class MemberProfile(Base):
         Index("ix_member_profiles_org_created", "tenant_id", "org_unit_id", "created_at"),
     )
 
-    name = Column(String(50), nullable=False)
-    org_name = Column(String(200), nullable=False)
-    org_unit_id = Column(String(36), nullable=True)
-    current_stage = Column(String(20), nullable=False, default="applicant")
-    stage_joined_on = Column(Date, nullable=False, default=date.today)
-    materials = Column(JSON, nullable=False, default=list)
-    pending = Column(Integer, nullable=False, default=0)
-    is_active = Column(Boolean, nullable=False, default=True)
-    year = Column(Integer, nullable=True)
-    batch_no = Column(String(20), nullable=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    current_stage: Mapped[str] = mapped_column(String(20), nullable=False, default="applicant")
+    stage_joined_on: Mapped[date] = mapped_column(Date, nullable=False, default=date.today)
+    materials: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
+    pending: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    batch_no: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
 
 class MemberBatch(Base):
@@ -48,12 +50,12 @@ class MemberBatch(Base):
         Index("ix_member_batches_scope_year", "tenant_id", "org_unit_id", "year"),
     )
 
-    year = Column(Integer, nullable=False)
-    batch_no = Column(String(20), nullable=False)
-    label = Column(String(100), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    org_name = Column(String(200), nullable=False)
-    is_active = Column(Boolean, nullable=False, default=True)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    batch_no: Mapped[str] = mapped_column(String(20), nullable=False)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class MemberMaterial(Base):
@@ -62,15 +64,15 @@ class MemberMaterial(Base):
     __tablename__ = "member_materials"
     __table_args__ = (Index("ix_member_materials_profile", "tenant_id", "profile_id", "stage"),)
 
-    profile_id = Column(String(36), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    stage = Column(String(20), nullable=False)
-    material_type = Column(String(100), nullable=False)
-    file_version = Column(String(100), nullable=False, default="")
-    submit_date = Column(Date, nullable=True)
-    submitter_id = Column(String(36), nullable=True)
-    review_status = Column(String(20), nullable=False, default="pending")
-    note = Column(Text, nullable=False, default="")
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    stage: Mapped[str] = mapped_column(String(20), nullable=False)
+    material_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    file_version: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    submit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    submitter_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class MemberStageHistory(Base):
@@ -79,14 +81,14 @@ class MemberStageHistory(Base):
     __tablename__ = "member_stage_history"
     __table_args__ = (Index("ix_member_stage_history_profile", "tenant_id", "profile_id"),)
 
-    profile_id = Column(String(36), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    from_stage = Column(String(20), nullable=False)
-    to_stage = Column(String(20), nullable=False)
-    decision_date = Column(Date, nullable=False)
-    basis = Column(Text, nullable=False)
-    opinion = Column(Text, nullable=False, default="")
-    decided_by = Column(String(36), nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    from_stage: Mapped[str] = mapped_column(String(20), nullable=False)
+    to_stage: Mapped[str] = mapped_column(String(20), nullable=False)
+    decision_date: Mapped[date] = mapped_column(Date, nullable=False)
+    basis: Mapped[str] = mapped_column(Text, nullable=False)
+    opinion: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_by: Mapped[str] = mapped_column(String(36), nullable=False)
 
 
 class MemberReminder(Base):
@@ -100,14 +102,14 @@ class MemberReminder(Base):
         Index("ix_member_reminders_due", "tenant_id", "org_unit_id", "due_on", "status"),
     )
 
-    profile_id = Column(String(36), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    kind = Column(String(40), nullable=False)
-    due_on = Column(Date, nullable=False)
-    status = Column(String(20), nullable=False, default="open")
-    processed_by = Column(String(36), nullable=True)
-    processed_at = Column(DateTime, nullable=True)
-    note = Column(Text, nullable=False, default="")
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    due_on: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
+    processed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class MemberCultivation(Base):
@@ -118,16 +120,16 @@ class MemberCultivation(Base):
         Index("ix_member_cultivation_profile", "tenant_id", "profile_id", "category"),
     )
 
-    profile_id = Column(String(36), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    category = Column(String(40), nullable=False)
-    score = Column(Numeric(10, 2), nullable=True)
-    period = Column(String(40), nullable=False, default="")
-    source_note = Column(String(500), nullable=False, default="")
-    verified_by = Column(String(36), nullable=True)
-    verified_at = Column(DateTime, nullable=True)
-    is_risk = Column(Boolean, nullable=False, default=False)
-    risk_note = Column(String(500), nullable=False, default="")
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    category: Mapped[str] = mapped_column(String(40), nullable=False)
+    score: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    period: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    source_note: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    verified_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_risk: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    risk_note: Mapped[str] = mapped_column(String(500), nullable=False, default="")
 
 
 class MemberVote(Base):
@@ -141,12 +143,12 @@ class MemberVote(Base):
         Index("ix_member_votes_batch", "tenant_id", "batch_no", "round_no", "profile_id"),
     )
 
-    batch_no = Column(String(20), nullable=False)
-    round_no = Column(Integer, nullable=False)
-    profile_id = Column(String(36), nullable=False)
-    voter_id = Column(String(36), nullable=False)
-    vote = Column(String(20), nullable=False)
-    comment = Column(Text, nullable=False, default="")
+    batch_no: Mapped[str] = mapped_column(String(20), nullable=False)
+    round_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    voter_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    vote: Mapped[str] = mapped_column(String(20), nullable=False)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class MemberArchiveCheck(Base):
@@ -155,9 +157,9 @@ class MemberArchiveCheck(Base):
     __tablename__ = "member_archive_checks"
     __table_args__ = (Index("ix_member_archive_checks_profile", "tenant_id", "profile_id"),)
 
-    profile_id = Column(String(36), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    checked_at = Column(DateTime, nullable=False)
-    checked_by = Column(String(36), nullable=False)
-    rule_version = Column(String(20), nullable=False)
-    result = Column(JSON, nullable=False, default=dict)
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    checked_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    result: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)

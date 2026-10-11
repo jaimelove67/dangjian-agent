@@ -1,11 +1,11 @@
 """知识文档状态变更审计（可选功能，用于记录状态变更历史）"""
+
 from __future__ import annotations
 
 import logging
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import KnowledgeDoc

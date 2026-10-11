@@ -38,9 +38,13 @@ class MockProvider(BaseModelProvider):
 
 
 @pytest.fixture
-def setup_models():
+def setup_models(monkeypatch):
     """设置测试模型"""
     registry = ModelRegistry()
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "ALLOWED_EXTERNAL_MODELS", ["models.test"])
+    from app.llm.gateway import get_gateway
+    get_gateway.cache_clear()
 
     # 本地 LLM
     local_llm_config = ModelConfig(
@@ -59,6 +63,7 @@ def setup_models():
         model_type=ModelType.LLM,
         deployment_type=DeploymentType.EXTERNAL,
         provider="qwen",
+        endpoint="https://models.test/v1",
     )
     registry.register(MockProvider(external_llm_config))
 

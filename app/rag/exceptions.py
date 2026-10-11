@@ -1,4 +1,5 @@
 """RAG模块异常定义"""
+
 from __future__ import annotations
 
 

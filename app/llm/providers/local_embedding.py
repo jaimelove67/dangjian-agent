@@ -3,19 +3,19 @@
 使用 Sentence Transformers 加载本地向量化模型。
 """
 
-from typing import List, Optional
-import numpy as np
+from typing import Any, List
+
+import structlog
 from sentence_transformers import SentenceTransformer
 
 from app.llm.base import (
     BaseModelProvider,
+    DeploymentType,
+    EmbeddingResponse,
     ModelConfig,
     ModelResponse,
-    EmbeddingResponse,
-    DeploymentType,
     ModelType,
 )
-import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -40,18 +40,14 @@ class LocalEmbeddingProvider(BaseModelProvider):
         try:
             # 加载模型
             logger.info(
-                "loading_embedding_model",
-                model_id=config.model_id,
-                model_path=config.model_path
+                "loading_embedding_model", model_id=config.model_id, model_path=config.model_path
             )
 
             self.model = SentenceTransformer(config.model_path)
             self.dimensions = self.model.get_sentence_embedding_dimension()
 
             logger.info(
-                "embedding_model_loaded",
-                model_id=config.model_id,
-                dimensions=self.dimensions
+                "embedding_model_loaded", model_id=config.model_id, dimensions=self.dimensions
             )
 
         except Exception as e:
@@ -59,15 +55,11 @@ class LocalEmbeddingProvider(BaseModelProvider):
                 "embedding_model_load_failed",
                 model_id=config.model_id,
                 model_path=config.model_path,
-                error=str(e)
+                error=type(e).__name__,
             )
             raise
 
-    async def generate(
-        self,
-        prompt: str,
-        **kwargs
-    ) -> ModelResponse:
+    async def generate(self, prompt: str, **kwargs: Any) -> ModelResponse:
         """生成文本
 
         向量化模型不支持文本生成。
@@ -79,15 +71,9 @@ class LocalEmbeddingProvider(BaseModelProvider):
         Raises:
             NotImplementedError: 不支持文本生成
         """
-        raise NotImplementedError(
-            "Embedding model does not support text generation"
-        )
+        raise NotImplementedError("Embedding model does not support text generation")
 
-    async def embed(
-        self,
-        texts: List[str],
-        **kwargs
-    ) -> EmbeddingResponse:
+    async def embed(self, texts: List[str], **kwargs: Any) -> EmbeddingResponse:
         """文本向量化
 
         Args:
@@ -100,8 +86,8 @@ class LocalEmbeddingProvider(BaseModelProvider):
             向量化响应
         """
         try:
-            batch_size = kwargs.get('batch_size', 32)
-            normalize = kwargs.get('normalize_embeddings', True)
+            batch_size = kwargs.get("batch_size", 32)
+            normalize = kwargs.get("normalize_embeddings", True)
 
             # 向量化
             embeddings = self.model.encode(
@@ -118,7 +104,7 @@ class LocalEmbeddingProvider(BaseModelProvider):
                 "embedding_success",
                 model_id=self.config.model_id,
                 num_texts=len(texts),
-                dimensions=self.dimensions
+                dimensions=self.dimensions,
             )
 
             return EmbeddingResponse(
@@ -132,7 +118,7 @@ class LocalEmbeddingProvider(BaseModelProvider):
                 "embedding_failed",
                 model_id=self.config.model_id,
                 num_texts=len(texts),
-                error=str(e)
+                error=type(e).__name__,
             )
             raise
 
@@ -147,17 +133,14 @@ class LocalEmbeddingProvider(BaseModelProvider):
             test_text = ["健康检查"]
             self.model.encode(test_text, show_progress_bar=False)
 
-            logger.info(
-                "embedding_health_check_success",
-                model_id=self.config.model_id
-            )
+            logger.info("embedding_health_check_success", model_id=self.config.model_id)
             return True
 
         except Exception as e:
             logger.error(
                 "embedding_health_check_failed",
                 model_id=self.config.model_id,
-                error=str(e)
+                error=type(e).__name__,
             )
             return False
 
@@ -167,7 +150,7 @@ class LocalEmbeddingProvider(BaseModelProvider):
         Returns:
             向量维度
         """
-        return self.dimensions
+        return int(self.dimensions)
 
 
 def create_local_embedding_provider(

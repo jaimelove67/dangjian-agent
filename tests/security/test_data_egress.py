@@ -24,11 +24,15 @@ def _config(deployment: DeploymentType) -> ModelConfig:
         model_type=ModelType.LLM,
         deployment_type=deployment,
         provider="external-provider",
+        endpoint="https://models.test/v1" if deployment == DeploymentType.EXTERNAL else None,
     )
 
 
 def test_public_external_allowed():
-    allowed, _ = DataLevelGateway().check_access(
+    gateway = DataLevelGateway()
+    assert gateway.check_access(DataLevel.PUBLIC, _config(DeploymentType.EXTERNAL))[0] is False
+    gateway.add_allowed_domain("models.test")
+    allowed, _ = gateway.check_access(
         DataLevel.PUBLIC, _config(DeploymentType.EXTERNAL)
     )
     assert allowed is True

@@ -5,7 +5,7 @@
 repos:
   # Python 代码格式化
   - repo: https://github.com/psf/black
-    rev: 24.1.1
+    rev: 26.10.1
     hooks:
       - id: black
         language_version: python3.11
@@ -62,11 +62,14 @@ repos:
       - id: detect-private-key
 
   # 安全检查 - 检查已知的漏洞依赖
-  - repo: https://github.com/Lucas-C/pre-commit-hooks-safety
-    rev: v1.3.3
+  - repo: local
     hooks:
-      - id: python-safety-dependencies-check
-        files: requirements.*\.txt$
+      - id: pip-audit
+        name: 已安装哈希锁定依赖漏洞检查
+        entry: python -m pip_audit --strict
+        language: system
+        pass_filenames: false
+        files: requirements.*\.(txt|lock)$
 
   # Markdown 格式检查
   - repo: https://github.com/executablebooks/mdformat

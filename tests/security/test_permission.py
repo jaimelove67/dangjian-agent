@@ -35,10 +35,11 @@ class TestInterfacePermissions:
         assert not has_permission(UserRole.MEMBER, Permission.STAGE_TRANSITION)
         assert not has_permission(UserRole.APPLICANT, Permission.STAGE_TRANSITION)
 
-    def test_config_and_audit_are_system_admin_only(self):
+    def test_config_and_audit_are_tenant_administrator_permissions(self):
         for permission in (Permission.CONFIG_MANAGE, Permission.AUDIT_QUERY):
             assert has_permission(UserRole.SYSTEM_ADMIN, permission)
-            assert not has_permission(UserRole.SCHOOL_ADMIN, permission)
+            assert has_permission(UserRole.SCHOOL_ADMIN, permission)
+            assert not has_permission(UserRole.DEPARTMENT_ADMIN, permission)
             assert not has_permission(UserRole.DEPARTMENT_ADMIN, permission)
 
 

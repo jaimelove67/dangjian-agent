@@ -2,6 +2,7 @@
 
 import time
 import uuid
+from typing import Any
 
 from app.core.cache import redis_manager
 from app.core.config import settings
@@ -13,7 +14,7 @@ class AuthStoreUnavailable(Exception):
 
 
 class TokenRevocationStore:
-    def __init__(self, redis_client) -> None:
+    def __init__(self, redis_client: Any) -> None:
         self.redis = redis_client
 
     async def ensure_available(self) -> None:

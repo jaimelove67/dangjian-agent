@@ -1,111 +1,95 @@
-# 党建工作智能体 - Docker Compose 配置
-#
-# 镜像源说明：
-#   所有 image 均可通过环境变量覆盖，默认值等价于原配置（官方仓库），
-#   因此在网络正常的机器上行为完全不变。网络受限时，在 .env 中设置：
-#     DOCKERHUB_MIRROR=docker.m.daocloud.io   # Docker Hub 加速源
-#     GHCR_MIRROR=ghcr.io                     # ghcr.io 镜像源（registry-mirrors 对其无效）
-#   注意：请只填写实测可用的源，先用 scripts/check-docker-mirrors.sh 自检。
-version: '3.8'
+# 生产模板：只公开HTTPS；数据库与Redis使用学校配置的TLS服务。
+# 未提供密钥、证书与明确来源时拒绝展开。真实学校审批仍由治理页面配置。
+name: party-agent-production
+x-runtime: &runtime
+  image: party-agent:${APP_VERSION:-module6}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      BASE_IMAGE: ${BASE_IMAGE:-python:3.11-slim-bookworm}
+  environment: &runtime-env
+    ENV: production
+    DEBUG: "false"
+    LOG_FORMAT: json
+    DATABASE_URL_FILE: /run/secrets/runtime_database
+    REDIS_URL_FILE: /run/secrets/redis_url
+    SECRET_KEY_FILE: /run/secrets/jwt_key
+    FILE_ENCRYPTION_KEYS_FILE: /run/secrets/file_keys
+    FILE_ENCRYPTION_ACTIVE_KEY: ${FILE_ENCRYPTION_ACTIVE_KEY:?待配置当前文件密钥版本}
+    DASHSCOPE_API_KEY_FILE: /run/secrets/model_key
+    ALLOWED_HOSTS: ${ALLOWED_HOSTS:?待配置明确的学校HTTPS来源JSON数组}
+    ALLOWED_EXTERNAL_MODELS: ${ALLOWED_EXTERNAL_MODELS:-[]}
+    ALLOWED_LOCAL_MODEL_HOSTS: ${ALLOWED_LOCAL_MODEL_HOSTS:-[]}
+    DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com}
+    CHAT_MODEL: ${CHAT_MODEL:-qwen3.8-flash}
+    EMBED_MODEL: ${EMBED_MODEL:-qwen3.7-text-embedding-flash}
+    RERANK_MODEL: ${RERANK_MODEL:-qwen3.7-text-rerank}
+    FILE_STORAGE_DIR: /app/uploads
+    AUDIT_SPOOL_DIR: /app/audit-spool
+    JOB_WORKER_ENABLED: "true"
+  secrets: [runtime_database, redis_url, jwt_key, file_keys, model_key]
+  read_only: true
+  tmpfs: ["/tmp:uid=1000,gid=1000,mode=700"]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  volumes:
+    - originals:/app/uploads
+    - audit_spool:/app/audit-spool
+  networks: [backend, egress]
 
 services:
-  # PostgreSQL 数据库（业务数据 + 向量库）
-  postgres:
-    image: ${DOCKERHUB_MIRROR:-docker.io}/pgvector/pgvector:pg16
-    container_name: party-agent-postgres
-    environment:
-      POSTGRES_DB: party_agent
-      POSTGRES_USER: party_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
-      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U party_user -d party_agent"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - party-agent-network
-
-  # Redis（缓存 + 队列）
-  redis:
-    image: ${DOCKERHUB_MIRROR:-docker.io}/library/redis:7-alpine
-    container_name: party-agent-redis
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-change_me_in_production}
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-change_me_in_production}
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - party-agent-network
-
-  # 应用服务
   app:
+    <<: *runtime
+    restart: unless-stopped
+  proxy:
     build:
       context: .
-      dockerfile: Dockerfile
-      args:
-        # 基础镜像随加速源走，避免 Dockerfile 里写死官方地址
-        BASE_IMAGE: ${DOCKERHUB_MIRROR:-docker.io}/library/python:3.11-slim
-    container_name: party-agent-app
-    environment:
-      # 数据库配置
-      DATABASE_URL: postgresql+asyncpg://party_user:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/party_agent
-      # Redis 配置
-      REDIS_URL: redis://:${REDIS_PASSWORD:-change_me_in_production}@redis:6379/0
-      # 应用配置
-      ENV: production
-      LOG_LEVEL: INFO
-      # 模型配置（从环境变量读取）
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-${QWEN_API_KEY:-}}
-      CHAT_MODEL: ${CHAT_MODEL:-qwen3.8-flash}
-      EMBED_MODEL: ${EMBED_MODEL:-qwen3.7-text-embedding-flash}
-      RERANK_MODEL: ${RERANK_MODEL:-qwen3.7-text-rerank}
-      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com}
-      ALLOWED_EXTERNAL_MODELS: ${ALLOWED_EXTERNAL_MODELS:-["dashscope.aliyuncs.com"]}
-      ENABLE_DATA_LEVEL_GATEWAY: "true"
-      # 安全配置
-      SECRET_KEY: ${SECRET_KEY:-please_change_this_secret_key}
-      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-["*"]}
+      dockerfile: Dockerfile.frontend
+    ports: ["443:8443"]
     volumes:
-      # 挂载配置文件
-      - ./config:/app/config:ro
-      # 挂载日志目录
-      - ./logs:/app/logs
-    ports:
-      - "8000:8000"
+      - ${TLS_CERT_DIR:?待配置学校TLS证书目录}:/run/tls:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:uid=101,gid=101,mode=700
+      - /var/run:uid=101,gid=101,mode=700
+      - /tmp:uid=101,gid=101,mode=700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/ready"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      app:
+        condition: service_started
     restart: unless-stopped
-    networks:
-      - party-agent-network
+    networks: [backend, edge]
+  migrate:
+    <<: *runtime
+    profiles: [maintenance]
+    environment:
+      <<: *runtime-env
+      DATABASE_URL_FILE: /run/secrets/migration_database
+      JOB_WORKER_ENABLED: "false"
+    secrets: [migration_database, redis_url, jwt_key, file_keys, model_key]
+    command: [alembic, upgrade, head]
+
+secrets:
+  runtime_database:
+    file: ${RUNTIME_DATABASE_FILE:?待配置非所有者运行账号TLS数据库URL文件}
+  migration_database:
+    file: ${MIGRATION_DATABASE_FILE:?待配置独立迁移账号TLS数据库URL文件}
+  redis_url:
+    file: ${REDIS_URL_FILE:?待配置rediss连接文件}
+  jwt_key:
+    file: ${JWT_KEY_FILE:?待配置独立JWT密钥文件}
+  file_keys:
+    file: ${FILE_KEYS_FILE:?待配置文件加密密钥环JSON文件}
+  model_key:
+    file: ${MODEL_KEY_FILE:?待配置模型密钥文件，未批准时可为空}
 
 volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
-
+  originals:
+  audit_spool:
 networks:
-  party-agent-network:
-    driver: bridge
+  backend:
+    internal: true
+  egress:
+  edge:

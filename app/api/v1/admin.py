@@ -1,6 +1,8 @@
 """管理查询：当前租户的持久配置和只追加审计日志。"""
 
-from typing import Optional
+from contextlib import nullcontext
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,11 +13,13 @@ from app.api.audit import audit_operation
 from app.core.audit import query_audit_logs
 from app.core.config import tenant_config
 from app.core.security import Permission
+from app.core.tenant import bypass_tenant_filter
 from app.db.session import get_db
 from app.deps import require_permissions
 from app.models.audit import AuditLog
 from app.models.user import User
 from app.schemas.common import APIResponse
+from app.services.identity_service import is_platform_admin
 
 router = APIRouter()
 _require_config = require_permissions(Permission.CONFIG_MANAGE)
@@ -35,7 +39,7 @@ class TenantSettings(BaseModel):
 @router.get("/admin/config", response_model=APIResponse[dict], summary="租户有效配置")
 async def read_config(
     request: Request, user: User = Depends(_require_config), db: AsyncSession = Depends(get_db)
-):
+) -> APIResponse[dict[str, Any]]:
     await tenant_config.load(db, str(user.tenant_id))
     return APIResponse(
         data={
@@ -51,7 +55,7 @@ async def update_config(
     request: Request,
     user: User = Depends(_require_config),
     db: AsyncSession = Depends(get_db),
-):
+) -> APIResponse[dict[str, Any]]:
     values = body.model_dump(exclude_unset=True)
     if not values or any(value is None for value in values.values()):
         raise HTTPException(status_code=422, detail="必须提供非空配置值")
@@ -81,21 +85,54 @@ async def read_audit_logs(
     page_size: int = Query(40, ge=1, le=100),
     action: Optional[str] = Query(None, max_length=50),
     resource_type: Optional[str] = Query(None, max_length=50),
+    user_id: Optional[str] = Query(None, max_length=36),
+    resource_id: Optional[str] = Query(None, max_length=200),
+    result: Optional[str] = Query(None, pattern="^(success|failed|denied)$"),
+    anonymous: bool = False,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
     user: User = Depends(_require_audit),
     db: AsyncSession = Depends(get_db),
-):
-    stmt = query_audit_logs(
-        tenant_id=str(user.tenant_id), action=action, resource_type=resource_type
+) -> APIResponse[dict[str, Any]]:
+    start = (
+        start_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if (start_at and start_at.tzinfo)
+        else start_at
     )
-    total = (
-        await db.execute(stmt.with_only_columns(func.count()).select_from(AuditLog).order_by(None))
-    ).scalar_one()
-    rows = (await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))).scalars().all()
+    end = (
+        end_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if (end_at and end_at.tzinfo)
+        else end_at
+    )
+    if start and end and start > end:
+        raise HTTPException(422, "开始时间不能晚于结束时间")
+    if anonymous and not await is_platform_admin(db, user):
+        raise HTTPException(403, "匿名认证审计仅供真实平台系统管理员查询")
+    stmt = query_audit_logs(
+        tenant_id="unauthenticated" if anonymous else str(user.tenant_id),
+        user_id=user_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        result=result,
+        start_at=start,
+        end_at=end,
+    )
+    with bypass_tenant_filter() if anonymous else nullcontext():
+        total = (
+            await db.execute(
+                stmt.with_only_columns(func.count()).select_from(AuditLog).order_by(None)
+            )
+        ).scalar_one()
+        rows = (
+            (await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))).scalars().all()
+        )
     items = [
         {
             key: getattr(row, key)
             for key in (
                 "id",
+                "user_id",
                 "user_name",
                 "action",
                 "resource_type",
@@ -103,6 +140,7 @@ async def read_audit_logs(
                 "data_level",
                 "request_id",
                 "result",
+                "ip_address",
                 "old_value",
                 "new_value",
             )

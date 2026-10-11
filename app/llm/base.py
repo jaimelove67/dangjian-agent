@@ -1,7 +1,7 @@
 """模型提供者基类和数据模型定义"""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -64,9 +64,9 @@ class ModelConfig:
     model_path: Optional[str] = None  # 本地模型路径
     max_tokens: int = 4096  # 最大token数
     temperature: float = 0.7  # 温度参数
-    extra_params: Dict[str, Any] = None  # 额外参数
+    extra_params: Dict[str, Any] = field(default_factory=dict)  # 额外参数
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.extra_params is None:
             self.extra_params = {}
 
@@ -104,7 +104,7 @@ class BaseModelProvider(ABC):
     所有模型供应商都需要实现此接口
     """
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig) -> None:
         """初始化模型提供者
 
         Args:
@@ -113,7 +113,7 @@ class BaseModelProvider(ABC):
         self.config = config
 
     @abstractmethod
-    async def generate(self, prompt: str, **kwargs) -> ModelResponse:
+    async def generate(self, prompt: str, **kwargs: Any) -> ModelResponse:
         """生成文本
 
         Args:
@@ -126,7 +126,7 @@ class BaseModelProvider(ABC):
         pass
 
     @abstractmethod
-    async def embed(self, texts: List[str], **kwargs) -> EmbeddingResponse:
+    async def embed(self, texts: List[str], **kwargs: Any) -> EmbeddingResponse:
         """文本向量化
 
         Args:
@@ -137,6 +137,11 @@ class BaseModelProvider(ABC):
             向量化响应
         """
         pass
+
+    async def rerank(
+        self, query: str, documents: list[str], top_k: int, **kwargs: Any
+    ) -> RerankResponse:
+        raise NotImplementedError("此模型不支持重排")
 
     @abstractmethod
     async def health_check(self) -> bool:

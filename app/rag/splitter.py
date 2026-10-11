@@ -7,6 +7,7 @@
 - 片段携带条款编号（引用核验依据）与顺序；
 - 可配置：片段长度上限、重叠长度、是否启用二次切分。
 """
+
 from __future__ import annotations
 
 import re
@@ -24,6 +25,7 @@ _SENTENCE_END = "。！？；"
 @dataclass
 class TextChunk:
     """切分片段"""
+
     content: str
     sequence: int
     article: Optional[str] = None
@@ -119,7 +121,7 @@ class ChapterArticleSplitter:
                 parts.append(current)
                 if self.overlap:
                     allow = max(0, self.max_chunk_size - len(unit))
-                    overlap_text = current[-min(self.overlap, allow):] if allow else ""
+                    overlap_text = current[-min(self.overlap, allow) :] if allow else ""
                     current = overlap_text + unit
                 else:
                     current = unit

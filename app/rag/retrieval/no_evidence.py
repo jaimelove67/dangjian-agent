@@ -1,4 +1,5 @@
 """无依据判定模块"""
+
 from typing import List
 
 from app.schemas.retrieval import RetrievalResult

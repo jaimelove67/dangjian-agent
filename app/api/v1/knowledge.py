@@ -89,7 +89,7 @@ async def search_knowledge(
     request: Request,
     user: User = Depends(_require_query),
     db: AsyncSession = Depends(get_db),
-):
+) -> APIResponse[dict[str, Any]]:
     level = content_level(body.query, body.data_level)
     require_cloud_eligible(level)
     retriever = HybridRetriever(db, data_level=level, use_reranker=body.use_reranker)
@@ -266,8 +266,14 @@ async def create_knowledge_document(
     try:
         original_version = (document.doc_metadata or {}).get("content_revision", 1)
         stored = save_original(str(tenant_id), doc_id, original_version, content, file_name)
-        document.doc_metadata = {**(document.doc_metadata or {}), "original_file": stored}
+        document.doc_metadata = {
+            **(document.doc_metadata or {}),
+            "original_file": stored,
+            "original_versions": {str(original_version): stored},
+        }
     except OSError:
+        if settings.ENV == "production":
+            raise HTTPException(503, "加密原件保存失败，入库未提交") from None
         logger.warning("original_file_save_failed", extra={"doc_id": doc_id})
     await db.commit()
     return APIResponse(
@@ -309,7 +315,9 @@ async def list_knowledge_documents(
     counts_query = stmt.with_only_columns(KnowledgeDoc.status, func.count()).group_by(
         KnowledgeDoc.status
     )
-    counts = dict((await execute_knowledge_query(db, counts_query)).all())
+    counts = {
+        status: count for status, count in (await execute_knowledge_query(db, counts_query)).all()
+    }
     if doc_status:
         stmt = stmt.where(KnowledgeDoc.status == doc_status)
     total = counts.get(doc_status, 0) if doc_status else sum(counts.values())
@@ -363,7 +371,7 @@ async def replace_knowledge_content(
     user: User = Depends(_require_manage),
     tenant_id: str = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
-):
+) -> APIResponse[DocumentCreateResponse]:
     content = await file.read(settings.MAX_UPLOAD_SIZE + 1)
     if len(content) > settings.MAX_UPLOAD_SIZE:
         raise HTTPException(status_code=413, detail="文件大小超过限制")
@@ -406,8 +414,16 @@ async def replace_knowledge_content(
     )
     try:
         stored = save_original(str(tenant_id), doc_id, old_revision + 1, content, file.filename)
-        document.doc_metadata = {**(document.doc_metadata or {}), "original_file": stored}
+        metadata = dict(document.doc_metadata or {})
+        versions = dict(metadata.get("original_versions", {}))
+        previous = metadata.get("original_file")
+        if isinstance(previous, dict):
+            versions[str(previous["revision"])] = previous
+        versions[str(old_revision + 1)] = stored
+        document.doc_metadata = {**metadata, "original_file": stored, "original_versions": versions}
     except OSError:
+        if settings.ENV == "production":
+            raise HTTPException(503, "加密原件保存失败，更新未提交") from None
         logger.warning("original_file_save_failed", extra={"doc_id": doc_id})
     await db.commit()
     return APIResponse(
@@ -791,15 +807,24 @@ async def download_original_file(
         raise HTTPException(status_code=404, detail="原始文件未留存，暂无版本可下载")
     import asyncio
 
+    versions = (document.doc_metadata or {}).get("original_versions", {})
+    stored_version = versions.get(str(target_revision)) or (
+        stored if stored.get("revision") == target_revision else {}
+    )
+
     try:
         content = await asyncio.to_thread(
-            read_original, str(document.tenant_id), doc_id, int(target_revision)
+            read_original,
+            str(document.tenant_id),
+            doc_id,
+            int(target_revision),
+            stored_version.get("sha256"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="原始文件标识无效") from exc
     if content is None:
         raise HTTPException(status_code=404, detail="原始文件未留存，暂无版本可下载")
-    file_name = stored.get("file_name") or document.file_name
+    file_name = stored_version.get("file_name") or stored.get("file_name") or document.file_name
     await audit_operation(
         db,
         request,

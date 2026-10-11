@@ -17,10 +17,11 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, cast
+from typing import Any
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError as JWTError
 
 from app.core.config import settings
 from app.core.constants import DataLevel
@@ -109,7 +110,7 @@ def _encode(subject: str, token_type: TokenType, expires: timedelta, **claims: A
         if value is None:
             continue
         payload[key] = value.value if isinstance(value, Enum) else value
-    return cast(str, jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM))
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
 def create_access_token(
@@ -171,9 +172,11 @@ def decode_token(token: str, expected_type: TokenType | None = None) -> dict[str
     if not token:
         raise TokenError("令牌缺失")
     try:
-        payload = cast(
-            "dict[str, Any]",
-            jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]),
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"verify_sub": False, "verify_jti": False},
         )
     except JWTError as exc:
         raise TokenError(f"令牌无效或已过期: {exc}") from exc
@@ -208,6 +211,9 @@ class Permission(str, Enum):
     ARCHIVE_CONFIRM = "admin.archive_confirm"
     CONFIG_MANAGE = "admin.config"  # 配置管理：系统管理员
     AUDIT_QUERY = "admin.audit"  # 审计查询：系统管理员
+    IDENTITY_MANAGE = "admin.identity"
+    REVIEW_MANAGE = "admin.review"
+    OPS_QUERY = "admin.ops"
 
 
 @dataclass(frozen=True)
@@ -257,6 +263,7 @@ _MANAGER_PERMISSIONS = frozenset(
         Permission.ASSESSMENT_MANAGE,
         Permission.ASSESSMENT_REVIEW,
         Permission.ASSESSMENT_EXPORT,
+        Permission.REVIEW_MANAGE,
     }
 )
 _BRANCH_PERMISSIONS = frozenset(
@@ -273,6 +280,7 @@ _BRANCH_PERMISSIONS = frozenset(
         Permission.ASSESSMENT_QUERY,
         Permission.ASSESSMENT_MANAGE,
         Permission.ASSESSMENT_EXPORT,
+        Permission.REVIEW_MANAGE,
     }
 )
 _MEMBER_PERMISSIONS = frozenset({Permission.QA_ASK, Permission.KNOWLEDGE_QUERY})
@@ -291,7 +299,17 @@ ROLE_PROFILES: dict[UserRole, RoleProfile] = {
         knowledge_scopes=frozenset({KS_PUBLIC, KS_SCHOOL}),
         business_scope=BS_SCHOOL,
         permissions=_MANAGER_PERMISSIONS
-        | frozenset({Permission.ARCHIVE_CONFIRM, Permission.ASSESSMENT_CONFIGURE}),
+        | frozenset(
+            {
+                Permission.ARCHIVE_CONFIRM,
+                Permission.ASSESSMENT_CONFIGURE,
+                Permission.CONFIG_MANAGE,
+                Permission.AUDIT_QUERY,
+                Permission.IDENTITY_MANAGE,
+                Permission.REVIEW_MANAGE,
+                Permission.OPS_QUERY,
+            }
+        ),
         data_level=DataLevel.SENSITIVE,
     ),
     UserRole.DEPARTMENT_ADMIN: RoleProfile(

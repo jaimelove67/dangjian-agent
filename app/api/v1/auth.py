@@ -64,6 +64,16 @@ async def login(
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用")
 
+    request.state.audit_identity = {
+        "tenant_id": str(user.tenant_id),
+        "user_id": str(user.id),
+        "data_level": "internal",
+    }
+
+    from app.services.identity_guard import ensure_active_identity
+
+    await ensure_active_identity(db, user)
+
     await get_token_revocation_store().ensure_available()
     session_id = uuid.uuid4().hex
     access_token = create_access_token(
@@ -141,6 +151,16 @@ async def refresh_token(
 
     if not user or user.is_deleted or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已被禁用")
+
+    request.state.audit_identity = {
+        "tenant_id": str(user.tenant_id),
+        "user_id": str(user.id),
+        "data_level": "internal",
+    }
+
+    from app.services.identity_guard import ensure_active_identity
+
+    await ensure_active_identity(db, user)
 
     await get_token_revocation_store().consume_refresh(payload)
     # 保留会话 ID，使退出能够同时吊销刷新前后签发的访问令牌。

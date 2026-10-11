@@ -1,9 +1,9 @@
 """按业务编号解析文档，在当前租户内批量向量化；事务由 API 管理。"""
 
 import math
-from typing import Optional
+from typing import Any, Optional
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import Select, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import TenantIsolationError, get_tenant_id
@@ -32,7 +32,7 @@ class EmbeddingService:
         self.access_filters = access_filters or {"tenant_id": self.tenant_id}
         self._model_service = get_model_service()
 
-    def _query(self):
+    def _query(self) -> Select[Any]:
         if not self.tenant_id:
             raise TenantIsolationError("向量化缺少租户上下文")
         stmt = (
@@ -63,7 +63,7 @@ class EmbeddingService:
         if doc_id:
             stmt = stmt.where(or_(KnowledgeDoc.doc_id == doc_id, KnowledgeDoc.id == doc_id))
         else:
-            stmt = stmt.where(EmbeddingChunk.chunk_id.in_(chunk_ids))
+            stmt = stmt.where(EmbeddingChunk.chunk_id.in_(chunk_ids or []))
         if not force_update:
             stmt = stmt.where(EmbeddingChunk.embedding.is_(None))
         return await self._embed(stmt)
@@ -76,7 +76,7 @@ class EmbeddingService:
             )
         )
 
-    async def _embed(self, stmt) -> int:
+    async def _embed(self, stmt: Select[Any]) -> int:
         """按主键游标分批，向量条数、维度和有限值全部校验后再写入。"""
         count, cursor = 0, None
         while True:

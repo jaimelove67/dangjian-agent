@@ -2,11 +2,16 @@
 
 使用交叉编码器对候选结果进行精排。
 """
+
 from typing import List
+
 import structlog
 
-from app.schemas.retrieval import RetrievalResult
+from app.llm.base import DataLevel
 from app.llm.registry import get_model_registry
+from app.llm.service import get_model_service
+from app.rag.privacy import LEVELS, content_level
+from app.schemas.retrieval import RetrievalResult
 
 logger = structlog.get_logger(__name__)
 
@@ -64,16 +69,29 @@ class Reranker:
             documents = [c.content for c in candidates]
 
             # 调用重排API
-            reranked_indices = await provider.rerank(
+            level = max(
+                [content_level(query)]
+                + [
+                    content_level(
+                        item.content,
+                        minimum=DataLevel(item.metadata.get("security_level", "public")),
+                    )
+                    for item in candidates
+                ],
+                key=LEVELS.index,
+            )
+            reranked_indices = await get_model_service().rerank(
                 query=query,
                 documents=documents,
-                top_n=top_k,
+                top_k=top_k,
+                data_level=level,
             )
 
             # 重新排序结果
             reranked_results: List[RetrievalResult] = []
-            for idx, score in reranked_indices:
-                if idx < len(candidates):
+            for item in reranked_indices.results:
+                idx, score = item.index, item.relevance_score
+                if 0 <= idx < len(candidates):
                     result = candidates[idx]
                     # 更新分数为重排分数
                     result.score = score
@@ -91,7 +109,7 @@ class Reranker:
         except Exception as e:
             logger.error(
                 "rerank_failed",
-                error=str(e),
+                error=type(e).__name__,
                 candidates_count=len(candidates),
             )
             # 降级：返回原始候选的top_k

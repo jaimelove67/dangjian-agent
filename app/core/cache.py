@@ -1,7 +1,8 @@
 """Redis 缓存管理模块"""
+
 import json
-from typing import Any, Optional
 import logging
+from typing import Any, Optional
 
 import redis.asyncio as redis
 from redis.asyncio import Redis
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 class RedisManager:
     """Redis 连接管理器"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """初始化 Redis 管理器"""
         self._redis: Optional[Redis] = None
 
@@ -31,7 +32,7 @@ class RedisManager:
             await self._redis.ping()
             logger.info("Redis connected successfully")
         except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
+            logger.error(f"Failed to connect to Redis: {type(e).__name__}")
             raise
 
     async def disconnect(self) -> None:
@@ -90,15 +91,10 @@ class CacheService:
                 return value
 
         except Exception as e:
-            logger.error(f"Failed to get cache key '{key}': {e}")
+            logger.error(f"Failed to get cache key '{key}': {type(e).__name__}")
             return None
 
-    async def set(
-        self,
-        key: str,
-        value: Any,
-        ttl: Optional[int] = None
-    ) -> bool:
+    async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """设置缓存
 
         Args:
@@ -125,7 +121,7 @@ class CacheService:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to set cache key '{key}': {e}")
+            logger.error(f"Failed to set cache key '{key}': {type(e).__name__}")
             return False
 
     async def delete(self, key: str) -> bool:
@@ -141,7 +137,7 @@ class CacheService:
             await self._redis.delete(key)
             return True
         except Exception as e:
-            logger.error(f"Failed to delete cache key '{key}': {e}")
+            logger.error(f"Failed to delete cache key '{key}': {type(e).__name__}")
             return False
 
     async def exists(self, key: str) -> bool:
@@ -157,7 +153,7 @@ class CacheService:
             result = await self._redis.exists(key)
             return bool(result)
         except Exception as e:
-            logger.error(f"Failed to check cache key '{key}': {e}")
+            logger.error(f"Failed to check cache key '{key}': {type(e).__name__}")
             return False
 
     async def expire(self, key: str, ttl: int) -> bool:
@@ -174,7 +170,7 @@ class CacheService:
             await self._redis.expire(key, ttl)
             return True
         except Exception as e:
-            logger.error(f"Failed to set expire for key '{key}': {e}")
+            logger.error(f"Failed to set expire for key '{key}': {type(e).__name__}")
             return False
 
     async def get_ttl(self, key: str) -> Optional[int]:
@@ -189,7 +185,7 @@ class CacheService:
         try:
             return await self._redis.ttl(key)
         except Exception as e:
-            logger.error(f"Failed to get TTL for key '{key}': {e}")
+            logger.error(f"Failed to get TTL for key '{key}': {type(e).__name__}")
             return None
 
 

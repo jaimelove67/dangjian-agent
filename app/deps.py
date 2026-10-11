@@ -12,14 +12,13 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Callable, Optional
+from typing import Any, AsyncGenerator, Callable, Optional, cast
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import tenant_config
 from app.core.security import (
     Permission,
     TokenError,
@@ -62,6 +61,7 @@ async def get_token_payload(
 async def get_current_user(
     payload: dict = Depends(get_token_payload),
     db: AsyncSession = Depends(get_db),
+    request: Request = cast(Request, None),
 ) -> AsyncGenerator[User, None]:
     """获取当前用户，并在请求期间注入租户上下文"""
     user_id = payload.get("sub")
@@ -76,6 +76,12 @@ async def get_current_user(
         user = result.scalar_one_or_none()
         if user is None or user.is_deleted or str(user.tenant_id) != str(tenant_id):
             raise _unauthorized("用户不存在或不属于当前租户")
+        if request is not None:
+            request.state.audit_identity = {
+                "tenant_id": str(user.tenant_id),
+                "user_id": str(user.id),
+                "data_level": resolve_data_level(user.role or UserRole.MEMBER).value,
+            }
         if not user.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用")
 
@@ -86,10 +92,9 @@ async def get_current_user(
             user_id=str(user_id),
             data_level=resolve_data_level(role).value,
         )
-        await tenant_config.load(db, str(tenant_id))
-        from app.services.org_scope import knowledge_org_ids
+        from app.services.identity_guard import ensure_active_identity
 
-        user.knowledge_org_ids = await knowledge_org_ids(db, user)
+        await ensure_active_identity(db, user)
         yield user
     finally:
         clear_tenant_context()

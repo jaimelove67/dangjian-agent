@@ -2,6 +2,7 @@
 
 测试模型注册、路由、闸门的完整集成流程。
 """
+
 import pytest
 
 from app.llm.base import (
@@ -18,13 +19,14 @@ from app.llm.router import ModelRouter, RouterError
 from app.llm.gateway import DataLevelGateway, GatewayError
 from app.llm.service import ModelService
 
-
 # ============================================================
 # 假模型提供者（用于测试）
 # ============================================================
 
+
 class FakeLLMProvider:
     """假LLM提供者"""
+
     def __init__(self, config: ModelConfig):
         self.config = config
 
@@ -63,6 +65,7 @@ def gateway():
     """创建闸门（启用）"""
     gateway = DataLevelGateway()
     gateway.enabled = True
+    gateway.allowed_external_domains = {"fixture-model.example", "dashscope.aliyuncs.com"}
     return gateway
 
 
@@ -96,6 +99,7 @@ def test_register_and_list_models(registry):
             model_name="外部向量化",
             model_type=ModelType.EMBEDDING,
             deployment_type=DeploymentType.EXTERNAL,
+            endpoint="https://fixture-model.example",
             provider="dashscope",
             api_key="fake-key",
         )
@@ -129,6 +133,7 @@ def test_router_strategy_sensitive_data(registry, router):
             model_name="外部LLM",
             model_type=ModelType.LLM,
             deployment_type=DeploymentType.EXTERNAL,
+            endpoint="https://fixture-model.example",
             provider="dashscope",
         )
     )
@@ -163,6 +168,7 @@ def test_router_strategy_public_data(registry, router):
             model_name="外部LLM",
             model_type=ModelType.LLM,
             deployment_type=DeploymentType.EXTERNAL,
+            endpoint="https://fixture-model.example",
             provider="dashscope",
         )
     )
@@ -206,6 +212,7 @@ def test_gateway_blocks_sensitive_with_external(gateway):
         model_name="外部LLM",
         model_type=ModelType.LLM,
         deployment_type=DeploymentType.EXTERNAL,
+        endpoint="https://fixture-model.example",
         provider="dashscope",
     )
 
@@ -305,6 +312,7 @@ def test_router_with_configured_rules(registry, router):
             model_name="专用问答模型",
             model_type=ModelType.LLM,
             deployment_type=DeploymentType.EXTERNAL,
+            endpoint="https://fixture-model.example",
             provider="custom",
         )
     )
@@ -348,6 +356,7 @@ def test_registry_stats(registry):
                 model_name="EMB1",
                 model_type=ModelType.EMBEDDING,
                 deployment_type=DeploymentType.EXTERNAL,
+                endpoint="https://fixture-model.example",
                 provider="test",
             )
         )

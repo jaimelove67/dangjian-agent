@@ -1,6 +1,6 @@
 """共用电子归档合规门禁；确认只对当前学校租户生效，不继承他校确认。"""
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -71,6 +71,18 @@ async def save_archive_policy(
         }
     )
     tenant.config = {**(tenant.config or {}), "electronic_archive": policy}
+    from app.models.governance import ConfigRevision
+
+    tenant.config_version += 1
+    db.add(
+        ConfigRevision(
+            tenant_id=str(user.tenant_id),
+            version=tenant.config_version,
+            actor_id=str(user.id),
+            reason="电子归档确认：" + body.evidence[:480],
+            values=dict(tenant.config),
+        )
+    )
     db.add(
         ContentRevision(
             tenant_id=str(user.tenant_id),
@@ -84,4 +96,4 @@ async def save_archive_policy(
         )
     )
     await db.flush()
-    return policy
+    return cast(dict[str, Any], policy)

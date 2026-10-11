@@ -8,6 +8,7 @@
     parsed = registry.parse(data, file_name="a.pdf")
     parsed.text  # 抽取出的纯文本
 """
+
 from __future__ import annotations
 
 import io
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ParsedDocument:
     """解析结果"""
+
     text: str
     file_name: str = ""
     page_count: Optional[int] = None
@@ -33,6 +35,7 @@ class ParsedDocument:
 
 class DocumentParser(ABC):
     """文档解析器基类"""
+
     name: str = "base"
     extensions: tuple[str, ...] = ()
 
@@ -44,6 +47,7 @@ class DocumentParser(ABC):
 
 class PlainTextParser(DocumentParser):
     """纯文本解析器（.txt / .md）"""
+
     name = "plain_text"
     extensions = (".txt", ".md")
 
@@ -58,6 +62,7 @@ class PlainTextParser(DocumentParser):
 
 class PdfParser(DocumentParser):
     """PDF 解析器（基础版，基于 pypdf）"""
+
     name = "pdf"
     extensions = (".pdf",)
 
@@ -73,13 +78,12 @@ class PdfParser(DocumentParser):
         except Exception as exc:
             raise ParseError(f"PDF 解析失败: {exc}") from exc
 
-        return ParsedDocument(
-            text="\n".join(pages), file_name=file_name, page_count=len(pages)
-        )
+        return ParsedDocument(text="\n".join(pages), file_name=file_name, page_count=len(pages))
 
 
 class DocxParser(DocumentParser):
     """Word 解析器（.docx，基于 python-docx）"""
+
     name = "docx"
     extensions = (".docx",)
 

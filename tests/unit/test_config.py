@@ -20,7 +20,17 @@ class TestSettings:
         assert settings.DEBUG is False
 
     def test_production_never_enables_debug(self):
-        settings = Settings(_env_file=None, ENV="production", DEBUG=True)
+        settings = Settings(
+            _env_file=None,
+            ENV="production",
+            DEBUG=True,
+            DATABASE_URL="postgresql+asyncpg://runtime:synthetic@db.example/party?ssl=verify-full",
+            REDIS_URL="rediss://cache.example/0",
+            SECRET_KEY="a" * 64,
+            ALLOWED_HOSTS=["https://school.example"],
+            FILE_ENCRYPTION_KEYS={"test": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="},
+            FILE_ENCRYPTION_ACTIVE_KEY="test",
+        )
         assert settings.DEBUG is False
 
     def test_env_validation(self):

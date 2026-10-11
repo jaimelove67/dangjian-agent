@@ -8,6 +8,8 @@ from typing import Dict, Optional
 
 import structlog
 
+from app.core.config import tenant_config
+from app.core.tenant import get_tenant_id
 from app.llm.base import BaseModelProvider, DataLevel, DeploymentType, ModelType, TaskType
 from app.llm.gateway import get_gateway
 from app.llm.registry import get_model_registry
@@ -32,7 +34,7 @@ class ModelRouter:
     4. 无可用模型时抛出异常
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """初始化路由器"""
         self.registry = get_model_registry()
         self.gateway = get_gateway()
@@ -134,7 +136,9 @@ class ModelRouter:
             模型ID，如果没有配置返回None
         """
         key = (data_level, task_type, model_type)
-        return self._routing_rules.get(key)
+        tenant_id = get_tenant_id()
+        configured = tenant_config.get(tenant_id, "model_routes", {}) if tenant_id else {}
+        return configured.get(model_type.value) or self._routing_rules.get(key)
 
     def _select_model_by_strategy(
         self,

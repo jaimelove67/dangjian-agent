@@ -2,6 +2,7 @@
 
 所有接口统一返回：``code / message / data / trace_id``。
 """
+
 from __future__ import annotations
 
 from typing import Generic, Optional, TypeVar
@@ -13,6 +14,7 @@ T = TypeVar("T")
 
 class APIResponse(BaseModel, Generic[T]):
     """统一 API 响应"""
+
     code: int = 0
     message: str = "success"
     data: Optional[T] = None
@@ -21,6 +23,7 @@ class APIResponse(BaseModel, Generic[T]):
 
 class ErrorCode:
     """业务错误码（见开发规范 7.3）"""
+
     SUCCESS = 0
     PARAM_ERROR = 40001
     UNAUTHORIZED = 40101

@@ -73,3 +73,15 @@ models/
 
 # 数据文件
 data/
+
+# 包含任何隔离验收环境、密钥与已加密业务材料的目录也不能进入构建上下文。
+.venv*/
+frontend/node_modules/
+frontend/dist/
+frontend/frontend/
+uploads/
+audit-spool/
+secrets/
+*.key
+*.pem
+.env*

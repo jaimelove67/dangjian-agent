@@ -2,7 +2,7 @@
 
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from fastapi import HTTPException
@@ -41,8 +41,11 @@ TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "config" / "study_template
 
 def row_data(record: Any) -> dict[str, Any]:
     """版本快照保留真实字段；不保存 SQLAlchemy 内部状态。"""
-    return jsonable_encoder(
-        {column.key: getattr(record, column.key) for column in record.__table__.columns}
+    return cast(
+        dict[str, Any],
+        jsonable_encoder(
+            {column.key: getattr(record, column.key) for column in record.__table__.columns}
+        ),
     )
 
 
@@ -165,6 +168,18 @@ class StudyService:
             )
         )
         await self.db.flush()
+        if action == "archive":
+            import asyncio
+
+            from app.services.file_store import save_archive
+
+            await asyncio.to_thread(
+                save_archive,
+                self.tenant_id,
+                str(record.id),
+                record.revision,
+                await self._snapshot(record),
+            )
 
     async def _new_item(self, plan: StudyPlan, body: ItemFields) -> StudyPlanItem:
         if body.scheduled_on.year != plan.year:
@@ -883,7 +898,7 @@ class StudyService:
                 {
                     "activity_id": str(record.id),
                     "revision": record.revision,
-                    "held_on": record.held_on.isoformat(),
+                    "held_on": record.held_on.isoformat() if record.held_on else None,
                     "reviewed_by": record.reviewed_by,
                     "participants": [
                         {"source_id": f"{record.id}:{person['participant_id']}", **person}

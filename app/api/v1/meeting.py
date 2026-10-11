@@ -91,9 +91,7 @@ async def type_options(
         request,
         service,
         {
-            "types": [
-                {"value": key, "label": label} for key, label in ACTIVITY_TYPES.items()
-            ],
+            "types": [{"value": key, "label": label} for key, label in ACTIVITY_TYPES.items()],
             "requirements": None,
         },
         "read_type_options",
@@ -150,10 +148,15 @@ async def record_detail(
 
 
 @router.patch(
-    "/meeting/records/{record_id}", response_model=APIResponse[dict], dependencies=[Depends(_manage)]
+    "/meeting/records/{record_id}",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage)],
 )
 async def update_record(
-    record_id: str, body: ActivityUpdate, request: Request, service: ActivityService = Depends(activity_service)
+    record_id: str,
+    body: ActivityUpdate,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
 ) -> APIResponse[dict]:
     """登记会议文本与参会情况，修改后重新审核纪要。"""
     record = await service.update(record_id, body)
@@ -171,7 +174,12 @@ async def recommendations(
 ) -> APIResponse[dict]:
     """从授权知识库推荐议题与学习材料，不补写虚构文件。"""
     return await respond(
-        request, service, await service.recommendations(record_id, q), "recommend_materials", "meeting", record_id
+        request,
+        service,
+        await service.recommendations(record_id, q),
+        "recommend_materials",
+        "meeting",
+        record_id,
     )
 
 
@@ -207,7 +215,12 @@ async def generate_minutes(
     """仅提取原文中明确标注的学习要点、共识与工作要求。"""
     record = await service.generate_minutes(record_id, body)
     return await respond(
-        request, service, await service.record_data(record), "generate_minutes", "meeting", record_id
+        request,
+        service,
+        await service.record_data(record),
+        "generate_minutes",
+        "meeting",
+        record_id,
     )
 
 

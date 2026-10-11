@@ -9,6 +9,7 @@
 
 租户标识只能来自**登录态**（见框架文档 8.2），不接收前端传入。
 """
+
 from __future__ import annotations
 
 import logging
@@ -69,13 +70,19 @@ def tenant_context(
 ) -> Iterator[None]:
     """租户上下文管理器（用于脚本 / 后台任务）
 
-    退出时恢复为 None，避免上下文泄漏到后续请求。
+    退出时恢复进入前的上下文，支持嵌套且不泄漏到后续请求。
     """
-    set_tenant_context(tenant_id, user_id, data_level)
+    if not tenant_id:
+        raise TenantIsolationError("租户 ID 不能为空")
+    tenant_token = current_tenant_id.set(str(tenant_id))
+    user_token = current_user_id.set(str(user_id) if user_id else None)
+    level_token = current_data_level.set(data_level)
     try:
         yield
     finally:
-        clear_tenant_context()
+        current_data_level.reset(level_token)
+        current_user_id.reset(user_token)
+        current_tenant_id.reset(tenant_token)
 
 
 @contextmanager
@@ -89,9 +96,7 @@ def bypass_tenant_filter() -> Iterator[None]:
 
 
 # ==================== 查询过滤 ====================
-def apply_tenant_filter(
-    statement: Select, entity: Any, tenant_id: Optional[str] = None
-) -> Select:
+def apply_tenant_filter(statement: Select, entity: Any, tenant_id: Optional[str] = None) -> Select:
     """为查询语句显式追加租户条件
 
     Args:
@@ -121,9 +126,7 @@ def _mapper_has_tenant_id(instance: Any) -> bool:
 
 # ==================== SQLAlchemy 事件监听 ====================
 @event.listens_for(Session, "before_flush")
-def _inject_tenant_id_on_flush(
-    session: Session, flush_context: Any, instances: Any
-) -> None:
+def _inject_tenant_id_on_flush(session: Session, flush_context: Any, instances: Any) -> None:
     """写入前自动注入 tenant_id（缺失则拒绝）"""
     default_tenant = current_tenant_id.get()
     for instance in session.new:
@@ -140,6 +143,7 @@ def _inject_tenant_id_on_flush(
 
 def _tenant_criteria(tenant_id: str) -> Callable[[Any], Any]:
     """构造租户过滤条件（供 with_loader_criteria 使用）"""
+
     def _criteria(cls: Any) -> Any:
         return cls.tenant_id == tenant_id
 
@@ -170,7 +174,7 @@ def _auto_filter_by_tenant(execute_state: Any) -> None:
         return
 
     options = [
-        with_loader_criteria(entity, _tenant_criteria(tenant_id), include_aliases=True)
+        with_loader_criteria(entity, entity.tenant_id == tenant_id, include_aliases=True)
         for entity in entities
     ]
     execute_state.statement = execute_state.statement.options(*options)

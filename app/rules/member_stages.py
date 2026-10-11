@@ -5,6 +5,7 @@
 
 **决策边界（框架 5.9.3）**：本模块只描述"规则与建议"，不提供任何写入阶段的函数。
 """
+
 from __future__ import annotations
 
 import importlib
@@ -28,12 +29,13 @@ DEFAULT_CONFIG_PATH = "config/business_rules.yaml"
 
 class MemberStage(str, Enum):
     """党员发展阶段"""
-    APPLICANT = "applicant"          # 入党申请人
-    ACTIVIST = "activist"            # 入党积极分子
-    CANDIDATE = "candidate"          # 发展对象
-    PROBATIONARY = "probationary"    # 预备党员
-    MEMBER = "member"                # 正式党员
-    REJECTED = "rejected"            # 退回
+
+    APPLICANT = "applicant"  # 入党申请人
+    ACTIVIST = "activist"  # 入党积极分子
+    CANDIDATE = "candidate"  # 发展对象
+    PROBATIONARY = "probationary"  # 预备党员
+    MEMBER = "member"  # 正式党员
+    REJECTED = "rejected"  # 退回
 
 
 STAGE_LABELS: dict[MemberStage, str] = {
@@ -49,53 +51,61 @@ STAGE_LABELS: dict[MemberStage, str] = {
 @dataclass(frozen=True)
 class TransitionRule:
     """一次流转的规则"""
+
     source: MemberStage
     target: MemberStage
     required_materials: tuple[str, ...] = ()
     min_days: int = 0
-    procedures: tuple[str, ...] = ()   # 建议履行的程序（供流转建议使用）
+    procedures: tuple[str, ...] = ()  # 建议履行的程序（供流转建议使用）
     description: str = ""
 
 
 # 内置默认规则（对应框架文档 5.9.2）
 DEFAULT_TRANSITIONS: tuple[TransitionRule, ...] = (
     TransitionRule(
-        MemberStage.APPLICANT, MemberStage.ACTIVIST,
+        MemberStage.APPLICANT,
+        MemberStage.ACTIVIST,
         required_materials=("入党申请书", "党组织谈话记录"),
         procedures=("支委会研究确定",),
         description="入党申请人 → 入党积极分子",
     ),
     TransitionRule(
-        MemberStage.ACTIVIST, MemberStage.CANDIDATE,
+        MemberStage.ACTIVIST,
+        MemberStage.CANDIDATE,
         required_materials=("思想汇报", "培养考察记录", "群众评议材料", "党课培训证明"),
         min_days=365,
         procedures=("培养期满且评议通过", "支委会研究确定"),
         description="入党积极分子 → 发展对象",
     ),
     TransitionRule(
-        MemberStage.CANDIDATE, MemberStage.PROBATIONARY,
+        MemberStage.CANDIDATE,
+        MemberStage.PROBATIONARY,
         required_materials=("政治审查材料", "公示情况报告", "支部大会决议", "上级审批意见"),
         min_days=90,
         procedures=("政治审查", "公示", "支部大会通过", "上级审批"),
         description="发展对象 → 预备党员",
     ),
     TransitionRule(
-        MemberStage.PROBATIONARY, MemberStage.MEMBER,
+        MemberStage.PROBATIONARY,
+        MemberStage.MEMBER,
         required_materials=("转正申请书", "预备期考察记录", "支部大会决议"),
         min_days=365,
         procedures=("预备期满", "支部大会通过", "上级审批"),
         description="预备党员 → 正式党员",
     ),
     TransitionRule(
-        MemberStage.ACTIVIST, MemberStage.REJECTED,
+        MemberStage.ACTIVIST,
+        MemberStage.REJECTED,
         description="入党积极分子 → 退回（考察不合格）",
     ),
     TransitionRule(
-        MemberStage.CANDIDATE, MemberStage.REJECTED,
+        MemberStage.CANDIDATE,
+        MemberStage.REJECTED,
         description="发展对象 → 退回（公示有异议）",
     ),
     TransitionRule(
-        MemberStage.REJECTED, MemberStage.ACTIVIST,
+        MemberStage.REJECTED,
+        MemberStage.ACTIVIST,
         description="退回 → 入党积极分子",
     ),
 )
@@ -119,6 +129,7 @@ _MIN_DAYS_KEYS: dict[str, tuple[MemberStage, MemberStage]] = {
 @dataclass
 class StageRules:
     """阶段规则集合"""
+
     transitions: tuple[TransitionRule, ...] = DEFAULT_TRANSITIONS
     reminder_advance_days: int = 30
 

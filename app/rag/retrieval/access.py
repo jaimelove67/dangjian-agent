@@ -7,7 +7,7 @@
 from datetime import date
 from typing import Any
 
-from sqlalchemy import Select, and_, or_
+from sqlalchemy import Result, Select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_role_profile
@@ -95,7 +95,7 @@ def apply_knowledge_access(stmt: Select, filters: dict[str, Any], *, chunks: boo
     return stmt
 
 
-async def execute_knowledge_query(db: AsyncSession, stmt: Select):
+async def execute_knowledge_query(db: AsyncSession, stmt: Select) -> Result[Any]:
     """执行已明确授权的知识查询，允许公共库与当前租户的并集。"""
     with bypass_tenant_filter():
         return await db.execute(stmt)

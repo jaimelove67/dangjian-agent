@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, any_, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import EmbeddingChunk, KnowledgeDoc
@@ -35,7 +35,7 @@ async def _org_ancestors(db: AsyncSession, user: User, org_id: str) -> list[str]
         if org is None:
             break
         ancestors.append(str(org.id))
-        org_id = org.parent_id
+        org_id = org.parent_id or ""
     return ancestors
 
 
@@ -151,13 +151,13 @@ async def recommend_sources(
     if not terms:
         return []
     stmt = await material_statement(db, user, org_id, on=on)
-    conditions = []
+    conditions: list[Any] = []
     for term in terms:
         conditions.extend(
             (
                 KnowledgeDoc.title.contains(term, autoescape=True),
                 KnowledgeDoc.summary.contains(term, autoescape=True),
-                KnowledgeDoc.tags.any(term),
+                literal(term) == any_(KnowledgeDoc.tags),
             )
         )
     documents = (

@@ -22,6 +22,7 @@ from app.models.assessment import (  # noqa: F401
     AssessmentTask,
 )
 from app.models.audit import AuditLog  # noqa: F401 - 注册迁移元数据
+from app.models.governance import ConfigRevision, DurableJob, HumanReview, ModelUsage  # noqa: F401
 from app.models.knowledge import EmbeddingChunk, KnowledgeDoc  # noqa: F401
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask  # noqa: F401
 from app.models.member import (  # noqa: F401

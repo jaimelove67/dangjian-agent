@@ -1,4 +1,5 @@
 """鉴权相关出入参"""
+
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -10,12 +11,14 @@ from app.core.desensitization import mask_email, mask_phone
 
 class LoginRequest(BaseModel):
     """登录请求（租户从账号解析，不接受前端传入）"""
+
     username: str = Field(..., min_length=1, max_length=50, description="用户名")
     password: str = Field(..., min_length=1, max_length=128, description="密码")
 
 
 class TokenResponse(BaseModel):
     """令牌响应"""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -24,6 +27,7 @@ class TokenResponse(BaseModel):
 
 class UserInfo(BaseModel):
     """当前用户信息（敏感字段脱敏）"""
+
     id: str
     username: str
     name: str

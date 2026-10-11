@@ -5,7 +5,7 @@
 """
 
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from fastapi import HTTPException
@@ -13,6 +13,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import tenant_config
 from app.models.meeting import ContentRevision
 from app.models.member import (
     MemberArchiveCheck,
@@ -25,7 +26,7 @@ from app.models.member import (
     MemberVote,
 )
 from app.models.user import User
-from app.rules.member_stages import STAGE_LABELS, StageRules, load_stage_rules
+from app.rules.member_stages import STAGE_LABELS, MemberStage, StageRules, load_stage_rules
 from app.schemas.member_ext import (
     ArchiveCheckRun,
     BatchCreate,
@@ -347,12 +348,17 @@ class MemberDevelopment:
 
     async def transition(self, profile_id: str, body: TransitionRequest) -> MemberProfile:
         profile = await self.profile(profile_id, lock=True)
-        rule = self.rules.get_rule(profile.current_stage, body.target_stage)
+        try:
+            rule = self.rules.get_rule(
+                MemberStage(profile.current_stage), MemberStage(body.target_stage)
+            )
+        except ValueError:
+            raise HTTPException(422, "人员阶段无效，须先核验历史记录") from None
         if rule is None:
             raise HTTPException(
                 422,
-                f"不允许的流转：{STAGE_LABELS.get(profile.current_stage, profile.current_stage)}"
-                f" → {STAGE_LABELS.get(body.target_stage, body.target_stage)}",
+                f"不允许的流转：{stage_label(profile.current_stage)}"
+                f" → {stage_label(body.target_stage)}",
             )
         if body.decision_date < profile.stage_joined_on:
             raise HTTPException(422, "决策日期不能早于进入当前阶段日期")
@@ -648,7 +654,7 @@ class MemberDevelopment:
     async def scoring(self, body: ScoringRequest) -> dict[str, Any]:
         profile = await self.profile(body.profile_id)
         catalog = _load_scoring_rules()
-        weights = catalog["weights"]
+        weights = tenant_config.get(self.tenant_id, "scoring_weights", {}) or catalog["weights"]
         conditions = [
             MemberCultivation.tenant_id == self.tenant_id,
             MemberCultivation.profile_id == str(profile.id),
@@ -701,7 +707,7 @@ class MemberDevelopment:
         weight_sum = 0.0
         output: dict[str, dict[str, Any]] = {}
         for category, weight in sorted(weights.items()):
-            dim = dimensions.get(category)
+            dim = dimensions.get(category) or {}
             if not dim or not dim["scores"]:
                 output[category] = {
                     "value": None,
@@ -747,7 +753,7 @@ class MemberDevelopment:
                 rule = candidate
                 break
         rule_name = (
-            f"{STAGE_LABELS.get(profile.current_stage, profile.current_stage)} → "
+            f"{stage_label(profile.current_stage)} → "
             f"{STAGE_LABELS.get(rule.target) if rule else '下一步'}"
         )
         required = list(rule.required_materials) if rule else []
@@ -816,17 +822,27 @@ class MemberDevelopment:
         return {
             "year": year,
             "batch_no": batch_no,
-            "by_stage": dict(stages),
+            "by_stage": {stage: count for stage, count in stages},
             "total": await self.db.scalar(select(func.count(MemberProfile.id)).where(*conditions)),
         }
 
 
 def row_data(record: Any) -> dict[str, Any]:
-    return jsonable_encoder(
-        {column.key: getattr(record, column.key) for column in record.__table__.columns}
+    return cast(
+        dict[str, Any],
+        jsonable_encoder(
+            {column.key: getattr(record, column.key) for column in record.__table__.columns}
+        ),
     )
 
 
 def _has_evidence_markers(text: str) -> bool:
     markers = ("签字", "签名", "盖章", "日期", "年", "月", "日", "支部", "党委")
     return any(marker in text for marker in markers)
+
+
+def stage_label(stage: str) -> str:
+    try:
+        return STAGE_LABELS.get(MemberStage(stage), stage)
+    except ValueError:
+        return stage

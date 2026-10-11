@@ -9,9 +9,11 @@
 本模块不直接提交事务，仅 ``add`` + ``flush``，由调用方（服务层/依赖注入）
 决定提交时机，以复用请求事务。
 """
+
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
@@ -20,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.constants import AuditAction, AuditResult, DataLevel
+from app.core.redaction import redact
 from app.models.audit import AuditLog
 
 logger = logging.getLogger(__name__)
@@ -83,9 +86,9 @@ def make_audit_log(
         user_agent=user_agent,
         request_id=request_id,
         result=_coerce(result, AuditResult),
-        error_message=error_message,
-        old_value=old_value,
-        new_value=new_value,
+        error_message="operation_failed" if error_message else None,
+        old_value=redact(old_value),
+        new_value=redact(new_value),
     )
 
 
@@ -144,6 +147,9 @@ def query_audit_logs(
     resource_type: Optional[str] = None,
     resource_id: Optional[str] = None,
     data_level: Optional[str] = None,
+    result: Optional[str] = None,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
 ) -> Select:
     """构造审计查询语句（仅构造，不执行）
 
@@ -163,14 +169,18 @@ def query_audit_logs(
         stmt = stmt.where(AuditLog.resource_id == resource_id)
     if data_level is not None:
         stmt = stmt.where(AuditLog.data_level == data_level)
+    if result is not None:
+        stmt = stmt.where(AuditLog.result == result)
+    if start_at is not None:
+        stmt = stmt.where(AuditLog.created_at >= start_at.replace(tzinfo=None))
+    if end_at is not None:
+        stmt = stmt.where(AuditLog.created_at <= end_at.replace(tzinfo=None))
     return stmt.order_by(AuditLog.created_at.desc())
 
 
 # ==================== 只追加约束 ====================
 @event.listens_for(Session, "before_flush")
-def _prevent_audit_mutation(
-    session: Session, flush_context: Any, instances: Any
-) -> None:
+def _prevent_audit_mutation(session: Session, flush_context: Any, instances: Any) -> None:
     """阻止对审计表的更新与删除（应用层保证只追加）"""
     for instance in session.dirty:
         if isinstance(instance, AuditLog):

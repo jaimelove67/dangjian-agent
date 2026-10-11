@@ -1,17 +1,10 @@
 """年度考核台账；规则、归集快照与计划版本均可回查，审核只来自人工。"""
 
-from sqlalchemy import (
-    JSON,
-    Boolean,
-    Column,
-    Date,
-    DateTime,
-    Index,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-)
+from datetime import date, datetime
+from typing import Any
+
+from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
@@ -25,25 +18,25 @@ class AssessmentIndicator(Base):
         Index("ix_assessment_indicators_year", "tenant_id", "school_org_id", "year"),
     )
 
-    school_org_id = Column(String(36), nullable=False)
-    year = Column(Integer, nullable=False)
-    code = Column(String(64), nullable=False)
-    version = Column(Integer, nullable=False)
-    name = Column(String(200), nullable=False)
-    requirement = Column(Text, nullable=False)
-    formula = Column(String(20), nullable=False)
-    source = Column(String(30), nullable=False)
-    source_options = Column(JSON, nullable=False, default=dict)
-    target = Column(String(50), nullable=False)
-    comparison = Column(String(10), nullable=False, default="gte")
-    unit = Column(String(20), nullable=False, default="项")
-    period_start = Column(Date, nullable=False)
-    period_end = Column(Date, nullable=False)
-    effective_from = Column(DateTime, nullable=False)
-    required_evidence = Column(JSON, nullable=False, default=list)
-    confirmed = Column(Boolean, nullable=False, default=False)
-    confirmation_note = Column(Text, nullable=False, default="")
-    created_by = Column(String(36), nullable=False)
+    school_org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    requirement: Mapped[str] = mapped_column(Text, nullable=False)
+    formula: Mapped[str] = mapped_column(String(20), nullable=False)
+    source: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_options: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    target: Mapped[str] = mapped_column(String(50), nullable=False)
+    comparison: Mapped[str] = mapped_column(String(10), nullable=False, default="gte")
+    unit: Mapped[str] = mapped_column(String(20), nullable=False, default="项")
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    required_evidence: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
 
 
 class AssessmentTask(Base):
@@ -52,23 +45,23 @@ class AssessmentTask(Base):
     __tablename__ = "assessment_tasks"
     __table_args__ = (Index("ix_assessment_tasks_scope", "tenant_id", "org_unit_id", "year"),)
 
-    school_org_id = Column(String(36), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    year = Column(Integer, nullable=False)
-    indicator_code = Column(String(64), nullable=False)
-    title = Column(String(200), nullable=False)
-    owner_id = Column(String(36), nullable=False)
-    due_date = Column(Date, nullable=False)
-    declared_progress = Column(Integer, nullable=False, default=0)
-    manual_value = Column(String(50), nullable=True)
-    completed_on = Column(Date, nullable=True)
-    basis = Column(Text, nullable=False, default="")
-    revision = Column(Integer, nullable=False, default=1)
-    review_status = Column(String(20), nullable=False, default="pending")
-    created_by = Column(String(36), nullable=False)
-    reviewed_by = Column(String(36), nullable=True)
-    reviewed_at = Column(DateTime, nullable=True)
-    review_opinion = Column(Text, nullable=False, default="")
+    school_org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    indicator_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    declared_progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    manual_value: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    completed_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    basis: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_opinion: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class AssessmentEvidence(Base):
@@ -82,18 +75,18 @@ class AssessmentEvidence(Base):
         Index("ix_assessment_evidence_scope", "tenant_id", "org_unit_id", "year"),
     )
 
-    org_unit_id = Column(String(36), nullable=False)
-    year = Column(Integer, nullable=False)
-    indicator_code = Column(String(64), nullable=False)
-    requirement_key = Column(String(100), nullable=False)
-    doc_id = Column(String(100), nullable=False)
-    source_version = Column(String(64), nullable=False)
-    revision = Column(Integer, nullable=False, default=1)
-    review_status = Column(String(20), nullable=False, default="pending")
-    created_by = Column(String(36), nullable=False)
-    reviewed_by = Column(String(36), nullable=True)
-    reviewed_at = Column(DateTime, nullable=True)
-    review_opinion = Column(Text, nullable=False, default="")
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    indicator_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    requirement_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    doc_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_opinion: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class AssessmentRun(Base):
@@ -105,19 +98,19 @@ class AssessmentRun(Base):
         Index("ix_assessment_runs_scope", "tenant_id", "org_unit_id", "year", "created_at"),
     )
 
-    school_org_id = Column(String(36), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    year = Column(Integer, nullable=False)
-    fingerprint = Column(String(64), nullable=False)
-    engine_version = Column(String(30), nullable=False)
-    inputs = Column(JSON, nullable=False)
-    results = Column(JSON, nullable=False)
-    review_status = Column(String(20), nullable=False, default="pending")
-    revision = Column(Integer, nullable=False, default=1)
-    created_by = Column(String(36), nullable=False)
-    reviewed_by = Column(String(36), nullable=True)
-    reviewed_at = Column(DateTime, nullable=True)
-    review_opinion = Column(Text, nullable=False, default="")
+    school_org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    engine_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    inputs: Mapped[Any] = mapped_column(JSON, nullable=False)
+    results: Mapped[Any] = mapped_column(JSON, nullable=False)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_opinion: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class AssessmentPlan(Base):
@@ -129,17 +122,17 @@ class AssessmentPlan(Base):
         Index("ix_assessment_plans_scope", "tenant_id", "org_unit_id", "year"),
     )
 
-    org_unit_id = Column(String(36), nullable=False)
-    year = Column(Integer, nullable=False)
-    version = Column(Integer, nullable=False)
-    run_id = Column(String(36), nullable=False)
-    content = Column(Text, nullable=False)
-    revision = Column(Integer, nullable=False, default=1)
-    review_status = Column(String(20), nullable=False, default="pending")
-    created_by = Column(String(36), nullable=False)
-    reviewed_by = Column(String(36), nullable=True)
-    reviewed_at = Column(DateTime, nullable=True)
-    review_opinion = Column(Text, nullable=False, default="")
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_opinion: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class AssessmentPolicy(Base):
@@ -148,13 +141,13 @@ class AssessmentPolicy(Base):
     __tablename__ = "assessment_policies"
     __table_args__ = (UniqueConstraint("tenant_id", "school_org_id"),)
 
-    school_org_id = Column(String(36), nullable=False)
-    archive_enabled = Column(Boolean, nullable=False, default=False)
-    reminder_advance_days = Column(Integer, nullable=False, default=14)
-    version = Column(Integer, nullable=False, default=1)
-    confirmation_note = Column(Text, nullable=False, default="")
-    confirmed_by = Column(String(36), nullable=True)
-    confirmed_at = Column(DateTime, nullable=True)
+    school_org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    archive_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reminder_advance_days: Mapped[int] = mapped_column(Integer, nullable=False, default=14)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    confirmed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AssessmentReminder(Base):
@@ -166,16 +159,16 @@ class AssessmentReminder(Base):
         Index("ix_assessment_reminders_owner", "tenant_id", "owner_id", "status"),
     )
 
-    task_id = Column(String(36), nullable=False)
-    org_unit_id = Column(String(36), nullable=False)
-    year = Column(Integer, nullable=False)
-    owner_id = Column(String(36), nullable=False)
-    kind = Column(String(30), nullable=False)
-    dedup_key = Column(String(64), nullable=False)
-    status = Column(String(20), nullable=False, default="open")
-    handled_by = Column(String(36), nullable=True)
-    handled_at = Column(DateTime, nullable=True)
-    handling_note = Column(Text, nullable=False, default="")
+    task_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    dedup_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
+    handled_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    handling_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class AssessmentArchive(Base):
@@ -184,9 +177,9 @@ class AssessmentArchive(Base):
     __tablename__ = "assessment_archives"
     __table_args__ = (UniqueConstraint("tenant_id", "run_id"),)
 
-    org_unit_id = Column(String(36), nullable=False)
-    year = Column(Integer, nullable=False)
-    run_id = Column(String(36), nullable=False)
-    policy_version = Column(Integer, nullable=False)
-    manifest = Column(JSON, nullable=False)
-    created_by = Column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    policy_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    manifest: Mapped[Any] = mapped_column(JSON, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)

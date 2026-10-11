@@ -3,16 +3,12 @@
 管理所有可用的模型提供者，支持动态注册和查询。
 """
 
-from typing import Dict, Optional, List
 from functools import lru_cache
+from typing import Any, Dict, List, Optional
 
-from app.llm.base import (
-    BaseModelProvider,
-    ModelConfig,
-    ModelType,
-    DeploymentType,
-)
 import structlog
+
+from app.llm.base import BaseModelProvider, DeploymentType, ModelConfig, ModelType
 
 logger = structlog.get_logger(__name__)
 
@@ -23,7 +19,7 @@ class ModelRegistry:
     负责管理所有模型提供者的注册、查询和生命周期。
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """初始化注册表"""
         self._providers: Dict[str, BaseModelProvider] = {}
         self._configs: Dict[str, ModelConfig] = {}
@@ -128,10 +124,7 @@ class ModelRegistry:
         Returns:
             是否有本地模型
         """
-        local_models = self.list_models(
-            model_type=model_type,
-            deployment_type=DeploymentType.LOCAL
-        )
+        local_models = self.list_models(model_type=model_type, deployment_type=DeploymentType.LOCAL)
         return len(local_models) > 0
 
     async def health_check_all(self) -> Dict[str, bool]:
@@ -148,27 +141,20 @@ class ModelRegistry:
                 results[model_id] = is_healthy
 
                 if not is_healthy:
-                    logger.warning(
-                        "model_health_check_failed",
-                        model_id=model_id
-                    )
+                    logger.warning("model_health_check_failed", model_id=model_id)
             except Exception as e:
-                logger.error(
-                    "model_health_check_error",
-                    model_id=model_id,
-                    error=str(e)
-                )
+                logger.error("model_health_check_error", model_id=model_id, error=type(e).__name__)
                 results[model_id] = False
 
         return results
 
-    def get_stats(self) -> Dict[str, any]:
+    def get_stats(self) -> Dict[str, Any]:
         """获取注册表统计信息
 
         Returns:
             统计信息
         """
-        stats = {
+        stats: dict[str, Any] = {
             "total": len(self._providers),
             "by_type": {},
             "by_deployment": {},
@@ -181,8 +167,9 @@ class ModelRegistry:
 
             # 按部署类型统计
             deployment_type = config.deployment_type.value
-            stats["by_deployment"][deployment_type] = \
+            stats["by_deployment"][deployment_type] = (
                 stats["by_deployment"].get(deployment_type, 0) + 1
+            )
 
         return stats
 

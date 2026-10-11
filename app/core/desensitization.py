@@ -5,22 +5,25 @@
 
 所有函数对 ``None`` / 空串 / 非字符串输入均安全返回。
 """
+
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 # 默认需要脱敏的字段名（大小写不敏感）
-DEFAULT_SENSITIVE_FIELDS: frozenset[str] = frozenset({
-    "id_card",
-    "id_number",
-    "idcard",
-    "phone",
-    "mobile",
-    "phone_number",
-    "email",
-    "bank_card",
-    "bank_account",
-})
+DEFAULT_SENSITIVE_FIELDS: frozenset[str] = frozenset(
+    {
+        "id_card",
+        "id_number",
+        "idcard",
+        "phone",
+        "mobile",
+        "phone_number",
+        "email",
+        "bank_card",
+        "bank_account",
+    }
+)
 
 
 def _as_text(value: Any) -> Optional[str]:
@@ -83,7 +86,7 @@ def mask_number(value: Any, head: int = 4, tail: int = 4) -> Any:
 
 
 # 字段名 → 脱敏函数
-_FIELD_MASKERS = {
+_FIELD_MASKERS: dict[str, Callable[[Any], Any]] = {
     "id_card": mask_id_card,
     "id_number": mask_id_card,
     "idcard": mask_id_card,

@@ -1,4 +1,5 @@
 """用户信息接口"""
+
 from fastapi import APIRouter, Depends, Request
 
 from app.deps import get_current_user

@@ -44,7 +44,10 @@ const NAV: NavGroup[] = [
   },
   {
     label: '系统',
-    items: [{ to: '/system', label: '系统状态', icon: 'pulse' }],
+    items: [
+      { to: '/governance', label: '管理与审核', icon: 'check', perm: PERM.REVIEW_MANAGE },
+      { to: '/system', label: '系统状态', icon: 'pulse' },
+    ],
   },
 ]
 

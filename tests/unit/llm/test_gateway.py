@@ -16,6 +16,7 @@ def create_test_config(
         model_type=ModelType.LLM,
         deployment_type=deployment_type,
         provider=provider,
+        endpoint="https://" + provider + "/v1" if deployment_type == DeploymentType.EXTERNAL else None,
     )
 
 
@@ -79,12 +80,14 @@ def test_gateway_internal_whitelist():
 
 
 def test_gateway_public_data_allowed():
-    """测试公开数据允许所有模型"""
+    """公开资料也必须使用明确批准的外部主机。"""
     gateway = DataLevelGateway()
     gateway.enabled = True
 
     local_config = create_test_config("local-model", DeploymentType.LOCAL)
     external_config = create_test_config("external-model", DeploymentType.EXTERNAL)
+    assert gateway.check_access(DataLevel.PUBLIC, external_config)[0] is False
+    gateway.add_allowed_domain("test")
 
     # 本地模型允许
     allowed, _ = gateway.check_access(DataLevel.PUBLIC, local_config)
@@ -111,6 +114,7 @@ def test_gateway_validate_and_block():
     """测试验证并阻断方法"""
     gateway = DataLevelGateway()
     gateway.enabled = True
+    gateway.add_allowed_domain("test")
 
     external_config = create_test_config("external-model", DeploymentType.EXTERNAL)
 

@@ -111,6 +111,9 @@ class QAChain:
             raise
 
         # 阶段 3：重排判定（无依据则直接拒答，跳过生成）
+        from app.core.metrics import RETRIEVAL_SCORE
+
+        RETRIEVAL_SCORE.observe(max((c.score or 0 for c in chunks), default=0))
         if self._is_no_evidence(chunks):
             response = QAResponse(
                 answer=REFUSAL_ANSWER,

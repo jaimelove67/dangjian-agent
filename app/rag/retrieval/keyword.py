@@ -39,7 +39,8 @@ class KeywordRetriever(Retriever):
         query = query.strip()
         if not query:
             return []
-        conditions, scores = [], []
+        conditions: list[Any] = []
+        scores: list[Any] = []
         if self.use_fts:
             ts_query = func.plainto_tsquery("chinese_zh", query)
             ts_vector = func.to_tsvector("chinese_zh", EmbeddingChunk.content)

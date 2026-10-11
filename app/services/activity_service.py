@@ -7,7 +7,7 @@
 
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from fastapi import HTTPException
@@ -52,14 +52,17 @@ ACTIVITY_TYPES: dict[str, str] = {
 
 def row_data(record: Any) -> dict[str, Any]:
     """版本快照保留真实字段；不保存 SQLAlchemy 内部状态。"""
-    return jsonable_encoder(
-        {column.key: getattr(record, column.key) for column in record.__table__.columns}
+    return cast(
+        dict[str, Any],
+        jsonable_encoder(
+            {column.key: getattr(record, column.key) for column in record.__table__.columns}
+        ),
     )
 
 
 def load_activity_requirements() -> dict[str, dict[str, Any]]:
     """年度规定频次仅作提示，不由模型认定完成；配置缺失时按内置默认。"""
-    default = {
+    default: dict[str, dict[str, Any]] = {
         "branch_member_meeting": {"annual_required": 4, "reminders": []},
         "branch_committee_meeting": {"annual_required": 4, "reminders": []},
         "party_group_meeting": {"annual_required": 6, "reminders": []},
@@ -234,6 +237,18 @@ class ActivityService:
             )
         )
         await self.db.flush()
+        if action == "archive":
+            import asyncio
+
+            from app.services.file_store import save_archive
+
+            await asyncio.to_thread(
+                save_archive,
+                self.tenant_id,
+                str(record.id),
+                record.revision,
+                await self._snapshot(record),
+            )
 
     # ==================== 活动计划 ====================
 
@@ -829,7 +844,7 @@ class ActivityService:
                     "activity_type": record.activity_type,
                     "activity_type_label": ACTIVITY_TYPES[record.activity_type],
                     "revision": record.revision,
-                    "held_on": record.held_on.isoformat(),
+                    "held_on": record.held_on.isoformat() if record.held_on else None,
                     "reviewed_by": record.reviewed_by,
                     "participants": [
                         {"source_id": f"{record.id}:{person['participant_id']}", **person}

@@ -102,7 +102,9 @@ async def batches(
     )
 
 
-@router.post("/member-full/batches", response_model=APIResponse[dict], dependencies=[Depends(_transition)])
+@router.post(
+    "/member-full/batches", response_model=APIResponse[dict], dependencies=[Depends(_transition)]
+)
 async def create_batch(
     body: BatchCreate, request: Request, service: MemberDevelopment = Depends(member_service)
 ) -> APIResponse[dict]:
@@ -127,9 +129,7 @@ async def profile_detail(
     data["stage_history"] = await service.stage_history(profile_id)
     data["cultivation"] = await service.cultivation(profile_id)
     data["boundary"] = DECISION_BOUNDARY
-    return await respond(
-        request, service, data, "read", "member", profile_id
-    )
+    return await respond(request, service, data, "read", "member", profile_id)
 
 
 @router.patch(
@@ -144,9 +144,7 @@ async def update_profile(
     service: MemberDevelopment = Depends(member_service),
 ) -> APIResponse[dict]:
     profile = await service.update_profile(profile_id, body)
-    return await respond(
-        request, service, row_data(profile), "revise", "member", profile_id
-    )
+    return await respond(request, service, row_data(profile), "revise", "member", profile_id)
 
 
 @router.post(
@@ -164,9 +162,7 @@ async def transition(
     data = row_data(profile)
     data["stage_history"] = await service.stage_history(profile_id)
     data["boundary"] = DECISION_BOUNDARY
-    return await respond(
-        request, service, data, "transition", "member", profile_id
-    )
+    return await respond(request, service, data, "transition", "member", profile_id)
 
 
 @router.get("/member-full/profiles/{profile_id}/materials", response_model=APIResponse[dict])
@@ -261,7 +257,11 @@ async def sync_reminders(
     return await respond(
         request,
         service,
-        {"profile_id": profile_id, "created": len(created), "notice": "提醒按阶段规则生成，重复执行不重复"},
+        {
+            "profile_id": profile_id,
+            "created": len(created),
+            "notice": "提醒按阶段规则生成，重复执行不重复",
+        },
         "sync_reminders",
         "member_reminder",
         profile_id,
@@ -339,7 +339,9 @@ async def vote_summary(
     )
 
 
-@router.post("/member-full/scoring", response_model=APIResponse[dict], dependencies=[Depends(_scoring)])
+@router.post(
+    "/member-full/scoring", response_model=APIResponse[dict], dependencies=[Depends(_scoring)]
+)
 async def scoring(
     body: ScoringRequest, request: Request, service: MemberDevelopment = Depends(member_service)
 ) -> APIResponse[dict]:

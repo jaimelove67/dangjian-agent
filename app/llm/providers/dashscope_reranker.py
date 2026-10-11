@@ -1,6 +1,7 @@
 """百炼 Qwen 文本重排，返回检索器使用的标准结果结构。"""
 
 import math
+from typing import Any
 
 from app.llm.base import DeploymentType, ModelConfig, ModelType, RerankResponse, RerankResult
 from app.llm.errors import ModelUnavailableError
@@ -9,7 +10,12 @@ from app.llm.providers.cloud_http import CloudHTTPProvider, cloud_endpoint
 
 class DashScopeRerankerProvider(CloudHTTPProvider):
     async def rerank(
-        self, query: str, documents: list[str], top_k: int = None, top_n: int = None, **kwargs
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int | None = None,
+        top_n: int | None = None,
+        **kwargs: Any,
     ) -> RerankResponse:
         count = min(
             len(documents),
@@ -61,7 +67,7 @@ class DashScopeRerankerProvider(CloudHTTPProvider):
 def create_dashscope_reranker_provider(
     model_id: str = "cloud-reranker",
     model_name: str = "qwen3.7-text-rerank",
-    api_key: str = None,
+    api_key: str | None = None,
 ) -> DashScopeRerankerProvider:
     return DashScopeRerankerProvider(
         ModelConfig(

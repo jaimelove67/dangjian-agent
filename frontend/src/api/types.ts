@@ -113,8 +113,14 @@ export type PermissionCode =
   | 'admin.archive_confirm'
   | 'admin.config'
   | 'admin.audit'
+  | 'admin.identity'
+  | 'admin.review'
+  | 'admin.ops'
 
 export const PERM = {
+  IDENTITY_MANAGE: 'admin.identity',
+  REVIEW_MANAGE: 'admin.review',
+  OPS_QUERY: 'admin.ops',
   QA_ASK: 'qa.ask',
   KNOWLEDGE_QUERY: 'knowledge.query',
   KNOWLEDGE_MANAGE: 'knowledge.manage',

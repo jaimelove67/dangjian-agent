@@ -1,6 +1,6 @@
 """Qwen 云端聊天模型，使用百炼兼容聊天接口。"""
 
-from typing import Optional
+from typing import Any, Optional
 
 from app.llm.base import DeploymentType, ModelConfig, ModelResponse, ModelType
 from app.llm.errors import ModelUnavailableError
@@ -8,7 +8,7 @@ from app.llm.providers.cloud_http import CloudHTTPProvider, cloud_endpoint
 
 
 class DashScopeProvider(CloudHTTPProvider):
-    async def generate(self, prompt: str, **kwargs) -> ModelResponse:
+    async def generate(self, prompt: str, **kwargs: Any) -> ModelResponse:
         body = await self._post(
             {
                 "model": self.config.model_name,

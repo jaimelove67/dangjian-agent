@@ -1,0 +1,430 @@
+"""原生 PostgreSQL 验证模块6事务、审计防篡改、活跃权限、审核版本与队列恢复。"""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from datetime import datetime, timedelta
+from decimal import Decimal
+from unittest.mock import AsyncMock
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from fastapi import HTTPException
+from sqlalchemy import select, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from app.core import request_audit
+from app.core.config import settings, tenant_config
+from app.core.tenant import bypass_tenant_filter, tenant_context
+from app.models.audit import AuditLog
+from app.models.governance import DurableJob
+from app.models.member import MemberCultivation, MemberProfile
+from app.models.org import OrgUnit
+from app.models.tenant import Tenant
+from app.models.user import User, UserRole
+from app.schemas.governance import JobCreate, ReviewDecision, ReviewSubmit
+from app.services import job_service
+from app.services.governance_service import GovernanceUpdate, read_governance, save_governance
+from app.services.identity_guard import ensure_active_identity
+from app.services.identity_service import IdentityService
+from app.services.member_service import _load_scoring_rules
+from app.services.review_service import ReviewService
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module")
+def governance_url():
+    name = "party_m6_test_" + uuid.uuid4().hex[:12]
+    admin = make_url(settings.DATABASE_URL).set(database="postgres")
+    target = admin.set(database=name)
+
+    async def provision(create):
+        assert name.startswith("party_m6_test_") and len(name) == 26
+        engine = create_async_engine(admin, poolclass=NullPool, isolation_level="AUTOCOMMIT")
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text(f'{"CREATE" if create else "DROP"} DATABASE "{name}"'))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(provision(True))
+
+    async def migrate():
+        engine = create_async_engine(target, poolclass=NullPool)
+        try:
+            async with engine.begin() as conn:
+
+                def upgrade(sync):
+                    config = Config("alembic.ini")
+                    config.attributes["connection"] = sync
+                    command.upgrade(config, "head")
+
+                await conn.run_sync(upgrade)
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(migrate())
+        yield target
+    finally:
+        asyncio.run(provision(False))
+
+
+@pytest.fixture
+async def native(governance_url, monkeypatch):
+    engine = create_async_engine(governance_url, poolclass=NullPool)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(job_service, "async_session_maker", maker)
+    monkeypatch.setattr(request_audit, "async_session_maker", maker)
+    try:
+        yield engine, maker
+    finally:
+        await engine.dispose()
+
+
+async def seed(db):
+    tid, rootid, branchid = (str(uuid.uuid4()) for _ in range(3))
+    school = Tenant(
+        id=tid,
+        tenant_id=tid,
+        name="独立数据库测试学校",
+        tenant_type="school",
+        path="/" + tid,
+        is_active=True,
+        config={},
+    )
+    root = OrgUnit(
+        id=rootid,
+        tenant_id=tid,
+        name="测试根组织",
+        org_type="school",
+        path="/" + rootid,
+        is_active=True,
+    )
+    branch = OrgUnit(
+        id=branchid,
+        tenant_id=tid,
+        name="测试支部",
+        org_type="branch",
+        parent_id=rootid,
+        path="/" + rootid + "/" + branchid,
+        is_active=True,
+    )
+    author = User(
+        id=str(uuid.uuid4()),
+        tenant_id=tid,
+        username="a" + uuid.uuid4().hex,
+        name="测试提交人",
+        password_hash="synthetic",
+        role=UserRole.BRANCH_SECRETARY,
+        org_unit_id=branchid,
+        is_active=True,
+    )
+    reviewer = User(
+        id=str(uuid.uuid4()),
+        tenant_id=tid,
+        username="r" + uuid.uuid4().hex,
+        name="测试审核人",
+        password_hash="synthetic",
+        role=UserRole.SCHOOL_ADMIN,
+        org_unit_id=rootid,
+        is_active=True,
+    )
+    with bypass_tenant_filter():
+        db.add_all([school, root, branch, author, reviewer])
+        await db.commit()
+    return school, root, branch, author, reviewer
+
+
+async def test_failed_business_transaction_keeps_independent_audit_and_rejects_mutation(native):
+    engine, maker = native
+    event_id, tenant = str(uuid.uuid4()), str(uuid.uuid4())
+    async with maker() as business:
+        with tenant_context(tenant):
+            business.add(
+                Tenant(
+                    id=tenant,
+                    tenant_id=tenant,
+                    name="会回滚的测试记录",
+                    tenant_type="school",
+                    path="/" + tenant,
+                    config={},
+                )
+            )
+            await business.flush()
+            await request_audit.persist(
+                {
+                    "id": event_id,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "tenant_id": tenant,
+                    "user_id": "native-test",
+                    "user_name": "native-test",
+                    "action": "update",
+                    "resource_type": "tenant",
+                    "resource_id": tenant,
+                    "request_id": str(uuid.uuid4()),
+                    "result": "failed",
+                    "data_level": "internal",
+                }
+            )
+            await business.rollback()
+    with bypass_tenant_filter():
+        async with maker() as db:
+            assert await db.get(Tenant, tenant) is None
+            assert (await db.get(AuditLog, event_id)).result == "failed"
+    for query in (
+        f"UPDATE audit_logs SET result='success' WHERE id='{event_id}'",
+        f"DELETE FROM audit_logs WHERE id='{event_id}'",
+        "TRUNCATE audit_logs",
+    ):
+        with pytest.raises(DBAPIError):
+            async with engine.begin() as conn:
+                await conn.execute(text(query))
+    async with engine.connect() as conn:
+        assert (
+            await conn.scalar(
+                text("SELECT count(*) FROM audit_logs WHERE id=:id"), {"id": event_id}
+            )
+            == 1
+        )
+
+
+async def test_identity_tree_role_binding_and_parent_disable_are_live(native):
+    _, maker = native
+    async with maker() as db:
+        school, root, branch, author, reviewer = await seed(db)
+        school_id, author_id, root_id = school.id, author.id, root.id
+        with tenant_context(school.id, reviewer.id):
+            service = IdentityService(db, reviewer)
+            dept = await service.save_org(
+                None, {"name": "测试院系", "org_type": "department", "parent_id": root.id}
+            )
+            await service.save_org(None, {"parent_id": dept.id}, branch.id)
+            assert branch.path == dept.path + "/" + branch.id
+            with pytest.raises(HTTPException):
+                await service.save_org(None, {"parent_id": branch.id}, dept.id)
+            await db.rollback()
+        # 失败的组织修改回滚，原组织和账号仍有效。
+        with bypass_tenant_filter():
+            author = await db.get(User, author_id)
+            school = await db.get(Tenant, school_id)
+            root = await db.get(OrgUnit, root_id)
+        with tenant_context(school.id, author.id):
+            await ensure_active_identity(db, author)
+            school.is_active = False
+            await db.commit()
+            with pytest.raises(HTTPException) as exc:
+                await ensure_active_identity(db, author)
+            assert exc.value.status_code == 403
+
+
+async def test_review_frozen_score_rejects_self_approval_and_invalidates_changed_evidence(native):
+    _, maker = native
+    async with maker() as db:
+        school, root, branch, author, reviewer = await seed(db)
+        with tenant_context(school.id, author.id):
+            profile = MemberProfile(
+                tenant_id=school.id,
+                name="测试培养对象",
+                org_name=branch.name,
+                org_unit_id=branch.id,
+            )
+            db.add(profile)
+            await db.flush()
+            evidence = []
+            for category in _load_scoring_rules()["weights"]:
+                row = MemberCultivation(
+                    tenant_id=school.id,
+                    profile_id=profile.id,
+                    org_unit_id=branch.id,
+                    category=category,
+                    score=Decimal("50"),
+                    period="2026",
+                    source_note="独立数据库测试证据",
+                )
+                db.add(row)
+                evidence.append(row)
+            await db.commit()
+            body = ReviewSubmit(source_kind="score", source_id=profile.id, year=2026)
+            row = await ReviewService(db, author).submit(body)
+            await db.commit()
+            assert (await ReviewService(db, author).submit(body)).id == row.id
+            with pytest.raises(HTTPException) as exc:
+                await ReviewService(db, author).decide(
+                    row.id,
+                    ReviewDecision(
+                        decision="approved", source_version=row.source_version, opinion="测试自审"
+                    ),
+                )
+            assert exc.value.status_code == 403
+        with tenant_context(school.id, reviewer.id):
+            await ReviewService(db, reviewer).decide(
+                row.id,
+                ReviewDecision(
+                    decision="approved", source_version=row.source_version, opinion="核对测试证据"
+                ),
+            )
+            await db.commit()
+            assert row.status == "approved" and row.reviewed_by == reviewer.id
+            evidence[0].score = Decimal("80")
+            await db.commit()
+            view = await ReviewService(db, reviewer).view(row, include_content=True)
+            assert (
+                view["stale"] and view["effective_status"] == "pending" and view["snapshot"] is None
+            )
+            fresh = await ReviewService(db, reviewer).submit(body)
+            await db.commit()
+            assert fresh.id != row.id and fresh.status == "pending"
+            visible = await ReviewService(db, reviewer).visible_reviews()
+            assert sum(item["effective_status"] == "pending" for item in visible) == 1
+
+
+async def test_job_dedup_expired_lease_revocation_and_bounded_retries(native, monkeypatch):
+    _, maker = native
+    async with maker() as db:
+        school, _, _, author, _ = await seed(db)
+        with tenant_context(school.id, author.id):
+            body = JobCreate(kind="member_reminders", dedup_key="x" * 160)
+            row = await job_service.enqueue(db, author, body)
+            await db.commit()
+            assert (await job_service.enqueue(db, author, body)).id == row.id
+            assert len(row.dedup_key) == 64
+    first = await job_service.claim()
+    assert first is not None
+    with bypass_tenant_filter():
+        async with maker() as db:
+            row = await db.get(DurableJob, first[1])
+            row.lease_until = datetime.utcnow() - timedelta(seconds=1)
+            await db.commit()
+    second = await job_service.claim()
+    assert second and second[1] == first[1] and second[2] != first[2]
+    await job_service.execute(*first)  # 旧租约不能执行或提交任何业务结果。
+    with bypass_tenant_filter():
+        async with maker() as db:
+            row = await db.get(DurableJob, second[1])
+            author = await db.get(User, row.actor_id)
+            author.is_active = False
+            row.lease_until = datetime.utcnow() - timedelta(seconds=1)
+            await db.commit()
+    assert await job_service.run_once()
+    with bypass_tenant_filter():
+        async with maker() as db:
+            row = await db.get(DurableJob, second[1])
+            assert row.status == "failed" and row.attempts == 3 and row.result is None
+            denied = (
+                (
+                    await db.execute(
+                        select(AuditLog).where(
+                            AuditLog.resource_id == row.id,
+                            AuditLog.action == "job_attempt_failed",
+                            AuditLog.result == "denied",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(denied) == 1 and denied[0].user_id == row.actor_id and denied[0].request_id
+            author = await db.get(User, row.actor_id)
+            author.is_active = True
+            await db.commit()
+            with tenant_context(school.id, author.id):
+                retry = await job_service.enqueue(
+                    db, author, JobCreate(kind="member_reminders", dedup_key="temporary-failure")
+                )
+                await db.commit()
+    monkeypatch.setattr(job_service, "execute", AsyncMock(side_effect=ConnectionError("synthetic")))
+    for attempt in range(1, 4):
+        assert await job_service.run_once()
+        with bypass_tenant_filter():
+            async with maker() as db:
+                row = await db.get(DurableJob, retry.id)
+                assert row.attempts == attempt
+                assert row.status == ("failed" if attempt == 3 else "retry")
+                failures = (
+                    (
+                        await db.execute(
+                            select(AuditLog).where(
+                                AuditLog.resource_id == row.id,
+                                AuditLog.action == "job_attempt_failed",
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert len(failures) == attempt
+                assert len({event.request_id for event in failures}) == attempt
+                row.available_at = datetime.utcnow() - timedelta(seconds=1)
+                await db.commit()
+    assert not await job_service.run_once()
+
+
+async def test_school_governance_version_conflict_and_pending_model_policy(native):
+    _, maker = native
+    async with maker() as db:
+        school, _, _, _, reviewer = await seed(db)
+        with tenant_context(school.id, reviewer.id):
+            original = await read_governance(db, reviewer)
+            assert original["admission"]["status"] == "pending"
+            body = GovernanceUpdate(
+                expected_version=0, reason="测试版本留痕", values=original["values"]
+            )
+            saved = await save_governance(db, reviewer, body)
+            await db.commit()
+            assert saved["version"] == 1
+            with pytest.raises(HTTPException) as conflict:
+                await save_governance(db, reviewer, body)
+            assert conflict.value.status_code == 409
+            original["values"]["model_policy"].update(
+                external_enabled=True, evidence="测试凭证", allowed_hosts=[]
+            )
+            with pytest.raises(HTTPException) as pending:
+                await save_governance(
+                    db,
+                    reviewer,
+                    GovernanceUpdate(
+                        expected_version=1, reason="禁止未确认模型", values=original["values"]
+                    ),
+                )
+            assert pending.value.status_code == 422
+
+
+async def test_runtime_role_rejects_privileged_membership_and_database_owner(
+    native, governance_url, monkeypatch
+):
+    from scripts import module6_runtime_role as runtime
+
+    engine, _ = native
+    monkeypatch.setattr(runtime, "engine", engine)
+    suffix = uuid.uuid4().hex[:12]
+    role, privileged = "module6_rt_" + suffix, "module6_priv_" + suffix
+    async with engine.begin() as conn:
+        await conn.execute(text(f'CREATE ROLE "{role}" NOLOGIN'))
+        await conn.execute(text(f'CREATE ROLE "{privileged}" NOLOGIN CREATEROLE'))
+        await conn.execute(text(f'GRANT "{privileged}" TO "{role}"'))
+        owner = await conn.scalar(text("SELECT current_user"))
+    try:
+        with pytest.raises(ValueError):
+            await runtime.apply(role)
+        async with engine.begin() as conn:
+            await conn.execute(text(f'REVOKE "{privileged}" FROM "{role}"'))
+            await conn.execute(
+                text(f'ALTER DATABASE "{governance_url.database}" OWNER TO "{role}"')
+            )
+        with pytest.raises(ValueError):
+            await runtime.apply(role)
+    finally:
+        async with engine.begin() as conn:
+            quoted_owner = str(owner).replace('"', '""')
+            await conn.execute(
+                text(f'ALTER DATABASE "{governance_url.database}" OWNER TO "{quoted_owner}"')
+            )
+            await conn.execute(text(f'DROP ROLE "{role}"'))
+            await conn.execute(text(f'DROP ROLE "{privileged}"'))

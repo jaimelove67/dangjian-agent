@@ -106,7 +106,7 @@ class QASessionItem(QuestionResponse):
         return cls(
             id=str(record.id),
             question=record.question,
-            data_level=record.data_level,
+            data_level=DataLevel(record.data_level),
             created_at=record.created_at,
             answer=record.answer,
             citations=citations,
