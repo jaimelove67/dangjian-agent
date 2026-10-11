@@ -36,7 +36,7 @@ const organizationHint = computed(() => {
   return type ? `此角色需关联${ORG_LABELS[type]}。` : '可选择本单位的学校、院系或支部。'
 })
 const passwordValid = computed(() =>
-  form.password.length >= 8 && form.password.length <= 72 && !!form.password.trim() &&
+  Array.from(form.password).length >= 8 && !!form.password.trim() &&
   new TextEncoder().encode(form.password).length <= 72,
 )
 const passwordsMismatch = computed(() => !!form.confirm_password && form.password !== form.confirm_password)

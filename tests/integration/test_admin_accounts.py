@@ -79,7 +79,13 @@ def workspace(monkeypatch):
     with Session(engine, expire_on_commit=False) as session:
         for tenant in ["account-tenant-a", "account-tenant-b"]:
             session.add(
-                Tenant(id=tenant, tenant_id=tenant, name="合成学校", tenant_type="school", path=f"/{tenant}")
+                Tenant(
+                    id=tenant,
+                    tenant_id=tenant,
+                    name="合成学校",
+                    tenant_type="school",
+                    path=f"/{tenant}",
+                )
             )
         for identifier, tenant, kind, deleted in [
             ("school-a", "account-tenant-a", "school", False),
@@ -89,20 +95,34 @@ def workspace(monkeypatch):
             ("invalid-a", "account-tenant-a", "unknown", False),
             ("branch-b", "account-tenant-b", "branch", False),
         ]:
-            session.add(OrgUnit(
-                id=identifier, tenant_id=tenant, name=f"合成{identifier}",
-                org_type=kind, path=f"/{identifier}", is_deleted=deleted,
-            ))
+            session.add(
+                OrgUnit(
+                    id=identifier,
+                    tenant_id=tenant,
+                    name=f"合成{identifier}",
+                    org_type=kind,
+                    path=f"/{identifier}",
+                    is_deleted=deleted,
+                )
+            )
         actor = User(
-            id="account-root", tenant_id="account-tenant-a", username="account-root", name="合成管理员",
-            password_hash=hash_password("root-synthetic-password"), role=UserRole.SYSTEM_ADMIN,
-            org_unit_id="school-a", is_active=True,
+            id="account-root",
+            tenant_id="account-tenant-a",
+            username="account-root",
+            name="合成管理员",
+            password_hash=hash_password("root-synthetic-password"),
+            role=UserRole.SYSTEM_ADMIN,
+            org_unit_id="school-a",
+            is_active=True,
         )
         session.add(actor)
         session.commit()
         token = create_access_token(subject=actor.id, tenant_id=actor.tenant_id, role=actor.role)
         state = SimpleNamespace(
-            actor=actor, session=session, db=AsyncAdapter(session), headers={"Authorization": f"Bearer {token}"}
+            actor=actor,
+            session=session,
+            db=AsyncAdapter(session),
+            headers={"Authorization": f"Bearer {token}"},
         )
         application = FastAPI()
         application.include_router(admin.router, prefix="/api/v1")
@@ -129,19 +149,28 @@ def workspace(monkeypatch):
 
 def payload(**overrides):
     return {
-        "username": "new-member", "name": "合成新党员", "password": "synthetic-password",
-        "role": "member", "org_unit_id": "branch-a",
+        "username": "new-member",
+        "name": "合成新党员",
+        "password": "synthetic-password",
+        "role": "member",
+        "org_unit_id": "branch-a",
     } | overrides
 
 
 def create(workspace, **overrides):
-    return workspace.client.post("/api/v1/admin/users", headers=workspace.headers, json=payload(**overrides))
+    return workspace.client.post(
+        "/api/v1/admin/users", headers=workspace.headers, json=payload(**overrides)
+    )
 
 
 def test_organization_options_exclude_foreign_deleted_and_invalid_units(workspace):
     response = workspace.client.get("/api/v1/admin/org-units", headers=workspace.headers)
     assert response.status_code == 200
-    assert {org["id"] for org in response.json()["data"]} == {"school-a", "department-a", "branch-a"}
+    assert {org["id"] for org in response.json()["data"]} == {
+        "school-a",
+        "department-a",
+        "branch-a",
+    }
 
 
 @pytest.mark.parametrize("path", ["/admin/org-units", "/admin/users"])
@@ -159,7 +188,10 @@ def test_other_roles_cannot_create_accounts_even_with_an_old_admin_token(workspa
     workspace.actor.role = role
     workspace.session.commit()
     assert create(workspace).status_code == 403
-    assert workspace.client.get("/api/v1/admin/org-units", headers=workspace.headers).status_code == 403
+    assert (
+        workspace.client.get("/api/v1/admin/org-units", headers=workspace.headers).status_code
+        == 403
+    )
     assert workspace.session.scalar(select(func.count(User.id))) == 1
     assert workspace.session.scalar(select(func.count(AuditLog.id))) == 0
 
@@ -176,24 +208,44 @@ def test_created_account_is_hashed_audited_and_can_log_in(workspace):
     assert stored.password_hash != "synthetic-password"
     assert verify_password("synthetic-password", stored.password_hash)
     audit = workspace.session.scalars(select(AuditLog)).one()
-    assert (audit.user_id, audit.resource_type, audit.resource_id) == ("account-root", "user", stored.id)
+    assert (audit.user_id, audit.resource_type, audit.resource_id) == (
+        "account-root",
+        "user",
+        stored.id,
+    )
     assert audit.new_value == {"role": "member", "org_unit_id": "branch-a"}
     assert "password" not in str(audit.dict()) and stored.password_hash not in str(audit.dict())
-    login = workspace.client.post("/api/v1/auth/login", json={"username": "new-member", "password": "synthetic-password"})
+    login = workspace.client.post(
+        "/api/v1/auth/login", json={"username": "new-member", "password": "synthetic-password"}
+    )
     assert login.status_code == 200
     headers = {"Authorization": "Bearer " + login.json()["data"]["access_token"]}
     me = workspace.client.get("/api/v1/auth/me", headers=headers)
     assert me.status_code == 200 and me.json()["data"]["id"] == stored.id
-    assert workspace.client.post("/api/v1/admin/users", headers=headers, json=payload(username="escalated")).status_code == 403
-    wrong_password = workspace.client.post("/api/v1/auth/login", json={"username": "new-member", "password": "wrong-password"})
+    assert (
+        workspace.client.post(
+            "/api/v1/admin/users", headers=headers, json=payload(username="escalated")
+        ).status_code
+        == 403
+    )
+    wrong_password = workspace.client.post(
+        "/api/v1/auth/login", json={"username": "new-member", "password": "wrong-password"}
+    )
     assert wrong_password.status_code == 401
 
 
-@pytest.mark.parametrize("role,org", [
-    ("system_admin", "school-a"), ("school_admin", "school-a"),
-    ("department_admin", "department-a"), ("branch_secretary", "branch-a"),
-    ("organizer", "branch-a"), ("member", "branch-a"), ("applicant", "branch-a"),
-])
+@pytest.mark.parametrize(
+    "role,org",
+    [
+        ("system_admin", "school-a"),
+        ("school_admin", "school-a"),
+        ("department_admin", "department-a"),
+        ("branch_secretary", "branch-a"),
+        ("organizer", "branch-a"),
+        ("member", "branch-a"),
+        ("applicant", "branch-a"),
+    ],
+)
 def test_system_admin_can_assign_each_supported_role(workspace, role, org):
     response = create(workspace, role=role, org_unit_id=org)
     assert response.status_code == 201
@@ -206,13 +258,24 @@ def test_foreign_deleted_or_missing_organization_is_rejected(workspace, organiza
     assert workspace.session.scalar(select(func.count(User.id))) == 1
 
 
-@pytest.mark.parametrize("role,org", [("school_admin", "branch-a"), ("department_admin", "school-a"), ("member", "department-a")])
+@pytest.mark.parametrize(
+    "role,org",
+    [("school_admin", "branch-a"), ("department_admin", "school-a"), ("member", "department-a")],
+)
 def test_role_must_match_organization_type(workspace, role, org):
     assert create(workspace, role=role, org_unit_id=org).status_code == 422
     assert workspace.session.scalar(select(func.count(User.id))) == 1
 
 
-@pytest.mark.parametrize("extra", [{"tenant_id": "account-tenant-b"}, {"id": "chosen"}, {"is_active": False}, {"password_hash": "chosen"}])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"tenant_id": "account-tenant-b"},
+        {"id": "chosen"},
+        {"is_active": False},
+        {"password_hash": "chosen"},
+    ],
+)
 def test_client_cannot_control_tenant_identity_or_password_hash(workspace, extra):
     response = create(workspace, **extra)
     assert response.status_code == 422
@@ -220,11 +283,20 @@ def test_client_cannot_control_tenant_identity_or_password_hash(workspace, extra
     assert workspace.session.scalar(select(func.count(User.id))) == 1
 
 
-@pytest.mark.parametrize("invalid", [
-    {"username": " "}, {"username": "a b"}, {"username": "x" * 51}, {"name": " "},
-    {"password": "short"}, {"password": " " * 8}, {"password": "中" * 25},
-    {"role": "unknown"}, {"org_unit_id": ""},
-])
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"username": " "},
+        {"username": "a b"},
+        {"username": "x" * 51},
+        {"name": " "},
+        {"password": "short"},
+        {"password": " " * 8},
+        {"password": "中" * 25},
+        {"role": "unknown"},
+        {"org_unit_id": ""},
+    ],
+)
 def test_invalid_fields_do_not_write_accounts_or_echo_passwords(workspace, invalid):
     response = create(workspace, **invalid)
     assert response.status_code == 422
@@ -234,11 +306,18 @@ def test_invalid_fields_do_not_write_accounts_or_echo_passwords(workspace, inval
 
 
 @pytest.mark.parametrize("kind", ["active", "inactive", "deleted", "foreign", "race"])
-def test_duplicate_username_does_not_overwrite_account_and_transaction_recovers(workspace, monkeypatch, kind):
+def test_duplicate_username_does_not_overwrite_account_and_transaction_recovers(
+    workspace, monkeypatch, kind
+):
     existing = User(
         tenant_id="account-tenant-b" if kind == "foreign" else "account-tenant-a",
-        username="new-member", name="原账号", password_hash="original-hash", role=UserRole.MEMBER,
-        org_unit_id="branch-a", is_deleted=kind == "deleted", is_active=kind != "inactive",
+        username="new-member",
+        name="原账号",
+        password_hash="original-hash",
+        role=UserRole.MEMBER,
+        org_unit_id="branch-a",
+        is_deleted=kind == "deleted",
+        is_active=kind != "inactive",
     )
     workspace.session.add(existing)
     workspace.session.commit()
@@ -262,7 +341,9 @@ def test_duplicate_username_does_not_overwrite_account_and_transaction_recovers(
 
 
 def test_audit_failure_rolls_back_account_creation(workspace, monkeypatch):
-    monkeypatch.setattr(admin, "audit_operation", AsyncMock(side_effect=RuntimeError("synthetic audit failure")))
+    monkeypatch.setattr(
+        admin, "audit_operation", AsyncMock(side_effect=RuntimeError("synthetic audit failure"))
+    )
     assert create(workspace).status_code == 500
     assert workspace.session.scalar(select(func.count(User.id))) == 1
     assert workspace.session.scalar(select(func.count(AuditLog.id))) == 0
