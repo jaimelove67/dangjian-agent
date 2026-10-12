@@ -1,6 +1,7 @@
 """本人档案、私有材料提交及组织人员的账号关联。"""
 
 import hashlib
+from datetime import date
 from pathlib import PurePath
 from urllib.parse import quote
 from uuid import UUID
@@ -288,6 +289,10 @@ async def submit_material(
         tenant_id=tenant_id,
         user_id=user_id,
         profile_id=profile_id,
+        org_unit_id=profile.org_unit_id or "",
+        stage=profile.current_stage,
+        submit_date=date.today(),
+        submitter_id=user_id,
         title=body.title,
         category=body.category,
         description=body.description,

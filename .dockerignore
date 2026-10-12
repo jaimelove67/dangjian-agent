@@ -56,8 +56,9 @@ docker-compose*.yml
 *.md
 docs/
 
-# 开发依赖
+# 开发依赖（Dockerfile.dev 仍需复制，放行）
 requirements-dev.txt
+!requirements-dev.txt
 
 # 测试文件
 tests/
