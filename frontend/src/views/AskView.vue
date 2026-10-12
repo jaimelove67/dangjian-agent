@@ -1,38 +1,34 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 import { askQuestion, listQASessions } from '@/api/qa'
-import type { AskQuestionResponse, DataLevel, QASessionItem } from '@/api/types'
-import { DATA_LEVEL_LABELS, DATA_LEVEL_ROUTE } from '@/api/types'
+import type { AskQuestionResponse, QASessionItem } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import CitationCard from '@/components/CitationCard.vue'
-import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
-import PageHeader from '@/components/PageHeader.vue'
 import WarningList from '@/components/WarningList.vue'
 import { session } from '@/stores/session'
 
 /**
- * 制度问答主界面。
+ * 制度问答主界面（DeepSeek 式对话布局，沿用本项目编辑式设计令牌）。
  *
- * 版面：左栏提问与回答（阅读区，行宽受限），右栏是检索参数与来源清单。
- *   这种"阅读 + 工具"的分栏是编辑式排版的常见结构：正文不被控件打断，
- *   而参数、来源索引这类"旁注"集中在侧栏。
+ * 版面：左侧会话栏（新对话 + 最近提问）+ 中间对话流 + 底部吸附输入框。
+ *   问答像聊天一样从底部向上生长，引用来源内联在回答下方可折叠。
  *
  * 关键设计取舍：
- *   1. 答案中的 [n] 角标做成可点击跳转，直接滚到右侧对应来源卡并高亮。
- *      这是"溯源"这个产品主张在交互上的兑现点，不能只做静态文本。
- *   2. 依据充分性单独出结论条，因为"没找到依据"本身就是一种有效回答，
- *      必须比"答案是空"更明确。
- *   3. 数据分级是提交前必选，且实时显示该级别对应的模型走向，
- *      让"什么内容会被送到哪个模型"这件事在使用前就可见。
+ *   1. 答案中的 [n] 角标仍做成可点击跳转，事件点击后滚到来源卡并高亮，
+ *      这是"溯源"这个产品主张在交互上的兑现点，不因版式变化而丢失。
+ *   2. 依据充分性单独出结论条，未找到依据也是一种有效回答，必须明确。
+ *   3. 查询区只保留输入框与提问按钮：检索参数采用固定默认值（数据分级
+ *      固定 internal、检索 10 条、开启重排序），由后端继续强制执行边界。
  */
 
 const question = ref('')
-const useReranker = ref(true)
-const topK = ref(10)
-const dataLevel = ref<DataLevel>('internal')
+/** 固定检索参数：不再提供 UI 开关，保持后端订阅的默认链路 */
+const DATA_LEVEL_SUBMIT = 'internal'
+const TOP_K_SUBMIT = 10
+const USE_RERANKER_SUBMIT = true
 
 const loading = ref(false)
 const result = ref<AskQuestionResponse | null>(null)
@@ -48,6 +44,11 @@ const historyTotal = ref(0)
 const historyPageSize = 8
 const viewingHistory = ref(false)
 const resultReranker = ref<boolean | null>(null)
+// 会话栏展开状态：桌面可折叠，移动端作抽屉
+const convOpen = ref(false)
+const activeItemId = ref<string | null>(null)
+const chatScroll = ref<HTMLElement | null>(null)
+
 // 浏览器保留会话编号，内容保存在服务端并按租户及用户隔离。
 const sessionKey = `party.qa-session.${session.state.user?.id ?? ''}`
 const sessionId = ref(sessionStorage.getItem(sessionKey) ?? crypto.randomUUID())
@@ -76,19 +77,19 @@ function viewHistory(item: QASessionItem): void {
   if (loading.value) return
   question.value = item.question
   submittedQuestion.value = item.question
-  dataLevel.value = item.data_level
   result.value = item
   error.value = null
   activeCitation.value = null
   viewingHistory.value = true
   resultReranker.value = null
+  activeItemId.value = item.id
   sessionId.value = item.session_id ?? crypto.randomUUID()
   sessionStorage.setItem(sessionKey, sessionId.value)
+  void scrollToBottom()
 }
 
-function historyDate(value: string): string {
-  const utc = /Z$|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`
-  return new Date(utc).toLocaleString('zh-CN')
+function isActive(item: QASessionItem): boolean {
+  return activeItemId.value === item.id
 }
 
 const MAX_LEN = 500 // 后端 QuestionRequest.question 的 max_length
@@ -96,10 +97,12 @@ const MAX_LEN = 500 // 后端 QuestionRequest.question 的 max_length
 const remaining = computed(() => MAX_LEN - question.value.length)
 const canSubmit = computed(() => question.value.trim().length > 0 && !loading.value)
 
-const levelHint = computed(() => DATA_LEVEL_ROUTE[dataLevel.value])
-const levelIsRestricted = computed(
-  () => dataLevel.value !== 'public',
+/** 欢迎态：无任何提问或结果时居中显示引导 */
+const welcome = computed(
+  () => !submittedQuestion.value && !loading.value && !result.value && !error.value,
 )
+
+const citationOpen = ref(true)
 
 /** 依据充分性：三种状态需要三种完全不同的措辞与色调 */
 const evidence = computed(() => {
@@ -165,7 +168,7 @@ const answerParagraphs = computed(() => {
       const parts = t.value.split('\n')
       parts.forEach((p, i) => {
         if (i > 0) paras.push([])
-        if (p) paras[paras.length - 1].push({ kind: 'text', value: p })
+        if (p) paras[paras.length - 1]!.push({ kind: 'text', value: p })
       })
     } else {
       paras[paras.length - 1]!.push(t)
@@ -173,6 +176,11 @@ const answerParagraphs = computed(() => {
   }
   return paras.filter((p) => p.length > 0)
 })
+
+async function scrollToBottom(): Promise<void> {
+  await nextTick()
+  chatScroll.value?.scrollTo({ top: chatScroll.value.scrollHeight, behavior: 'smooth' })
+}
 
 async function onAsk(): Promise<void> {
   if (!canSubmit.value) return
@@ -184,26 +192,36 @@ async function onAsk(): Promise<void> {
   activeCitation.value = null
   submittedQuestion.value = q
   viewingHistory.value = false
-  resultReranker.value = useReranker.value
+  activeItemId.value = null
+  resultReranker.value = USE_RERANKER_SUBMIT
+  citationOpen.value = true
+  void scrollToBottom()
 
   try {
     result.value = await askQuestion({
       question: q,
-      data_level: dataLevel.value,
-      use_reranker: useReranker.value,
-      top_k: topK.value,
+      data_level: DATA_LEVEL_SUBMIT,
+      use_reranker: USE_RERANKER_SUBMIT,
+      top_k: TOP_K_SUBMIT,
       session_id: sessionId.value,
     })
     void loadHistory(1)
+    void scrollToBottom()
   } catch (err) {
     error.value = err
+    void scrollToBottom()
   } finally {
     loading.value = false
   }
 }
 
+watch(loading, (isLoading) => {
+  if (isLoading) void scrollToBottom()
+})
+
 async function jumpToCitation(index: number): Promise<void> {
   activeCitation.value = index
+  citationOpen.value = true
   await nextTick()
   const el = document.getElementById(`cite-${index}`)
   el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -236,6 +254,8 @@ function onReset(): void {
   activeCitation.value = null
   viewingHistory.value = false
   resultReranker.value = null
+  activeItemId.value = null
+  citationOpen.value = false
   sessionId.value = crypto.randomUUID()
   sessionStorage.setItem(sessionKey, sessionId.value)
 }
@@ -248,142 +268,163 @@ const SUGGESTIONS = [
 
 function useSuggestion(text: string): void {
   question.value = text
+  void nextTick(() => document.getElementById('question')?.focus())
+}
+
+function historyDateParts(value: string): string {
+  const utc = /Z$|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`
+  const d = new Date(utc)
+  const today = new Date()
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate()
+  if (sameDay) {
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  }
+  return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 </script>
 
 <template>
   <div class="ask">
-    <PageHeader
-      title="制度问答"
-      description="以党内法规与校内制度为依据作答，并逐条标注出处。回答仅作辅助参考，不构成组织认定。"
-    >
-      <template #actions>
-        <button v-if="result" class="btn btn--ghost" type="button" :disabled="loading" @click="onReset">
+    <!-- ============================ 会话栏 ============================ -->
+    <aside class="conv" :class="{ 'is-open': convOpen }" aria-label="会话列表">
+      <div class="conv__top">
+        <button class="btn btn--ghost conv__new" type="button" @click="onReset">
+          <AppIcon name="plus" :size="15" />
+          <span>新对话</span>
+        </button>
+      </div>
+
+      <section class="conv__section">
+        <header class="conv__head">
+          <h2 class="conv__title">最近提问</h2>
+          <span class="badge">{{ historyTotal }}</span>
+        </header>
+
+        <div class="conv__body">
+          <LoadingBlock v-if="historyLoading" variant="list" :rows="3" />
+          <ErrorState v-else-if="historyError" :error="historyError">
+            <button class="btn btn--ghost" type="button" @click="loadHistory()">重试历史查询</button>
+          </ErrorState>
+          <p v-else-if="!recent.length" class="conv__empty">尚无问答记录，提问后会保存在这里。</p>
+          <ul v-else class="recent-list">
+            <li v-for="item in recent" :key="item.id">
+              <button
+                class="recent-item"
+                :class="{ 'is-active': isActive(item) }"
+                type="button"
+                :disabled="loading"
+                @click="viewHistory(item)"
+              >
+                <span class="recent-item__text">{{ item.question }}</span>
+                <time class="u-meta" :datetime="item.created_at">{{ historyDateParts(item.created_at) }}</time>
+              </button>
+            </li>
+          </ul>
+          <div v-if="!historyLoading && !historyError && historyTotal > historyPageSize" class="conv__pages">
+            <button class="btn btn--quiet" :disabled="historyPage <= 1" type="button" @click="loadHistory(historyPage - 1)">上一页</button>
+            <span class="u-meta">第 {{ historyPage }} 页</span>
+            <button class="btn btn--quiet" :disabled="historyPage * historyPageSize >= historyTotal" type="button" @click="loadHistory(historyPage + 1)">下一页</button>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <button v-if="convOpen" class="scrim conv__scrim" type="button" aria-label="关闭会话列表" @click="convOpen = false"></button>
+
+    <!-- ============================ 对话区 ============================ -->
+    <div class="chat">
+      <header class="chat__top">
+        <button
+          class="btn btn--quiet chat__toggle"
+          type="button"
+          :aria-expanded="convOpen"
+          @click="convOpen = !convOpen"
+        >
+          <AppIcon name="layout" :size="15" />
+          <span>会话列表</span>
+        </button>
+        <button
+          v-if="result"
+          class="btn btn--ghost chat__clear"
+          type="button"
+          :disabled="loading"
+          @click="onReset"
+        >
           <AppIcon name="close" :size="14" />
           <span>清空</span>
         </button>
-      </template>
-    </PageHeader>
+      </header>
 
-    <div class="ask__grid">
-      <!-- ------------------------------ 主栏 ------------------------------ -->
-      <div class="ask__main">
-        <!-- 提问区 -->
-        <form class="composer" @submit.prevent="onAsk">
-          <div class="composer__box">
-            <label class="u-sr" for="question">提问内容</label>
-            <textarea
-              id="question"
-              v-model="question"
-              class="textarea composer__input"
-              :maxlength="MAX_LEN"
-              placeholder="用一句话描述你要确认的制度问题，例如：发展对象的政治审查需要哪些材料"
-              @keydown.meta.enter="onAsk"
-              @keydown.ctrl.enter="onAsk"
-            ></textarea>
+      <div ref="chatScroll" class="chat__scroll">
+        <!-- 历史查看提示 -->
+        <p v-if="viewingHistory" class="chat-hint" role="note">
+          当前展示历史回答，引用的文件可能已经更新或失效。再次提问会重新检索。
+        </p>
 
-            <div class="composer__bar">
-              <div class="composer__params">
-                <div class="param">
-                  <label class="param__label" for="level">数据分级</label>
-                  <select id="level" v-model="dataLevel" class="select param__select">
-                    <option v-for="(label, key) in DATA_LEVEL_LABELS" :key="key" :value="key">
-                      {{ label }}
-                    </option>
-                  </select>
-                </div>
-
-                <div class="param">
-                  <label class="param__label" for="topk">检索条数</label>
-                  <select id="topk" v-model.number="topK" class="select param__select">
-                    <option :value="5">5</option>
-                    <option :value="10">10</option>
-                    <option :value="20">20</option>
-                    <option :value="30">30</option>
-                  </select>
-                </div>
-
-                <label class="check">
-                  <input v-model="useReranker" type="checkbox" class="check__box" />
-                  <span>启用重排序</span>
-                </label>
-              </div>
-
-              <div class="composer__submit">
-                <span class="u-meta u-num composer__count" :class="{ 'is-low': remaining < 40 }">
-                  {{ remaining }}
-                </span>
-                <button class="btn btn--primary" type="submit" :disabled="!canSubmit">
-                  <AppIcon name="search" :size="15" />
-                  <span>{{ loading ? '检索中' : '提问' }}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- 数据分级提示：把"送到哪个模型"在使用前讲清楚 -->
-          <p class="level-note" :class="{ 'is-restricted': levelIsRestricted }">
-            <AppIcon :name="levelIsRestricted ? 'shield' : 'info'" :size="14" />
-            <span>
-              当前分级为「{{ DATA_LEVEL_LABELS[dataLevel] }}」，{{ levelHint }}。
-              <template v-if="levelIsRestricted">
-                发送前请确认内容确属该分级，敏感与涉密材料不得送往外部模型。
-              </template>
-            </span>
+        <!-- 欢迎态：居中问候 + 建议卡片 -->
+        <section v-if="welcome" class="welcome">
+          <h1 class="u-title-page welcome__title">有什么制度问题想确认？</h1>
+          <p class="welcome__sub">
+            以党内法规与校内制度为依据作答，并逐条标注出处。回答仅作辅助参考，不构成组织认定。
           </p>
-
-          <!-- 首次进入的引导：用例句降低冷启动成本，而非空等 -->
-          <div v-if="!result && !loading && !error" class="suggest">
+          <div class="suggest">
             <span class="u-eyebrow">可以这样问</span>
-            <ul class="suggest__list">
-              <li v-for="s in SUGGESTIONS" :key="s">
-                <button class="suggest__item" type="button" @click="useSuggestion(s)">
-                  <span>{{ s }}</span>
-                  <AppIcon name="arrow-right" :size="14" />
-                </button>
-              </li>
-            </ul>
-          </div>
-        </form>
-
-        <!-- 加载态 -->
-        <LoadingBlock v-if="loading" variant="answer" />
-
-        <!-- 错误态 -->
-        <ErrorState v-else-if="error" :error="error">
-          <button class="btn btn--ghost" type="button" @click="onAsk">重新提问</button>
-          <button class="btn btn--quiet" type="button" @click="onReset">清空</button>
-        </ErrorState>
-
-        <!-- 结果 -->
-        <template v-else-if="result">
-          <p v-if="viewingHistory" class="aside-hint" role="note">当前展示历史回答，引用的文件可能已经更新或失效。再次提问会重新检索。</p>
-          <!-- 依据充分性结论条：先给结论强度，再给内容 -->
-          <div v-if="evidence" class="evidence" :class="`is-${evidence.tone}`">
-            <AppIcon :name="evidence.tone === 'ok' ? 'check' : 'alert'" :size="16" />
-            <div>
-              <p class="evidence__label">{{ evidence.label }}</p>
-              <p class="evidence__text">{{ evidence.text }}</p>
+            <div class="suggest__grid">
+              <button
+                v-for="s in SUGGESTIONS"
+                :key="s"
+                class="suggest__card"
+                type="button"
+                @click="useSuggestion(s)"
+              >
+                <span>{{ s }}</span>
+                <AppIcon name="arrow-right" :size="14" />
+              </button>
             </div>
           </div>
+        </section>
 
-          <!-- 提问回显 -->
-          <div class="echo">
-            <span class="u-eyebrow">问题</span>
-            <p class="echo__text">{{ submittedQuestion }}</p>
+        <!-- 对话流 -->
+        <div v-if="submittedQuestion || loading || result || error" class="stream">
+          <!-- 用户问题 -->
+          <div v-if="submittedQuestion" class="msg msg--user">
+            <p class="msg__bubble">{{ submittedQuestion }}</p>
           </div>
 
-          <!-- 回答正文 -->
-          <article class="answer">
-            <header class="answer__head">
-              <h2 class="u-title-section">回答</h2>
+          <!-- 加载态：骨架回答 -->
+          <div v-if="loading" class="msg msg--bot">
+            <LoadingBlock variant="answer" />
+          </div>
+
+          <!-- 错误态 -->
+          <ErrorState v-else-if="error" :error="error" class="msg msg--error">
+            <button class="btn btn--ghost" type="button" @click="onAsk">重新提问</button>
+            <button class="btn btn--quiet" type="button" @click="onReset">清空</button>
+          </ErrorState>
+
+          <!-- 回答 -->
+          <article v-else-if="result" class="msg msg--bot msg--answer">
+            <!-- 依据充分性结论条 -->
+            <div v-if="evidence" class="evidence" :class="`is-${evidence.tone}`">
+              <AppIcon :name="evidence.tone === 'ok' ? 'check' : 'alert'" :size="16" />
+              <div>
+                <p class="evidence__label">{{ evidence.label }}</p>
+                <p class="evidence__text">{{ evidence.text }}</p>
+              </div>
+            </div>
+
+            <header class="msg__head">
+              <span class="u-eyebrow">回答</span>
               <button class="btn btn--quiet" type="button" @click="copyAnswer">
                 <AppIcon :name="copyState === 'done' ? 'check' : 'copy'" :size="14" />
                 <span>{{ copyState === 'done' ? '已复制' : '复制全文' }}</span>
               </button>
             </header>
 
-            <div class="answer__body">
+            <div class="msg__body">
               <p v-for="(para, pi) in answerParagraphs" :key="pi">
                 <template v-for="(tok, ti) in para" :key="ti">
                   <button
@@ -402,309 +443,406 @@ function useSuggestion(text: string): void {
             </div>
 
             <WarningList v-if="result.warnings.length" :warnings="result.warnings" />
-            <footer class="answer__foot">
+
+            <!-- 来源：内联折叠区，点角标会自动展开 -->
+            <section v-if="result.citations.length" class="cites">
+              <button
+                class="cites__trigger"
+                type="button"
+                :aria-expanded="citationOpen"
+                @click="citationOpen = !citationOpen"
+              >
+                <AppIcon :name="citationOpen ? 'chevron-down' : 'chevron-right'" :size="15" />
+                <span>来源</span>
+                <span class="badge badge--accent">{{ result.citations.length }}</span>
+                <span class="u-meta cites__hint">点角标可定位到对应来源</span>
+              </button>
+              <div v-if="citationOpen" class="cites__list">
+                <CitationCard
+                  v-for="c in result.citations"
+                  :key="c.index"
+                  :citation="c"
+                  :index="c.index"
+                  :class="{ 'is-active': activeCitation === c.index }"
+                />
+              </div>
+            </section>
+
+            <!-- 检索明细 -->
+            <dl class="stats">
+              <div class="stats__row"><dt>命中片段</dt><dd class="u-num">{{ result.retrieved_count }}</dd></div>
+              <div class="stats__row"><dt>实际引用</dt><dd class="u-num">{{ result.used_count }}</dd></div>
+              <div class="stats__row"><dt>依据充分</dt><dd>{{ result.has_sufficient_evidence ? '是' : '否' }}</dd></div>
+              <div v-if="resultReranker !== null" class="stats__row">
+                <dt>重排序</dt><dd>{{ resultReranker ? '已启用' : '未启用' }}</dd>
+              </div>
+            </dl>
+
+            <footer class="msg__foot">
               <p class="disclaimer">
                 <AppIcon name="info" :size="14" />
                 <span>{{ result.disclaimer }}</span>
               </p>
             </footer>
           </article>
-        </template>
-
-        <!-- 初始空态 -->
-        <EmptyState
-          v-else
-          icon="ask"
-          title="还没有提问"
-          body="在上方输入制度问题开始检索。系统会从知识库中查找依据，并在回答中标注可核验的出处。"
-        />
+        </div>
       </div>
 
-      <!-- ------------------------------ 侧栏 ------------------------------ -->
-      <aside class="ask__aside">
-        <section class="aside-card">
-          <header class="u-panel-head aside-card__head">
-            <h2 class="aside-card__title">最近提问</h2><span class="badge">{{ historyTotal }}</span>
-          </header>
-          <div class="aside-card__body">
-            <LoadingBlock v-if="historyLoading" variant="list" :rows="3" />
-            <ErrorState v-else-if="historyError" :error="historyError"><button class="btn btn--ghost" type="button" @click="loadHistory()">重试历史查询</button></ErrorState>
-            <p v-else-if="!recent.length" class="aside-hint">尚无问答记录，提问后会在这里保存。</p>
-            <ul v-else class="recent-list">
-              <li v-for="item in recent" :key="item.id">
-                <button class="recent-item" type="button" :disabled="loading" @click="viewHistory(item)">
-                  <span>{{ item.question }}</span><time class="u-meta" :datetime="item.created_at">{{ historyDate(item.created_at) }}</time>
-                </button>
-              </li>
-            </ul>
-            <div v-if="!historyLoading && !historyError && historyTotal > historyPageSize" class="recent-pages">
-              <button class="btn btn--quiet" :disabled="historyPage <= 1" @click="loadHistory(historyPage - 1)">上一页</button>
-              <span class="u-meta">第 {{ historyPage }} 页</span>
-              <button class="btn btn--quiet" :disabled="historyPage * historyPageSize >= historyTotal" @click="loadHistory(historyPage + 1)">下一页</button>
+      <!-- ============================ 输入框 ============================ -->
+      <form class="composer" @submit.prevent="onAsk">
+        <div class="composer__box">
+          <label class="u-sr" for="question">提问内容</label>
+          <textarea
+            id="question"
+            v-model="question"
+            class="textarea composer__input"
+            :maxlength="MAX_LEN"
+            placeholder="用一句话描述你要确认的制度问题，例如：发展对象的政治审查需要哪些材料"
+            @keydown.meta.enter="onAsk"
+            @keydown.ctrl.enter="onAsk"
+          ></textarea>
+
+          <div class="composer__bar">
+            <div class="composer__submit">
+              <span class="u-meta u-num" :class="{ 'is-low': remaining < 40 }">{{ remaining }}</span>
+              <button class="btn btn--primary" type="submit" :disabled="!canSubmit">
+                <AppIcon name="search" :size="15" />
+                <span>{{ loading ? '检索中' : '提问' }}</span>
+              </button>
             </div>
           </div>
-        </section>
-        <section class="aside-card">
-          <header class="u-panel-head aside-card__head">
-            <h2 class="aside-card__title">来源清单</h2>
-            <span v-if="result" class="badge">{{ result.citations.length }}</span>
-          </header>
-
-          <div v-if="loading" class="aside-card__body">
-            <LoadingBlock variant="list" :rows="3" />
-          </div>
-
-          <div v-else-if="result && result.citations.length" class="aside-card__body">
-            <CitationCard
-              v-for="c in result.citations"
-              :key="c.index"
-              :citation="c"
-              :index="c.index"
-              class="aside-card__cite"
-              :class="{ 'is-active': activeCitation === c.index }"
-            />
-          </div>
-
-          <div v-else-if="result" class="aside-card__body">
-            <EmptyState
-              icon="empty"
-              title="本次未检索到来源"
-              body="问题可能超出了知识库收录范围。可尝试换用制度文件中的表述，或先在知识库中补录相关文件。"
-            />
-          </div>
-
-          <div v-else class="aside-card__body">
-            <p class="aside-hint">提问后，这里会列出本次回答引用的全部来源，可按角标逐一核对。</p>
-          </div>
-        </section>
-
-        <!-- 检索明细：把"检索了多少、用了多少"如实交代 -->
-        <section v-if="result" class="aside-card aside-card--stat">
-          <header class="u-panel-head aside-card__head">
-            <h2 class="aside-card__title">检索明细</h2>
-          </header>
-          <dl class="stats">
-            <div class="stats__row">
-              <dt>命中片段</dt>
-              <dd class="u-num">{{ result.retrieved_count }}</dd>
-            </div>
-            <div class="stats__row">
-              <dt>实际引用</dt>
-              <dd class="u-num">{{ result.used_count }}</dd>
-            </div>
-            <div class="stats__row">
-              <dt>依据充分</dt>
-              <dd>{{ result.has_sufficient_evidence ? '是' : '否' }}</dd>
-            </div>
-            <div v-if="resultReranker !== null" class="stats__row">
-              <dt>重排序</dt>
-              <dd>{{ resultReranker ? '已启用' : '未启用' }}</dd>
-            </div>
-          </dl>
-        </section>
-      </aside>
+        </div>
+      </form>
     </div>
   </div>
 </template>
 
 <style scoped>
-.recent-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-3);
-  text-align: left;
-  border-bottom: var(--border);
-}
-.recent-item:hover { background: var(--paper-dim); }
-.recent-pages { display: flex; align-items: center; justify-content: space-between; }
-
+/* ============================ 骨架 ================================ */
 .ask {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-  padding: var(--space-6) var(--space-6) var(--space-12);
-  max-width: 1280px;
-  width: 100%;
-  margin: 0 auto;
-}
-
-.ask__grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--aside-w);
-  gap: var(--space-6);
-  align-items: start;
-}
-
-.ask__main {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  min-width: 0;
-}
-
-/* ---------------------------- 提问区 ------------------------------- */
-.composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.composer__box {
-  background: var(--paper-raised);
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius-md);
+  height: calc(100dvh - var(--nav-h));
   overflow: hidden;
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  width: 100%;
 }
 
-.composer__box:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--focus-ring);
-}
-
-.composer__input {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: var(--space-4);
-  font-size: var(--text-md);
-  line-height: var(--leading-normal);
-  min-height: 104px;
-}
-
-.composer__input:focus {
-  outline: none;
-  box-shadow: none;
-}
-
-.composer__bar {
+/* ============================ 会话栏 =============================== */
+.conv {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-2) var(--space-3);
-  border-top: var(--border);
-  background: var(--paper-dim);
-}
-
-.composer__params {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-}
-
-.param {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.param__label {
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-  white-space: nowrap;
-}
-
-.param__select {
-  width: auto;
-  height: 28px;
-  padding-inline: var(--space-2);
-  font-size: var(--text-xs);
-}
-
-.check {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.check__box {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-.composer__submit {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  width: var(--conv-w, 268px);
   flex: none;
+  padding: var(--space-4) var(--space-3);
+  border-right: var(--border);
+  background: var(--paper);
 }
 
-.composer__count {
-  font-size: var(--text-xs);
-}
-
-.composer__count.is-low {
-  color: var(--warn-ink);
-}
-
-.level-note {
+.conv__top {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-  color: var(--ink-muted);
 }
 
-.level-note.is-restricted {
-  color: var(--warn-ink);
+.conv__new {
+  width: 100%;
+  justify-content: flex-start;
 }
 
-/* ---------------------------- 例句 -------------------------------- */
-.suggest {
+.conv__section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding-top: var(--space-2);
-}
-
-.suggest__list {
-  display: flex;
-  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--paper-raised);
   border: var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: var(--paper-raised);
 }
 
-.suggest__item {
+.conv__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--paper-dim);
+}
+
+.conv__title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.conv__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.conv__empty {
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink-muted);
+}
+
+.recent-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.recent-item:hover {
+  background: var(--paper-dim);
+}
+
+.recent-item.is-active {
+  background: var(--accent-wash);
+  color: var(--accent-deep);
+}
+
+.recent-item__text {
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.recent-item time {
+  font-size: var(--text-2xs);
+}
+
+.conv__pages {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.conv__scrim {
+  display: none;
+}
+
+/* ============================ 对话区 =============================== */
+.chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--paper);
+  position: relative;
+}
+
+.chat__top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+.chat__clear {
+  margin-left: auto;
+  flex: none;
+}
+
+.chat__toggle {
+  width: 100%;
+  justify-content: flex-start;
+  color: var(--ink-muted);
+}
+
+.chat__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-8) var(--space-6);
+}
+
+.chat-hint {
+  align-self: center;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--warn-ink);
+  background: var(--warn-wash);
+  border: 1px solid var(--warn-edge);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- 欢迎态 ---- */
+.welcome {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: 640px;
+  text-align: center;
+  padding: var(--space-6) 0;
+}
+
+.welcome__title {
+  color: var(--ink);
+}
+
+.welcome__sub {
+  max-width: 48ch;
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  color: var(--ink-muted);
+}
+
+.suggest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.suggest__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.suggest__card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  background: var(--paper-raised);
+  border: var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--ink-soft);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+
+.suggest__card:hover {
+  border-color: var(--accent-edge);
+  background: var(--accent-wash);
+  color: var(--accent-deep);
+}
+
+.suggest__card :deep(svg) {
+  color: var(--ink-faint);
+  flex: none;
+}
+
+/* ---- 消息流 ---- */
+.stream {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: auto;
+  width: 100%;
+  max-width: 860px;
+  align-self: center;
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 100%;
+}
+
+.msg--user {
+  align-items: flex-end;
+}
+
+.msg__bubble {
+  max-width: 34rem;
+  padding: var(--space-3) var(--space-4);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-md);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  color: var(--accent-deep);
+}
+
+.msg--error {
+  padding: var(--space-3);
+  background: var(--paper-raised);
+  border: var(--border);
+  border-radius: var(--radius-md);
+}
+
+.msg--error :deep(.state) {
+  padding: var(--space-4) var(--space-3);
+}
+
+.msg__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  width: 100%;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: var(--border);
-  text-align: left;
-  font-size: var(--text-base);
-  color: var(--ink-soft);
+}
+
+.msg__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: var(--measure);
+}
+
+.msg__body p {
+  font-size: var(--text-md);
+  line-height: var(--leading-loose);
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+/* 引用角标：与来源卡的角标同形同色，建立视觉对应 */
+.ref {
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  margin: 0 2px;
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: 2px;
+  color: var(--accent-deep);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-xs);
   transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
-.suggest__list li:last-child .suggest__item {
-  border-bottom: 0;
+.ref:hover,
+.ref.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
-.suggest__item:hover {
-  background: var(--paper-dim);
-  color: var(--ink);
-}
-
-.suggest__item :deep(svg) {
-  color: var(--ink-faint);
-}
-
-/* ---------------------------- 结论条 ------------------------------ */
+/* ---- 结论条 ---- */
 .evidence {
   display: flex;
   align-items: flex-start;
@@ -735,82 +873,83 @@ function useSuggestion(text: string): void {
   color: var(--ink-soft);
 }
 
-/* ---------------------------- 回显 -------------------------------- */
-.echo {
+/* ---- 来源折叠 ---- */
+.cites {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding-bottom: var(--space-3);
-  border-bottom: var(--border);
-}
-
-.echo__text {
-  font-size: var(--text-md);
-  font-weight: 500;
-  line-height: var(--leading-normal);
-  color: var(--ink);
-}
-
-/* ---------------------------- 回答 -------------------------------- */
-.answer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-5);
-  background: var(--paper-raised);
+  gap: var(--space-3);
   border: var(--border);
   border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--paper-raised);
 }
 
-.answer__head {
+.cites__trigger {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.answer__body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  max-width: var(--measure);
-}
-
-/* 阅读正文：行高放宽到 1.85，字号提到 15px，中文长文的可读性优先 */
-.answer__body p {
-  font-size: var(--text-md);
-  line-height: var(--leading-loose);
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  font-size: var(--text-base);
+  font-weight: 600;
   color: var(--ink);
 }
 
-/* 引用角标：与来源卡的角标同形同色，建立视觉对应 */
-.ref {
-  display: inline-grid;
-  place-items: center;
-  min-width: 17px;
-  height: 17px;
-  margin: 0 2px;
-  padding: 0 4px;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  font-weight: 600;
-  line-height: 1;
-  vertical-align: 2px;
-  color: var(--accent-deep);
+.cites__trigger:hover {
+  background: var(--paper-dim);
+}
+
+.cites__hint {
+  margin-left: auto;
+  font-weight: 400;
+}
+
+.cites__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.cites__list :deep(.cite.is-active) {
+  border-color: var(--accent-edge);
   background: var(--accent-wash);
-  border: 1px solid var(--accent-edge);
-  border-radius: var(--radius-xs);
-  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
-.ref:hover,
-.ref.is-active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.cites__list :deep(.cite) {
+  scroll-margin-top: calc(var(--nav-h) + var(--space-4));
 }
 
-.answer__foot {
+/* ---- 检索明细 ---- */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  background: var(--paper-dim);
+}
+
+.stats__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+}
+
+.stats__row dt {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.stats__row dd {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.msg__foot {
   padding-top: var(--space-3);
   border-top: var(--border);
 }
@@ -823,104 +962,110 @@ function useSuggestion(text: string): void {
   color: var(--ink-muted);
 }
 
-/* ---------------------------- 侧栏 -------------------------------- */
-.ask__aside {
+/* ============================ 输入框 =============================== */
+.composer {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  position: sticky;
-  top: calc(var(--nav-h) + var(--space-6));
-  max-height: calc(100dvh - var(--nav-h) - var(--space-12));
-  overflow-y: auto;
-  padding-right: 2px;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-8) var(--space-4);
+  border-top: var(--border);
+  background: var(--paper);
 }
 
-.aside-card {
+.composer__box {
   background: var(--paper-raised);
-  border: var(--border);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius-md);
   overflow: hidden;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  box-shadow: var(--shadow-pop);
 }
 
-.aside-card__head {
+.composer__box:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.composer__input {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: var(--space-4);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  min-height: 92px;
+  resize: vertical;
+}
+
+.composer__input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.composer__bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-top: var(--border);
   background: var(--paper-dim);
 }
 
-.aside-card__title {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.aside-card__body {
+.composer__submit {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3);
+  flex: none;
 }
 
-.aside-card__cite {
-  scroll-margin-top: calc(var(--nav-h) + var(--space-6));
+.composer__submit .is-low {
+  color: var(--warn-ink);
 }
 
-.aside-card__cite.is-active {
-  border-color: var(--accent-edge);
-  background: var(--accent-wash);
-}
-
-.aside-hint {
-  padding: var(--space-2);
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-  color: var(--ink-muted);
-}
-
-.stats {
-  display: flex;
-  flex-direction: column;
-}
-
-.stats__row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-2) var(--space-4);
-  border-bottom: var(--border);
-}
-
-.stats__row:last-child {
-  border-bottom: 0;
-}
-
-.stats__row dt {
-  font-size: var(--text-sm);
-  color: var(--ink-muted);
-}
-
-.stats__row dd {
-  font-size: var(--text-base);
-  font-weight: 600;
-  color: var(--ink);
-}
-
-/* ---------------------------- 响应式 ------------------------------ */
-@media (max-width: 1080px) {
-  .ask__grid {
+/* ============================ 响应式 =============================== */
+@media (max-width: 1180px) {
+  .suggest__grid {
     grid-template-columns: 1fr;
+    max-width: 520px;
+  }
+}
+
+@media (max-width: 1079px) {
+  .conv {
+    position: fixed;
+    top: var(--nav-h);
+    bottom: 0;
+    left: 0;
+    z-index: var(--z-pop);
+    width: min(320px, 84vw);
+    transform: translateX(-100%);
+    transition: transform var(--dur) var(--ease);
+    box-shadow: var(--shadow-pop);
   }
 
-  .ask__aside {
-    position: static;
-    max-height: none;
-    overflow: visible;
+  .conv.is-open {
+    transform: translateX(0);
+  }
+
+  .conv__scrim {
+    display: block;
+    position: fixed;
+    inset: var(--nav-h) 0 0 0;
+    z-index: calc(var(--z-pop) - 1);
+    background: var(--overlay-bg);
+    border: 0;
+    width: 100%;
   }
 }
 
 @media (max-width: 720px) {
-  .ask {
-    padding: var(--space-4) var(--space-4) var(--space-10);
-    gap: var(--space-4);
+  .chat__scroll {
+    padding: var(--space-2) var(--space-4) var(--space-5);
+  }
+
+  .composer {
+    padding: var(--space-3) var(--space-3) var(--space-3);
   }
 
   .composer__bar {
@@ -937,8 +1082,8 @@ function useSuggestion(text: string): void {
     flex: 1;
   }
 
-  .answer {
-    padding: var(--space-4);
+  .msg__body {
+    max-width: none;
   }
 }
 </style>
