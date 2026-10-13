@@ -85,8 +85,10 @@ async def replay(limit: int = 100) -> int:
             path.unlink()
             completed += 1
         except Exception:
-            logger.warning("audit_spool_replay_deferred")
-            break
+            logger.warning("audit_spool_replay_deferred", exc_info=True)
+            # 单个损坏或暂时失败的事件不应阻塞其余缓冲回放；
+            # 未成功的事件文件保留，待下一次 replay 或人工处理重试。
+            continue
     return completed
 
 

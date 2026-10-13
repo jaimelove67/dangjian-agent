@@ -86,7 +86,9 @@ def make_audit_log(
         user_agent=user_agent,
         request_id=request_id,
         result=_coerce(result, AuditResult),
-        error_message="operation_failed" if error_message else None,
+        # 记录调用方提供的安全标签（如"权限或业务校验未通过"），
+        # 不把固定占位串写入审计，避免丢失失败原因。
+        error_message=error_message,
         old_value=redact(old_value),
         new_value=redact(new_value),
     )

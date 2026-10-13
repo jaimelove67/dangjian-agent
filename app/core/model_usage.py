@@ -50,7 +50,9 @@ async def record(
                 await db.commit()
     except Exception:
         # 请求级审计仍有加密缓冲，模型指标也保留在 Prometheus。
-        logger.warning("model_usage_database_unavailable")
+        # 保留宽捕获以隔离计量路径（不应让计量失败打断业务请求），
+        # 附带异常信息便于诊断；此处不含请求正文与提示词。
+        logger.warning("model_usage_database_unavailable", exc_info=True)
 
 
 def tracked(kind: str) -> Callable:

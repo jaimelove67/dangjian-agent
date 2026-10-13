@@ -157,10 +157,14 @@ class Settings(BaseSettings):
             or self.FILE_ENCRYPTION_ACTIVE_KEY not in self.FILE_ENCRYPTION_KEYS
         ):
             raise ValueError("生产必须配置独立文件加密密钥环和当前版本")
-        if any(
-            len(base64.b64decode(key, validate=True)) != 32
-            for key in self.FILE_ENCRYPTION_KEYS.values()
-        ):
+        try:
+            key_sizes = [
+                len(base64.b64decode(key, validate=True))
+                for key in self.FILE_ENCRYPTION_KEYS.values()
+            ]
+        except (ValueError, TypeError):
+            raise ValueError("文件密钥必须为Base64编码的32字节") from None
+        if any(size != 32 for size in key_sizes):
             raise ValueError("文件密钥必须为Base64编码的32字节")
         if self.ALLOW_LEGACY_PLAINTEXT_FILES:
             raise ValueError("生产服务禁止直接读取未迁移明文；请使用独立迁移工具")
