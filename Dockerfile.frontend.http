@@ -1,0 +1,17 @@
+# 党建工作智能体 - 单机简化版前端镜像（HTTP:80）
+#
+# 与 Dockerfile.frontend（HTTPS 8443）的唯一差异：
+#   - 使用 config/nginx-http.conf（listen 80，无 TLS）
+#   - nginx 以默认用户运行（root master + nginx worker），无需 tmpfs/证书挂载，
+#     适合 2 核 2G 免费试用机快速跑通；正式上线请改用 HTTPS 版。
+FROM node:24-alpine AS build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+FROM nginx:1.28-alpine
+COPY config/nginx-http.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /frontend/dist /usr/share/nginx/html
+EXPOSE 80
