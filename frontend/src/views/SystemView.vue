@@ -68,15 +68,30 @@ const roleLabel = computed(() => (user.value ? ROLE_LABELS[user.value.role] : ''
 const DATA_LEVELS: DataLevel[] = ['public', 'internal', 'sensitive', 'classified']
 
 const missingCount = computed(() => API_SURFACE.filter((s) => !s.available).length)
-const CHECK_LABELS: Record<string, string> = { database: '数据库', redis: '会话存储', schema: '业务结构', models: '模型能力' }
-const CHECK_STATUS: Record<string, string> = { healthy: '正常', unhealthy: '连接失败', migration_required: '需要迁移', configuration_required: '尚未配置', unknown: '未确认' }
+const CHECK_LABELS: Record<string, string> = {
+  database: '数据库',
+  redis: '会话存储',
+  schema: '业务结构',
+  models: '模型配置',
+  model_warm: '模型连通性（15 分钟内调用）',
+}
+const CHECK_STATUS: Record<string, string> = {
+  healthy: '正常',
+  unhealthy: '连接失败',
+  migration_required: '需要迁移',
+  configuration_required: '尚未配置',
+  unverified: '未验证（不影响就绪）',
+  unknown: '未确认',
+}
+/** 开发代理目标：以实际启动参数为准，避免界面写死一个可能已被占用的端口 */
+const proxyTarget = `${import.meta.env.VITE_API_TARGET ?? 'http://localhost:8000'}/api/v1`
 </script>
 
 <template>
   <div class="sys">
     <PageHeader
       title="系统状态"
-      description="查看后端连通情况、当前账号权限，以及各接口的接入状态。"
+      description="查看后端连通情况、就绪状态与当前账号权限。"
     >
       <template #actions>
         <button class="btn btn--ghost" type="button" @click="runAll">
@@ -91,7 +106,7 @@ const CHECK_STATUS: Record<string, string> = { healthy: '正常', unhealthy: '�
       <section class="u-card">
         <header class="u-panel-head">
           <h2 class="card__title">服务连通性</h2>
-          <span class="u-meta">开发代理 /api → localhost:8000/api/v1</span>
+          <span class="u-meta">开发代理 /api → {{ proxyTarget }}</span>
         </header>
 
         <ul class="probes">
@@ -234,42 +249,45 @@ const CHECK_STATUS: Record<string, string> = { healthy: '正常', unhealthy: '�
     <!-- ---------------------------- 接口矩阵 ------------------------------ -->
     <section class="u-card">
       <header class="u-panel-head">
-        <h2 class="card__title">接口接入状态</h2>
-        <span class="badge badge--warn">未提供 {{ missingCount }} 项</span>
+        <h2 class="card__title">接口接入诊断（开发与验收用）</h2>
+        <span class="badge" :class="missingCount ? 'badge--warn' : 'badge--ok'">未提供 {{ missingCount }} 项</span>
       </header>
 
       <p class="card__lead">
-        下表如实反映后端当前的接口能力。标注为「未提供」的接口，其对应界面使用示例数据，
-        并以徽标提示，不作为真实业务依据。
+        这是给维护与验收使用的后端能力清单，日常业务判断不需要看。展开后可按接口核对
+        各能力是否已接入；标注为「未提供」的接口，其对应界面使用示例数据，不作为真实业务依据。
       </p>
 
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">能力</th>
-              <th scope="col">接口</th>
-              <th scope="col">方法</th>
-              <th scope="col">用途</th>
-              <th scope="col">状态</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="s in API_SURFACE" :key="s.label">
-              <td class="table__primary">{{ s.label }}</td>
-              <td class="u-mono surface__path">{{ s.path }}</td>
-              <td><span class="badge u-mono">{{ s.method }}</span></td>
-              <td class="surface__use">{{ s.purpose }}</td>
-              <td>
-                <span class="badge" :class="s.available ? 'badge--ok' : 'badge--warn'">
-                  <span class="dot"></span>
-                  {{ s.available ? '已接入' : '未提供' }}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <details class="surface">
+        <summary>展开接口能力清单（{{ API_SURFACE.length }} 项）</summary>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">能力</th>
+                <th scope="col">接口</th>
+                <th scope="col">方法</th>
+                <th scope="col">用途</th>
+                <th scope="col">状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="s in API_SURFACE" :key="s.label">
+                <td class="table__primary">{{ s.label }}</td>
+                <td class="u-mono surface__path">{{ s.path }}</td>
+                <td><span class="badge u-mono">{{ s.method }}</span></td>
+                <td class="surface__use">{{ s.purpose }}</td>
+                <td>
+                  <span class="badge" :class="s.available ? 'badge--ok' : 'badge--warn'">
+                    <span class="dot"></span>
+                    {{ s.available ? '已接入' : '未提供' }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
     </section>
   </div>
 </template>
@@ -450,6 +468,24 @@ const CHECK_STATUS: Record<string, string> = { healthy: '正常', unhealthy: '�
 }
 
 /* ---------------------------- 矩阵 -------------------------------- */
+.surface {
+  padding: var(--space-4);
+}
+
+.surface summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+
+.surface summary:hover {
+  color: var(--ink);
+}
+
+.surface .table-wrap {
+  margin-top: var(--space-4);
+}
+
 .surface__path {
   font-size: var(--text-xs);
   color: var(--ink-muted);

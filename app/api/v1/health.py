@@ -221,15 +221,12 @@ async def _readiness_details() -> JSONResponse:
     from app.llm.init_models import model_readiness
 
     models = model_readiness()
-    checks["models"] = (
-        "healthy"
-        if connectivity_verified
-        else (
-            "configured_unverified"
-            if all(value != "missing" for value in models.values())
-            else "configuration_required"
-        )
-    )
+    models_configured = all(value != "missing" for value in models.values())
+    # 就绪只看"模型是否配置齐全"；"最近 15 分钟有成功调用"另作为 model_warm 观察项。
+    # 若把 model_warm 也算进就绪，只要 15 分钟没人提问，系统状态页就会整片报
+    # "尚未就绪"，把真正的故障淹掉。
+    checks["models"] = "healthy" if models_configured else "configuration_required"
+    checks["model_warm"] = "healthy" if connectivity_verified else "unverified"
 
     try:
         import os
@@ -270,8 +267,9 @@ async def _readiness_details() -> JSONResponse:
             else "configuration_required"
         )
 
-    # 判断整体状态
-    all_healthy = all(v == "healthy" for v in checks.values())
+    # 判断整体状态：model_warm 是观察项，不参与就绪判定
+    blocking = {key: value for key, value in checks.items() if key != "model_warm"}
+    all_healthy = all(v == "healthy" for v in blocking.values())
     status_code = status.HTTP_200_OK if all_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
 
     return JSONResponse(
