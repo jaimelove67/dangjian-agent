@@ -34,6 +34,10 @@ from app.db.session import engine  # noqa: E402
 from app.models.member import MemberProfile  # noqa: E402
 from app.models.org import OrgUnit  # noqa: E402
 
+# MemberProfile.user_id 外键指向 users；不导入该模型时 SQLAlchemy 无法解析
+# 外键目标，flush 会抛 NoReferencedTableError。
+from app.models.user import User  # noqa: E402,F401
+
 _TODAY = date.today()
 
 

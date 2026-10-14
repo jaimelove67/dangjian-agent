@@ -96,9 +96,16 @@ def main() -> None:
     args = parser.parse_args()
     if settings.ENV not in {"development", "testing"}:
         parser.error("测试账号脚本只允许在 development/testing 环境运行")
-    args.password = args.password or getpass.getpass("测试用户密码：")
+    args.password = args.password or _prompt_password()
 
     asyncio.run(create_user(args))
+
+
+def _prompt_password() -> str:
+    """交互输入密码；非交互环境直接报错，避免静默挂起等待输入。"""
+    if not sys.stdin or not sys.stdin.isatty():
+        raise SystemExit("未提供 --password，且当前不是交互终端；请改用 --password 传参")
+    return getpass.getpass("测试用户密码：")
 
 
 if __name__ == "__main__":

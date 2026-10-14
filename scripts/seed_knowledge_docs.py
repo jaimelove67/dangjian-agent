@@ -220,6 +220,13 @@ DOCS: list[dict[str, str]] = [
 ]
 
 
+def _prompt_password() -> str:
+    """交互输入密码；非交互环境（如脚本化启动）直接报错，避免静默挂起等待输入。"""
+    if not sys.stdin or not sys.stdin.isatty():
+        raise SystemExit("未提供 --password，且当前不是交互终端；请改用 --password 传参")
+    return getpass.getpass("测试用户密码：")
+
+
 def _metadata_fields(doc: dict[str, str]) -> dict[str, str]:
     """提取除正文/文件名外的表单字段"""
     keys = (
@@ -257,13 +264,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="在测试环境导入未核验演示资料")
     parser.add_argument("--username", required=True, help="有入库权限的测试用户")
     parser.add_argument("--password", help="测试密码（省略时交互输入）")
-    parser.add_argument("--base-url", default="http://localhost:8000/api/v1")
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="后端接口地址，默认按配置端口推导（http://127.0.0.1:<PORT>/api/v1）",
+    )
     parser.add_argument("--embed", action="store_true", help="向量化本次演示文件")
     args = parser.parse_args()
-    password = args.password or getpass.getpass("测试用户密码：")
+    password = args.password or _prompt_password()
     if not password:
         parser.error("必须提供测试用户密码")
-    base = args.base_url.rstrip("/")
+    base = (args.base_url or f"http://127.0.0.1:{settings.PORT}/api/v1").rstrip("/")
     with httpx.Client(timeout=120.0) as client:
         # 登录取得令牌
         resp = client.post(

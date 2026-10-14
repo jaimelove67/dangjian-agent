@@ -23,7 +23,7 @@
    docker compose -f docker-compose.dev.yml up -d postgres redis
    ```
 
-   此 Compose 的数据库为 `party_agent_dev`，默认宿主端口为 55432；Redis 为 56379，仅绑定本机地址。可通过 `POSTGRES_PORT`、`REDIS_PORT` 覆盖宿主端口。本地应用需要连接宿主地址，不能使用容器内的 `postgres`/`redis` 主机名。开发配置示例：
+   此 Compose 的数据库为 `party_agent_dev`，默认宿主端口为 55432；Redis 为 56379，仅绑定本机地址。可通过 `POSTGRES_PORT`、`REDIS_PORT` 覆盖宿主端口（`.env.example` 的默认值即 55432/56379）。本地应用需要连接宿主地址，不能使用容器内的 `postgres`/`redis` 主机名。开发配置示例：
 
    ```dotenv
    POSTGRES_PORT=55432
@@ -32,7 +32,9 @@
    REDIS_URL=redis://127.0.0.1:56379/0
    ```
 
-   使用已有服务时以实际连接参数为准，避免端口冲突。
+   使用已有服务时以实际连接参数为准，避免端口冲突。**本机 8000 端口常被其它项目
+   （如本仓库并行运行的其它服务）占用**，此时后端改用 `.env` 的 `APP_PORT` 启动，
+   并必须给前端设置同值的 `VITE_API_TARGET`，否则 `/api` 代理会指向不存在的服务。
 
 4. 对新建或已迁移的数据库执行迁移，当前迁移头为 `012_member_self`（包含组织生活、学习、年度考核、治理和党员本人档案/材料）：
 
@@ -46,9 +48,25 @@
    .\scripts\start-all.bat
    ```
 
-   Linux/macOS 使用 `bash scripts/start-all.sh`。脚本优先使用 `.venv`，可通过 `PARTY_PYTHON` 指定解释器。前端为 `http://127.0.0.1:5666`，后端为 `http://127.0.0.1:8000`。
+   Linux/macOS 使用 `bash scripts/start-all.sh`。脚本优先使用 `.venv`，可通过 `PARTY_PYTHON` 指定解释器。前端为 `http://127.0.0.1:5666`，后端默认为 `http://127.0.0.1:8000`（`APP_PORT` 被占用时以 `.env` 的 `APP_PORT` 为准）。
 
 Windows 关闭两个服务窗口停止服务；Linux/macOS 在启动脚本终端按 `Ctrl+C`。
+
+### PowerShell 手动启动（脚本不适用时）
+
+```powershell
+# 后端：端口与 .env 的 APP_PORT 保持一致
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 18000
+
+# 前端：在 frontend/ 目录直接 npm run dev 即可
+# 端口 5666 与 /api 代理前缀已写在 frontend/vite.config.ts，不需要再传 --port
+cd frontend
+$env:VITE_API_TARGET = "http://127.0.0.1:18000"   # 必须与后端端口一致
+npm run dev
+```
+
+> 不要使用 `npm run dev -- --port 5666`：PowerShell 会把参数传给 npm 之外的解析路径，
+> Vite 收到多余参数后会以 `CACError: Unused args` 直接退出。
 
 ## 就绪检查与排障
 
@@ -57,7 +75,8 @@ curl http://127.0.0.1:8000/api/v1/health/live
 curl http://127.0.0.1:8000/api/v1/health/ready
 ```
 
-- `live` 只检查进程存活；`ready` 检查数据库、核心结构、Redis 与模型注册，缺少依赖时返回 503。
+- `live` 只检查进程存活；`ready` 检查数据库、核心结构、Redis 与模型配置，缺少必需依赖时返回 503。
+- 模型**连通性**（最近 15 分钟内有成功调用）单独作为 `model_warm` 观察项，**不参与**就绪判定：新环境或长时间没有提问时，`ready` 仍返回 200，但 `model_warm` 为 `unverified`。
 - 公开健康接口仅返回整体 `status`。服务名称、版本和运行环境见 `/api/v1/admin/health`，依赖与模型配置详情见 `/api/v1/admin/health/ready`；两者均要求平台管理员登录令牌，其他角色返回 403。平台管理员可在前端“系统状态”页查看详情。
 - `ready` 只检查六张基础核心表与全文检索，不核对学习/考核表或完整迁移头；业务使用前仍需执行 `python -m alembic current`。200 也不代表实际云调用或答案质量已验收，见[测试指南](TESTING.md)。
 - API 文档位于 `/docs`，仅在开发调试 `DEBUG=true` 时启用。

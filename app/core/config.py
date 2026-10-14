@@ -23,7 +23,13 @@ class Settings(BaseSettings):
 
     # ==================== 服务配置 ====================
     HOST: str = Field(default="0.0.0.0", description="服务地址")
-    PORT: int = Field(default=8000, description="服务端口")
+    # APP_PORT 是 docker-compose 使用的同一个变量名；两者取同一个值，
+    # 避免"改了 .env 的 APP_PORT、应用却仍监听 8000"这种静默不一致。
+    PORT: int = Field(
+        default=8000,
+        validation_alias=AliasChoices("PORT", "APP_PORT"),
+        description="服务端口（PORT 或 APP_PORT）",
+    )
     ALLOWED_HOSTS: list[str] = Field(default=["*"], description="允许的主机")
 
     # ==================== 安全配置 ====================

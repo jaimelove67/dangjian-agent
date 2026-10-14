@@ -14,7 +14,7 @@
 | 运行测试、生成覆盖率与业务评测 | [测试指南](docs/TESTING.md) |
 | 查找规范、设计、部署及历史报告 | [文档导航](docs/README.md) |
 
-本地环境准备好后，Windows 使用 `scripts/start-all.bat`，Linux/macOS 使用 `bash scripts/start-all.sh`。正式前端默认地址为 `http://127.0.0.1:5666`，后端为 `http://127.0.0.1:8000`；通过 `/api/v1/health/ready` 检查就绪状态。具体前置条件与迁移方式见运行指南。
+本地环境准备好后，Windows 使用 `scripts/start-all.bat`，Linux/macOS 使用 `bash scripts/start-all.sh`。正式前端默认地址为 `http://127.0.0.1:5666`，后端默认 `http://127.0.0.1:8000`（被占用时按 `.env` 的 `APP_PORT` 启动，并给前端设置同值的 `VITE_API_TARGET`）；通过 `/api/v1/health/ready` 检查就绪状态。具体前置条件与迁移方式见运行指南。
 
 ## 项目结构
 

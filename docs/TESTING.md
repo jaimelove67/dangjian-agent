@@ -21,6 +21,21 @@ $env:QWEN_API_KEY = ''
 python -m pytest tests/unit tests/security
 ```
 
+### 角色界面回归（需要前后端已启动）
+
+权限与导航的改动必须同时跑一条界面回归，确认"菜单显隐 = 真实可访问"，避免出现
+点进去才 403、或某个角色看不到自己该有的入口：
+
+```powershell
+node frontend\scripts\check-roles-ui.mjs
+```
+
+脚本用 Playwright 依次以 7 个角色登录，逐路由检查：菜单项集合、越权路由是否被拦截、
+本人页面是否可达、页面级横向溢出、主内容地标数量、接口与控制台报错。
+默认连接 `http://127.0.0.1:5666`、密码 `Test123456`，可用 `PARTY_BASE_URL`、
+`PARTY_PASSWORD` 覆盖；Playwright 自带浏览器版本不匹配时用 `PARTY_CHROMIUM` 指定
+本机 Chromium 可执行文件。脚本会自行等待登录/接口限流窗口，无需手工调整频率。
+
 Linux/macOS 使用 `DASHSCOPE_API_KEY= QWEN_API_KEY= python -m pytest tests/unit tests/security`。这些设置不改写 `.env`；真实模型评测另用已授权的环境。
 
 单元与安全回归主要使用合成输入及替代模型。完整回归需要可用的 PostgreSQL；数据库迁移测试检查已迁移的目标库，`test_repaired_storage.py` 还需要连接管理库并创建、清理随机独立测试库的权限。请配置专用测试数据库连接。

@@ -24,9 +24,9 @@
 | 能力 | 模块 | 入口 |
 | --- | --- | --- |
 | 制度问答（RAG，带引用） | 知识问答 | `/ask` |
-| 知识库管理（上传/检索/向量化） | 知识库 | `/knowledge` |
+| 知识库管理（上传/检索/向量化）；基层角色只读制度目录 | 知识库 | `/knowledge` |
 | 党员发展全流程（名册/材料/批次/阶段/投票） | 党员发展 | `/members` |
-| 党员本人档案查询、私有材料提交 | 党员自助 | `/my-archive`、`/my-materials` |
+| 党员与申请人本人档案查询、私有材料提交 | 党员自助 | `/my-archive`、`/my-materials` |
 | 中心组年度学习与纪要审核归档 | 中心组学习 | `/study` |
 | 年度考核（指标/任务/佐证/提醒/导出） | 年度考核 | `/assessment` |
 | 组织生活任务台账 | 组织生活 | `/meeting` |
@@ -49,21 +49,36 @@
 | `system_admin` 系统管理员 | 平台级；开户、治理、系统详情 | `/accounts` `/governance` `/system` |
 | `school_admin` 学校管理员 | 全校业务管理 | `/members` `/study` `/assessment` `/meeting` `/knowledge` |
 | `department_admin` 院系管理员 | 本院系业务管理 | 同上（范围限定本院系） |
-| `branch_secretary` 支部书记 | 本支部业务管理 | 同上（范围限定本支部） |
-| `organizer` 组织员 | 组织业务协助 | 依权限 |
-| `member` 普通党员 | 本人档案、材料、问答 | `/my-archive` `/my-materials` `/ask` |
-| `applicant` 申请人 | 同上 | 同上 |
+| `branch_secretary` 支部书记 | 本支部业务管理 | 同上（范围限定本支部，无中心组学习） |
+| `organizer` 组织员 | 组织业务协助 | 同支部书记（范围限定本支部） |
+| `member` 普通党员 | 本人档案、材料、问答、制度目录 | `/my-archive` `/my-materials` `/ask` `/knowledge` |
+| `applicant` 申请人 | 与普通党员相同 | 同上 |
 
 > 权限边界由「角色 × 所属组织」共同决定；敏感和涉密内容禁止发送云端处理。
+> 申请人权限是党员权限的子集（当前两者相同），不存在"低角色可见、高角色被隐藏"的入口。
+> 知识库对基层角色是**只读制度目录**，维护操作需 `knowledge.manage`（院系管理员及以上）。
 
-### 2.3 本地现成测试账号（密码均为 `Test123456`）
+### 2.3 本地测试账号
 
-| 账号 | 角色 | 归属 |
-| --- | --- | --- |
-| admin-verify | system_admin | 平台租户 tenant-verify |
-| admin | system_admin | 平台租户 PLATFORM_TENANT |
-| test-reviewer | school_admin | TEST_TENANT / TEST_ORG |
-| branch-secretary | branch_secretary | TEST_TENANT / TEST_BRANCH |
+测试账号由初始化脚本和「创建账号」页面共同产生，**请以脚本实际输出为准**；
+密码在创建时由你指定，系统不提供任何默认密码。
+
+| 账号 | 角色 | 归属 | 来源 |
+| --- | --- | --- | --- |
+| admin | system_admin | PLATFORM_TENANT（平台） | `scripts/dev_bootstrap.py` |
+| test-reviewer | school_admin | TEST_TENANT / TEST_ORG | `scripts/dev_bootstrap.py` |
+| branch-secretary | branch_secretary | TEST_TENANT / TEST_BRANCH | `scripts/dev_bootstrap.py` |
+| test-dept / test-organizer / test-member / test-applicant | department_admin / organizer / member / applicant | TEST_TENANT 下对应组织 | 用 admin 登录 `/accounts` 创建，或用 `dev_bootstrap.py --with-sample-roles` |
+
+初始化命令（幂等，重复执行会跳过已存在的数据）：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\dev_bootstrap.py --password Test123456 --with-sample-roles
+```
+
+`--with-sample-roles` 会额外创建院系管理员、组织员、党员、申请人四个账号，密码与
+`--password` 相同。普通党员与申请人还需要在 `/members` 中由组织人员**明确关联本人档案**，
+才能看到本人档案与提交材料。
 
 ---
 
@@ -143,6 +158,12 @@
 
 - 输入问题，系统基于知识库检索并引用来源作答。
 - 无依据时系统会明确提示，不强行编造；所有回答仅供参考，以组织部门确认为准。
+- "最近提问"按本人账号隔离保存，可逐条删除；删除只影响该条记录，制度文件与审计记录保留。
+
+### 5.5 制度目录（/knowledge）
+
+- 基层角色（党员、申请人）可只读查阅授权范围内的制度目录、文件信息与摘要。
+- 上传、废止与移除需要 `knowledge.manage`，仅院系管理员及以上具备。
 
 ---
 
@@ -152,7 +173,8 @@
 | --- | --- |
 | 「培养对象不存在或无权访问」 | 账号范围不对：平台账号没有组织数据，业务功能请用学校/支部账号 |
 | 「模型服务未就绪 / 依赖服务暂不可用」 | 检查 `.env` 的 `DASHSCOPE_API_KEY` 与 `CHAT_MODEL`（本项目验证可用 `qwen3.8-flash`；`deepseek-v3` 在该账号不存在） |
-| `/api/v1/health/ready` 返回 503 | 新环境尚无 15 分钟内的成功模型调用；做一次正常问答后即转 200 |
+| `/api/v1/health/ready` 返回 503 | 必需依赖（数据库/Redis/业务结构/模型配置）缺失；详情见“系统状态”页或 `/api/v1/admin/health/ready` |
+| 系统状态页显示“模型连通性：未验证” | `model_warm` 是观察项，15 分钟内没有成功模型调用时如此，不影响就绪；做一次正常问答即可转为已验证 |
 | 登录不了 | 确认账号已开户且在同一租户/组织有效；无默认密码 |
 | 前端提问超时 | 首次模型调用可能较慢；可在后端日志查看模型返回 |
 | 端口冲突 | 本机 8000 已被占用时，按 `.env` 的 `APP_PORT` 启动后端，并用 `VITE_API_TARGET` 指向前端代理 |
