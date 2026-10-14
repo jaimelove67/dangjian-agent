@@ -161,8 +161,52 @@ def submit(workspace, key=None, **overrides):
 
 def test_member_permissions_and_qa_history_remain_available(workspace):
     codes = workspace.client.get("/api/v1/auth/codes").json()["data"]
-    assert set(codes) == {"qa.ask", "member.self_query", "member.material_submit"}
+    assert set(codes) == {
+        "qa.ask",
+        "knowledge.query",
+        "member.self_query",
+        "member.material_submit",
+    }
     assert workspace.client.get("/api/v1/qa/sessions").status_code == 200
+
+
+def test_applicant_has_the_same_self_service_boundary_as_member(workspace):
+    """申请人与其档案同样可用：权限必须不窄于党员，否则申请人无法使用本人功能。"""
+    workspace.session.add(
+        User(
+            id="applicant-1",
+            username="applicant-1",
+            name="合成申请人",
+            password_hash="synthetic",
+            role=UserRole.APPLICANT,
+            tenant_id="tenant-a",
+            org_unit_id="branch-a",
+        )
+    )
+    workspace.session.flush()
+    workspace.session.add(
+        MemberProfile(
+            id="applicant-profile",
+            user_id="applicant-1",
+            tenant_id="tenant-a",
+            name="合成申请人",
+            org_name="branch-a",
+            org_unit_id="branch-a",
+            current_stage="applicant",
+            stage_joined_on=date(2026, 1, 1),
+            materials=[],
+        )
+    )
+    workspace.session.commit()
+    workspace.user = actor("applicant-1", UserRole.APPLICANT)
+
+    codes = set(workspace.client.get("/api/v1/auth/codes").json()["data"])
+    assert codes == {"qa.ask", "knowledge.query", "member.self_query", "member.material_submit"}
+    archive = workspace.client.get("/api/v1/member/self/archive")
+    assert archive.status_code == 200
+    assert archive.json()["data"]["profile"]["id"] == "applicant-profile"
+    assert workspace.client.get("/api/v1/member/self/materials").status_code == 200
+    assert submit(workspace).status_code == 200
 
 
 def test_self_archive_uses_account_not_same_name_or_supplied_id(workspace):
@@ -286,12 +330,40 @@ def test_upload_size_and_pagination_limits(workspace, monkeypatch):
     )
 
 
-@pytest.mark.parametrize("role", [role for role in UserRole if role != UserRole.MEMBER])
-def test_self_service_is_specific_to_member_role(workspace, role):
+@pytest.mark.parametrize(
+    "role",
+    [role for role in UserRole if role not in (UserRole.MEMBER, UserRole.APPLICANT)],
+)
+def test_self_service_is_specific_to_member_and_applicant_roles(workspace, role):
     workspace.user = actor(role=role)
     assert workspace.client.get("/api/v1/member/self/archive").status_code == 403
     assert workspace.client.get("/api/v1/member/self/materials").status_code == 403
     assert submit(workspace).status_code == 403
+
+
+def test_organization_can_bind_an_applicant_account(workspace):
+    """申请人账号同样可以被关联到本人档案，否则申请人永远看不到自己的档案。"""
+    workspace.session.add(
+        User(
+            id="applicant-2",
+            username="applicant-2",
+            name="合成申请人",
+            password_hash="synthetic",
+            role=UserRole.APPLICANT,
+            tenant_id="tenant-a",
+            org_unit_id="branch-a",
+        )
+    )
+    workspace.session.commit()
+    workspace.user = actor("secretary", UserRole.BRANCH_SECRETARY)
+    bound = workspace.client.put(
+        "/api/v1/member/roster/unlinked-profile/account", json={"username": "applicant-2"}
+    )
+    assert bound.status_code == 200 and bound.json()["data"]["user_id"] == "applicant-2"
+
+    workspace.user = actor("applicant-2", UserRole.APPLICANT)
+    archive = workspace.client.get("/api/v1/member/self/archive").json()["data"]
+    assert archive["profile"]["id"] == "unlinked-profile"
 
 
 def test_organization_can_bind_account_and_read_only_authorized_submissions(workspace):

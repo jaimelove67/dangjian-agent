@@ -478,7 +478,7 @@ const todoTone: Record<TodoItem['category'], string> = {
               <h3>本人档案账号关联</h3>
               <p v-if="selected.user_id" class="u-meta">已关联党员登录账号。</p>
               <template v-else-if="canCreate">
-                <label class="field" for="account-username">党员登录账号<input id="account-username" v-model="accountUsername" class="input" maxlength="50" placeholder="同一组织内的普通党员账号" :disabled="personalBusy" /></label>
+                <label class="field" for="account-username">党员登录账号<input id="account-username" v-model="accountUsername" class="input" maxlength="50" placeholder="同一组织内的党员或申请人账号" :disabled="personalBusy" /></label>
                 <button class="btn btn--primary" :disabled="!accountUsername.trim() || personalBusy" @click="linkAccount">关联本人档案</button>
               </template>
               <p v-else class="u-meta">尚未关联账号，请联系具备人员维护权限的组织管理员。</p>

@@ -88,8 +88,8 @@ async function submit(): Promise<void> {
       <h2 class="success__title"><AppIcon name="check" :size="17" />账号创建成功</h2>
       <p>{{ created.name }}（{{ created.username }}） · {{ ROLE_LABELS[created.role] }} · {{ created.org_name }}</p>
       <p>该账号现在可使用设置的密码登录。</p>
-      <p v-if="created.role === 'member'">
-        党员需在名册中关联本人档案后，才能查看档案与提交个人材料。
+      <p v-if="created.role === 'member' || created.role === 'applicant'">
+        党员与申请人都需在名册中关联本人档案后，才能查看档案与提交个人材料。
         <RouterLink to="/members">前往党员发展关联档案</RouterLink>
       </p>
     </section>

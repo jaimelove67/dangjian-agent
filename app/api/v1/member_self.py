@@ -126,7 +126,7 @@ async def link_account(
             select(User).where(
                 User.username == body.username,
                 User.tenant_id == str(user.tenant_id),
-                User.role == UserRole.MEMBER,
+                User.role.in_((UserRole.MEMBER, UserRole.APPLICANT)),
                 User.org_unit_id == profile.org_unit_id,
                 User.is_deleted.is_(False),
                 User.is_active.is_(True),
@@ -134,7 +134,7 @@ async def link_account(
         )
     ).scalar_one_or_none()
     if account is None:
-        raise HTTPException(422, "请选择同一组织内有效的普通党员账号")
+        raise HTTPException(422, "请选择同一组织内有效的党员或申请人账号")
     if profile.user_id and profile.user_id != account.id:
         raise HTTPException(409, "此档案已关联其他账号，请先由组织核实")
     profile.user_id = account.id

@@ -287,9 +287,15 @@ _BRANCH_PERMISSIONS = frozenset(
         Permission.REVIEW_MANAGE,
     }
 )
-_MEMBER_PERMISSIONS = frozenset(
-    {Permission.QA_ASK, Permission.SELF_QUERY, Permission.MATERIAL_SUBMIT}
-)
+# 本人服务：查看本人档案与提交私有材料。党员与申请人共用，
+# 组织人员通过名册把账号与档案明确关联后才生效。
+_SELF_SERVICE_PERMISSIONS = frozenset({Permission.SELF_QUERY, Permission.MATERIAL_SUBMIT})
+# 基层查看能力：制度问答与只读的制度目录。党员与申请人共用。
+_BASE_VIEW_PERMISSIONS = frozenset({Permission.QA_ASK, Permission.KNOWLEDGE_QUERY})
+_APPLICANT_PERMISSIONS = _BASE_VIEW_PERMISSIONS | _SELF_SERVICE_PERMISSIONS
+# 不变式：申请人 ⊆ 党员 ⊆ 组织管理角色。党员要新增能力时在下方累加，
+# 不允许出现"低角色看得到、高角色看不到"的交叉集合。
+_MEMBER_PERMISSIONS = _APPLICANT_PERMISSIONS
 
 # 角色画像（对应框架文档 9.1 角色与数据范围表）
 ROLE_PROFILES: dict[UserRole, RoleProfile] = {
@@ -350,7 +356,7 @@ ROLE_PROFILES: dict[UserRole, RoleProfile] = {
         role=UserRole.APPLICANT,
         knowledge_scopes=frozenset({KS_PUBLIC}),
         business_scope=BS_SELF,
-        permissions=frozenset({Permission.QA_ASK, Permission.KNOWLEDGE_QUERY}),
+        permissions=_APPLICANT_PERMISSIONS,
         data_level=DataLevel.PUBLIC,
     ),
 }

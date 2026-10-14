@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
-import { MEMBER_FUNCTION_PERMISSIONS, PERM, type PermissionCode, type UserRole } from '@/api/types'
+import { isSessionExpired } from '@/api/http'
+import { isSelfServiceRole, MEMBER_FUNCTION_PERMISSIONS, PERM, type PermissionCode, type UserRole } from '@/api/types'
 import AppShell from '@/layouts/AppShell.vue'
 import { session } from '@/stores/session'
 
@@ -40,13 +41,13 @@ const routes: RouteRecordRaw[] = [
         path: 'my-archive',
         name: 'my-archive',
         component: () => import('@/views/MyArchiveView.vue'),
-        meta: { title: '本人档案', group: '个人', perm: PERM.SELF_QUERY, role: 'member' },
+        meta: { title: '本人档案', group: '个人', perm: PERM.SELF_QUERY },
       },
       {
         path: 'my-materials',
         name: 'my-materials',
         component: () => import('@/views/MyMaterialsView.vue'),
-        meta: { title: '个人材料', group: '个人', perm: PERM.MATERIAL_SUBMIT, role: 'member' },
+        meta: { title: '个人材料', group: '个人', perm: PERM.MATERIAL_SUBMIT },
       },
       {
         path: '',
@@ -131,7 +132,13 @@ export const router = createRouter({
 })
 window.addEventListener('party:session-cleared', () => {
   if (router.currentRoute.value.name !== 'login') {
-    void router.replace({ name: 'login', query: { next: router.currentRoute.value.fullPath } })
+    void router.replace({
+      name: 'login',
+      query: {
+        next: router.currentRoute.value.fullPath,
+        ...(isSessionExpired() ? { reason: 'expired' } : {}),
+      },
+    })
   }
 })
 
@@ -149,12 +156,15 @@ router.beforeEach(async (to) => {
   }
 
   if (!session.isAuthenticated.value) {
-    return { name: 'login', query: { next: to.fullPath } }
+    return {
+      name: 'login',
+      query: { next: to.fullPath, ...(isSessionExpired() ? { reason: 'expired' } : {}) },
+    }
   }
 
   if (
     (to.meta.perm && !session.can(to.meta.perm)) ||
-    (session.state.user?.role === 'member' && to.meta.perm && !MEMBER_FUNCTION_PERMISSIONS.has(to.meta.perm)) ||
+    (isSelfServiceRole(session.state.user?.role) && to.meta.perm && !MEMBER_FUNCTION_PERMISSIONS.has(to.meta.perm)) ||
     (to.meta.role && session.state.user?.role !== to.meta.role)
   ) {
     return { name: 'forbidden' }

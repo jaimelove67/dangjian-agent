@@ -16,6 +16,8 @@ class PersonalArchive(BaseModel):
 
 
 class AccountLinkRequest(BaseModel):
+    """本人档案关联请求：账号可为党员或申请人，须与档案同组织。"""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     username: str = Field(min_length=1, max_length=50)
 

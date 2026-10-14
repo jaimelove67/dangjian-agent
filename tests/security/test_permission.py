@@ -23,18 +23,33 @@ class TestInterfacePermissions:
         for role in UserRole:
             assert has_permission(role, Permission.QA_ASK)
 
-    def test_member_has_only_three_self_service_permissions(self):
+    def test_member_has_base_view_and_self_service_permissions(self):
         assert get_role_profile(UserRole.MEMBER).permissions == frozenset(
             {
                 Permission.QA_ASK,
+                Permission.KNOWLEDGE_QUERY,
                 Permission.SELF_QUERY,
                 Permission.MATERIAL_SUBMIT,
             }
         )
 
-    def test_knowledge_query_excludes_member(self):
-        for role in UserRole:
-            assert has_permission(role, Permission.KNOWLEDGE_QUERY) == (role != UserRole.MEMBER)
+    def test_applicant_permissions_are_subset_of_member(self):
+        """不变式：基层角色必须单调包含，不允许出现"低角色看得到、高角色看不到"。"""
+        applicant = get_role_profile(UserRole.APPLICANT).permissions
+        member = get_role_profile(UserRole.MEMBER).permissions
+        assert applicant <= member
+        assert applicant == frozenset(
+            {
+                Permission.QA_ASK,
+                Permission.KNOWLEDGE_QUERY,
+                Permission.SELF_QUERY,
+                Permission.MATERIAL_SUBMIT,
+            }
+        )
+
+    def test_base_roles_can_read_knowledge_directory(self):
+        for role in (UserRole.MEMBER, UserRole.APPLICANT):
+            assert has_permission(role, Permission.KNOWLEDGE_QUERY)
 
     def test_knowledge_manage_requires_department_or_above(self):
         assert has_permission(UserRole.SYSTEM_ADMIN, Permission.KNOWLEDGE_MANAGE)

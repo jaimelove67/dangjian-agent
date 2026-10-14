@@ -167,10 +167,15 @@ export const PERM = {
   AUDIT_QUERY: 'admin.audit',
 } as const satisfies Record<string, PermissionCode>
 
-/** 普通党员的功能上限；即使收到旧权限码，也不展示组织管理功能。 */
+/** 基层自助角色的功能上限（党员与申请人共用）；即使收到旧权限码，也不展示组织管理功能。 */
 export const MEMBER_FUNCTION_PERMISSIONS: ReadonlySet<PermissionCode> = new Set([
-  PERM.QA_ASK, PERM.SELF_QUERY, PERM.MATERIAL_SUBMIT,
+  PERM.QA_ASK, PERM.KNOWLEDGE_QUERY, PERM.SELF_QUERY, PERM.MATERIAL_SUBMIT,
 ])
+
+/** 按基层自助角色限制功能：申请人权限不得少于党员，两者共用同一上限。 */
+export function isSelfServiceRole(role?: UserRole | null): boolean {
+  return role === 'member' || role === 'applicant'
+}
 
 /* ============================ 问答 ===================================== */
 

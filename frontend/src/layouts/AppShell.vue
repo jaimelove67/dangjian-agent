@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
-import { MEMBER_FUNCTION_PERMISSIONS, PERM, ROLE_LABELS, type PermissionCode, type UserRole } from '@/api/types'
+import { isSelfServiceRole, MEMBER_FUNCTION_PERMISSIONS, PERM, ROLE_LABELS, type PermissionCode, type UserRole } from '@/api/types'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import { session } from '@/stores/session'
 
@@ -20,17 +20,13 @@ interface NavGroup {
 }
 
 /**
- * 导航结构。分组而非平铺：本产品的功能边界清晰（问答 / 资料 / 业务 / 系统），
+ * 导航结构。分组而非平铺：本产品的功能边界清晰（问答 / 资料 / 个人 / 业务 / 系统），
  * 分组能让侧栏在只显示 3-5 项时依然有层次，而不是一串等权重的链接。
+ *
+ * 顺序约定：登录后的落点是 /ask，因此「问答」必须排在第一组，
+ * 否则基层角色一进来看到的选中项就落在侧栏最末尾。
  */
 const NAV: NavGroup[] = [
-  {
-    label: '个人',
-    items: [
-      { to: '/my-archive', label: '本人档案', icon: 'people', perm: PERM.SELF_QUERY, role: 'member' },
-      { to: '/my-materials', label: '个人材料', icon: 'book', perm: PERM.MATERIAL_SUBMIT, role: 'member' },
-    ],
-  },
   {
     label: '问答',
     items: [{ to: '/ask', label: '制度问答', icon: 'ask', perm: PERM.QA_ASK }],
@@ -39,6 +35,13 @@ const NAV: NavGroup[] = [
     label: '资料',
     items: [
       { to: '/knowledge', label: '知识库', icon: 'book', perm: PERM.KNOWLEDGE_QUERY },
+    ],
+  },
+  {
+    label: '个人',
+    items: [
+      { to: '/my-archive', label: '本人档案', icon: 'people', perm: PERM.SELF_QUERY },
+      { to: '/my-materials', label: '个人材料', icon: 'book', perm: PERM.MATERIAL_SUBMIT },
     ],
   },
   {
@@ -70,7 +73,7 @@ const visibleGroups = computed(() =>
     ...group,
     items: group.items.filter((item) =>
       (!item.perm || session.can(item.perm)) &&
-      (session.state.user?.role !== 'member' || !!item.perm && MEMBER_FUNCTION_PERMISSIONS.has(item.perm)) &&
+      (!isSelfServiceRole(session.state.user?.role) || !!item.perm && MEMBER_FUNCTION_PERMISSIONS.has(item.perm)) &&
       (!item.role || session.state.user?.role === item.role),
     ),
   })).filter((group) => group.items.length > 0),
@@ -103,7 +106,6 @@ async function onSignOut(): Promise<void> {
 
 <template>
   <div class="shell">
-    <p v-if="signOutError" role="alert">{{ signOutError }}</p>
     <!-- 顶栏：单行，56px。左侧是产品标识与分组名，右侧是身份与操作。 -->
     <header class="topbar">
       <button
@@ -143,6 +145,12 @@ async function onSignOut(): Promise<void> {
         </button>
       </div>
     </header>
+
+    <!-- 退出失败等会话操作错误：悬浮提示，不挤占顶栏也不打断页面版面 -->
+    <p v-if="signOutError" class="topbar-alert" role="alert">
+      <AppIcon name="alert" :size="14" />
+      <span>{{ signOutError }}</span>
+    </p>
 
     <div class="body">
       <!-- 侧栏：分组导航。移动端折叠为抽屉，不做底部标签栏（项数太少） -->
@@ -289,6 +297,25 @@ async function onSignOut(): Promise<void> {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.topbar-alert {
+  position: fixed;
+  top: calc(var(--nav-h) + var(--space-3));
+  right: var(--space-4);
+  z-index: var(--z-pop);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(38ch, calc(100vw - var(--space-8)));
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--bad-ink);
+  background: var(--bad-wash);
+  border: 1px solid var(--bad-edge);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
 }
 
 .ident__avatar {
