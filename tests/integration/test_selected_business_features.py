@@ -403,6 +403,77 @@ async def test_persistent_history_is_private_and_paginated(business_url):
         assert (await client.get("/api/v1/qa/sessions?page_size=101")).status_code == 422
 
 
+async def test_owner_can_soft_delete_own_history_only(business_url):
+    """本人可删除自己的记录；他人记录、跨租户与不存在的记录一律 404 且不误删。"""
+    current_user = user(UserRole.MEMBER, None)
+    async with client_for(business_url, current_user) as (client, db):
+        db.add_all(
+            [
+                QASession(
+                    id="own-record",
+                    tenant_id="tenant-a",
+                    user_id=current_user.id,
+                    question="合成问题",
+                    answer="合成答案",
+                ),
+                QASession(
+                    id="other-record",
+                    tenant_id="tenant-a",
+                    user_id="other-owner",
+                    question="他人问题",
+                    answer="他人答案",
+                ),
+                QASession(
+                    id="cross-record",
+                    tenant_id="tenant-b",
+                    user_id=current_user.id,
+                    question="跨租户",
+                    answer="跨租户答案",
+                ),
+            ]
+        )
+        await db.commit()
+
+        assert (await client.delete("/api/v1/qa/sessions/does-not-exist")).status_code == 404
+        assert (await client.delete("/api/v1/qa/sessions/other-record")).status_code == 404
+        assert (await client.delete("/api/v1/qa/sessions/cross-record")).status_code == 404
+
+        assert (await client.delete("/api/v1/qa/sessions/own-record")).status_code == 200
+        assert (await client.delete("/api/v1/qa/sessions/own-record")).status_code == 404
+
+        listed = (await client.get("/api/v1/qa/sessions")).json()["data"]
+        assert "own-record" not in {item["id"] for item in listed["items"]}
+
+        audit = (
+            (
+                await db.execute(
+                    select(AuditLog).where(
+                        AuditLog.user_id == current_user.id,
+                        AuditLog.action == "delete",
+                        AuditLog.resource_type == "qa_session",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [entry.resource_id for entry in audit] == ["own-record"]
+
+    # 他人记录未被误删：换到该记录所属账号查看
+    async with client_for(
+        business_url, user(UserRole.MEMBER, None, "tenant-a", "other-owner")
+    ) as (other_client, _):
+        data = (await other_client.get("/api/v1/qa/sessions")).json()["data"]
+        assert "other-record" in {item["id"] for item in data["items"]}
+
+    # 跨租户记录未被误删：换到该记录所属租户查看
+    async with client_for(
+        business_url, user(UserRole.MEMBER, None, "tenant-b", current_user.id)
+    ) as (cross_client, _):
+        data = (await cross_client.get("/api/v1/qa/sessions")).json()["data"]
+        assert "cross-record" in {item["id"] for item in data["items"]}
+
+
 @pytest.mark.parametrize("fail_history", [False, True])
 async def test_real_qa_preserves_complete_history_or_recovers_from_failed_flush(
     business_url, monkeypatch, fail_history, caplog

@@ -26,7 +26,7 @@ from app.rag.privacy import content_level, require_cloud_eligible
 from app.rag.rag_service import RAGService
 from app.rag.retrieval.access import knowledge_filters
 from app.schemas.common import APIResponse
-from app.services.qa_session_service import create_session, list_sessions
+from app.services.qa_session_service import create_session, list_sessions, soft_delete_session
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -275,3 +275,39 @@ async def read_history(
 ) -> APIResponse[list[dict]]:
     history = await _session_store(user).get_history(str(user.tenant_id), session_id)
     return APIResponse(data=[asdict(turn) for turn in history], trace_id=_trace_id(request))
+
+
+@router.delete(
+    "/qa/sessions/{session_record_id}",
+    response_model=APIResponse[dict],
+    summary="删除本人一条长期问答记录",
+    tags=["知识问答"],
+)
+async def delete_qa_session(
+    session_record_id: str,
+    request: Request,
+    user: User = Depends(_require_query),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """软删除本人记录：他人记录、跨租户与不存在的记录都返回同一结果。"""
+    removed = await soft_delete_session(
+        db,
+        tenant_id=str(user.tenant_id),
+        user_id=str(user.id),
+        session_record_id=session_record_id,
+    )
+    if not removed:
+        await db.rollback()
+        raise HTTPException(404, "问答记录不存在或无权删除")
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="delete",
+        resource_type="qa_session",
+        resource_id=session_record_id,
+        data_level="internal",
+        new_value={"is_deleted": True},
+    )
+    await db.commit()
+    return APIResponse(data={"id": session_record_id, "deleted": True}, trace_id=_trace_id(request))

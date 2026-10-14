@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
-import { askQuestion, listQASessions } from '@/api/qa'
+import { askQuestion, deleteQASession, listQASessions } from '@/api/qa'
 import type { AskQuestionResponse, QASessionItem } from '@/api/types'
+import ActionDialog from '@/components/ActionDialog.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import CitationCard from '@/components/CitationCard.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import WarningList from '@/components/WarningList.vue'
 import { session } from '@/stores/session'
+import { uuid } from '@/utils/uuid'
 
 /**
  * 制度问答主界面（DeepSeek 式对话布局，沿用本项目编辑式设计令牌）。
@@ -51,7 +53,7 @@ const chatScroll = ref<HTMLElement | null>(null)
 
 // 浏览器保留会话编号，内容保存在服务端并按租户及用户隔离。
 const sessionKey = `party.qa-session.${session.state.user?.id ?? ''}`
-const sessionId = ref(sessionStorage.getItem(sessionKey) ?? crypto.randomUUID())
+const sessionId = ref(sessionStorage.getItem(sessionKey) ?? uuid())
 sessionStorage.setItem(sessionKey, sessionId.value)
 
 let historySequence = 0
@@ -83,13 +85,40 @@ function viewHistory(item: QASessionItem): void {
   viewingHistory.value = true
   resultReranker.value = null
   activeItemId.value = item.id
-  sessionId.value = item.session_id ?? crypto.randomUUID()
+  sessionId.value = item.session_id ?? uuid()
   sessionStorage.setItem(sessionKey, sessionId.value)
   void scrollToBottom()
 }
 
 function isActive(item: QASessionItem): boolean {
   return activeItemId.value === item.id
+}
+
+/* ------------------------- 删除历史提问 ---------------------------- */
+
+const pendingDelete = ref<QASessionItem | null>(null)
+const deletingId = ref<string | null>(null)
+
+function askDelete(item: QASessionItem): void {
+  pendingDelete.value = item
+}
+
+async function confirmDelete(): Promise<void> {
+  const item = pendingDelete.value
+  if (!item || deletingId.value) return
+  deletingId.value = item.id
+  try {
+    await deleteQASession(item.id)
+    pendingDelete.value = null
+    // 删掉的正是当前展示的记录时，清空对话区，避免展示已删除内容
+    if (activeItemId.value === item.id) onReset()
+    await loadHistory(historyPage.value)
+  } catch (err) {
+    historyError.value = err
+    pendingDelete.value = null
+  } finally {
+    deletingId.value = null
+  }
 }
 
 const MAX_LEN = 500 // 后端 QuestionRequest.question 的 max_length
@@ -256,7 +285,7 @@ function onReset(): void {
   resultReranker.value = null
   activeItemId.value = null
   citationOpen.value = false
-  sessionId.value = crypto.randomUUID()
+  sessionId.value = uuid()
   sessionStorage.setItem(sessionKey, sessionId.value)
 }
 
@@ -310,7 +339,7 @@ function historyDateParts(value: string): string {
           </ErrorState>
           <p v-else-if="!recent.length" class="conv__empty">尚无问答记录，提问后会保存在这里。</p>
           <ul v-else class="recent-list">
-            <li v-for="item in recent" :key="item.id">
+            <li v-for="item in recent" :key="item.id" class="recent">
               <button
                 class="recent-item"
                 :class="{ 'is-active': isActive(item) }"
@@ -320,6 +349,16 @@ function historyDateParts(value: string): string {
               >
                 <span class="recent-item__text">{{ item.question }}</span>
                 <time class="u-meta" :datetime="item.created_at">{{ historyDateParts(item.created_at) }}</time>
+              </button>
+              <button
+                class="recent-remove"
+                type="button"
+                :disabled="loading || deletingId !== null"
+                :aria-label="`删除提问：${item.question}`"
+                :title="'删除这条提问记录'"
+                @click="askDelete(item)"
+              >
+                <AppIcon name="close" :size="12" />
               </button>
             </li>
           </ul>
@@ -514,6 +553,27 @@ function historyDateParts(value: string): string {
         </div>
       </form>
     </div>
+
+    <!-- 删除历史提问：站内确认，不弹原生窗口 -->
+    <ActionDialog
+      :open="Boolean(pendingDelete)"
+      title="删除这条提问记录"
+      :busy="deletingId !== null"
+      @close="pendingDelete = null"
+    >
+      <p class="del-question">{{ pendingDelete?.question }}</p>
+      <p class="del-note">
+        仅从"最近提问"中删除，不影响制度库文件与审计记录。删除后无法恢复。
+      </p>
+      <div class="del-actions">
+        <button class="btn btn--quiet" type="button" :disabled="deletingId !== null" @click="pendingDelete = null">
+          取消
+        </button>
+        <button class="btn btn--primary" type="button" :disabled="deletingId !== null" @click="confirmDelete">
+          {{ deletingId !== null ? '删除中…' : '确认删除' }}
+        </button>
+      </div>
+    </ActionDialog>
   </div>
 </template>
 
@@ -599,6 +659,39 @@ function historyDateParts(value: string): string {
   border-radius: var(--radius-sm);
   color: var(--ink-soft);
   transition: background-color var(--dur-fast) var(--ease);
+}
+
+/* 历史项与删除按钮并列：删除按钮不能嵌在按钮内部（非法嵌套） */
+.recent {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.recent .recent-item {
+  /* 给删除按钮让出固定位置，长问题也不会与按钮重叠 */
+  padding-right: 28px;
+}
+
+.recent-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--ink-faint);
+  border-radius: var(--radius-full);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.recent-remove:hover,
+.recent-remove:focus-visible {
+  color: var(--bad-ink);
+  background: var(--bad-wash);
 }
 
 .recent-item:hover {
@@ -1021,6 +1114,31 @@ function historyDateParts(value: string): string {
 
 .composer__submit .is-low {
   color: var(--warn-ink);
+}
+
+/* ============================ 删除确认 ============================= */
+.del-question {
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink);
+  background: var(--paper-dim);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+
+.del-note {
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink-muted);
+}
+
+.del-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
 }
 
 /* ============================ 响应式 =============================== */

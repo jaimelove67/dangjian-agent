@@ -11,6 +11,11 @@ export function listQASessions(params: { page?: number; page_size?: number } = {
   return http.get('/qa/sessions', { params })
 }
 
+/** app/api/v1/qa.py::DELETE /qa/sessions/{session_record_id} —— 软删除本人记录 */
+export function deleteQASession(sessionRecordId: string): Promise<{ id: string; deleted: boolean }> {
+  return http.delete(`/qa/sessions/${encodeURIComponent(sessionRecordId)}`)
+}
+
 /** app/api/v1/health.py */
 
 export function checkHealth(): Promise<HealthResponse> {
