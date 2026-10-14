@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { ApiError } from '@/api/http'
+import { ApiError, isSessionExpired } from '@/api/http'
 import AppIcon from '@/components/AppIcon.vue'
 import { session } from '@/stores/session'
 
@@ -25,6 +25,15 @@ const form = reactive({ username: '', password: '' })
 const submitting = ref(false)
 const errorMessage = ref('')
 const showPassword = ref(false)
+
+/**
+ * 被动失效提示。
+ *
+ * 令牌过期/被吊销时路由守卫会带 ?reason=expired 把人送回登录页；这里把它
+ * 固定成一条常驻说明。故意不用"一闪而过的 toast"：用户需要先知道发生了什么，
+ * 再去重新登录。主动点"退出"不会走到这里。
+ */
+const sessionExpiredNotice = ref(route.query.reason === 'expired' || isSessionExpired())
 
 const touched = reactive({ username: false, password: false })
 
@@ -54,6 +63,7 @@ async function onSubmit(): Promise<void> {
   submitting.value = true
   try {
     await session.signIn(form.username.trim(), form.password)
+    sessionExpiredNotice.value = false
     const next = typeof route.query.next === 'string' ? route.query.next : '/ask'
     await router.replace(next)
   } catch (err) {
@@ -112,6 +122,11 @@ async function onSubmit(): Promise<void> {
       <div class="form-pane__inner">
         <h2 class="form-pane__title">登录</h2>
         <p class="form-pane__sub">请使用组织部门统一分配的账号登录。</p>
+
+        <div v-if="sessionExpiredNotice" class="login-notice" role="status">
+          <AppIcon name="shield" :size="15" />
+          <span>登录状态已失效，请重新登录。刚填写的操作内容可能未保存。</span>
+        </div>
 
         <form class="login-form" novalidate @submit.prevent="onSubmit">
           <div class="field">
@@ -174,7 +189,7 @@ async function onSubmit(): Promise<void> {
           </button>
 
           <p class="login-form__note">
-            忘记密码或账号未开通，请联系本单位组织部门管理员。
+            忘记密码或账号未开通，请联系平台系统管理员开通账号（系统管理 → 创建账号）。
           </p>
         </form>
       </div>
@@ -335,6 +350,21 @@ async function onSubmit(): Promise<void> {
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   color: var(--bad-ink);
+}
+
+/* 会话被动失效：用中性提示而不是报错色，避免用户以为是自己操作出错 */
+.login-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  background: var(--warn-wash);
+  border: 1px solid var(--warn-edge);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--warn-ink);
 }
 
 .login-form__note {

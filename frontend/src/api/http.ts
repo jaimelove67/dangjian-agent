@@ -59,6 +59,27 @@ export const tokenStore = {
   },
 }
 
+/**
+ * 会话被动失效标记。
+ *
+ * 只有"令牌过期/被吊销"这类**非用户主动**的登出才置位，界面据此在登录页
+ * 说明"登录状态已失效"，避免用户莫名其妙被踢回登录页而不知道原因。
+ * 用户主动点"退出"时由 session.signOut() 清掉，不会误报。
+ */
+let sessionExpired = false
+
+export function markSessionExpired(): void {
+  sessionExpired = true
+}
+
+export function isSessionExpired(): boolean {
+  return sessionExpired
+}
+
+export function clearSessionExpiry(): void {
+  sessionExpired = false
+}
+
 /** 后端异常处理器不总是返回标准包裹体（如 422 校验失败），做一次收敛 */
 function normalizeError(err: AxiosError<Partial<ApiEnvelope<unknown>>>): ApiError {
   const status = err.response?.status
@@ -66,7 +87,12 @@ function normalizeError(err: AxiosError<Partial<ApiEnvelope<unknown>>>): ApiErro
   const traceId = body?.trace_id ?? err.response?.headers?.['x-request-id'] ?? ''
 
   if (body && typeof body.code === 'number') {
-    return new ApiError(body.message || '请求失败', body.code, String(traceId), status)
+    return new ApiError(
+      withRetryHint(body.message || '请求失败', err),
+      body.code,
+      String(traceId),
+      status,
+    )
   }
 
   if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT') {
@@ -74,10 +100,28 @@ function normalizeError(err: AxiosError<Partial<ApiEnvelope<unknown>>>): ApiErro
   }
 
   if (!err.response) {
-    return new ApiError('无法连接到后端服务，请确认服务已在 8000 端口启动', -1, '', status)
+    return new ApiError('无法连接到后端服务，请确认后端已启动', -1, '', status)
   }
 
   return new ApiError(`请求失败（HTTP ${status ?? '未知'}）`, -1, String(traceId), status)
+}
+
+/**
+ * 限流响应带上"还要等多久"。
+ *
+ * 后端在 429 时返回 Retry-After 秒数，用户看得到这个数字才不会反复
+ * 无效重试；拿不到响应头时至少给出明确的时间范围。
+ */
+function withRetryHint(
+  message: string,
+  err: AxiosError<Partial<ApiEnvelope<unknown>>>,
+): string {
+  if (err.response?.status !== 429) return message
+  const raw = err.response.headers?.['retry-after']
+  const seconds = Number.parseInt(String(raw ?? ''), 10)
+  const wait = Number.isFinite(seconds) && seconds > 0 ? `约 ${seconds} 秒` : '约 1 分钟'
+  if (message.includes('秒') || message.includes('分钟')) return message
+  return `${message}（${wait}后可重试）`
 }
 
 export const http: AxiosInstance = axios.create({
@@ -145,13 +189,17 @@ http.interceptors.response.use(
         original.headers.Authorization = `Bearer ${tokens.access_token}`
         return http.request(original)
       } catch (refreshError) {
-        if (refreshError instanceof ApiError && refreshError.isAuthError) tokenStore.clear()
+        if (refreshError instanceof ApiError && refreshError.isAuthError) {
+          markSessionExpired()
+          tokenStore.clear()
+        }
         return Promise.reject(refreshError)
       }
     }
 
     // 令牌失效：清空本地凭证，交给路由守卫跳登录页，不在此处自行跳转
     if (apiErr.isAuthError && (ownSession || original?.url === '/auth/refresh')) {
+      markSessionExpired()
       tokenStore.clear()
     }
 

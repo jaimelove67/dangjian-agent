@@ -1,7 +1,7 @@
 import { computed, reactive, readonly } from 'vue'
 
 import * as authApi from '@/api/auth'
-import { tokenStore } from '@/api/http'
+import { clearSessionExpiry, tokenStore } from '@/api/http'
 import type { PermissionCode, UserInfo } from '@/api/types'
 
 /**
@@ -57,6 +57,8 @@ async function signIn(username: string, password: string): Promise<UserInfo> {
     state.user = user
     state.permissions = permissions
     state.resolved = true
+    // 主动登录成功即视为会话恢复，清除"上次是被动失效"的提示。
+    clearSessionExpiry()
     return user
   } finally {
     state.loading = false
@@ -93,6 +95,8 @@ async function restore(): Promise<void> {
 
 async function signOut(): Promise<void> {
   if (tokenStore.get()) await authApi.logout()
+  // 用户主动退出：不得被当成"会话被动失效"提示。
+  clearSessionExpiry()
   tokenStore.clear()
   state.user = null
   state.permissions = []
