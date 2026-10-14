@@ -7,6 +7,7 @@ import { PERM, ROLE_LABELS, type UserRole } from '@/api/types'
 import ActionDialog from '@/components/ActionDialog.vue'
 import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
 import { session } from '@/stores/session'
+import { uuid } from '@/utils/uuid'
 import '@/styles/workbench.css'
 
 const tab = ref('reviews')
@@ -105,7 +106,7 @@ function open(type: string, row?: OrgRecord | UserRecord | TenantRecord): void {
   Object.assign(form, {name:'', username:'', password:'', role:'member', org_unit_id:'',
     org_type:'department', parent_id:'', is_active:true, source_kind:'score', source_id:'',
     year:new Date().getFullYear(), round:1, opinion:'', decision:'approved', kind:'member_reminders',
-    document_ids:'', dedup_key:crypto.randomUUID(), evidence:'', enabled:false, tenant_type:'school'})
+    document_ids:'', dedup_key:uuid(), evidence:'', enabled:false, tenant_type:'school'})
   if (row) Object.assign(form, row)
   if (type === 'tenant' && !row) form.parent_id = session.state.user?.tenant_id ?? ''
   if (type === 'archive') {
@@ -169,7 +170,7 @@ function formatDate(value: string | null): string {
 </script>
 
 <template>
-  <main class="wb wb-stack governance" :aria-busy="loading || busy">
+  <div class="wb wb-stack governance" :aria-busy="loading || busy">
     <header class="wb-toolbar">
       <div><p class="u-eyebrow">学校治理 · 人工确认 · 运行追踪</p><h1 class="u-title">管理与审核</h1>
         <p class="u-muted">按当前账号授权管理。学校资料与正式审批未确认时保留待配置。</p></div>
@@ -299,7 +300,7 @@ function formatDate(value: string | null): string {
           <button class="btn btn--quiet" type="button" :disabled="busy" @click="dialog=''">关闭</button></div>
       </form>
     </ActionDialog>
-  </main>
+  </div>
 </template>
 
 <style scoped>

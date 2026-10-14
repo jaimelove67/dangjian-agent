@@ -515,6 +515,30 @@ svg {
   max-height: 100%;
 }
 
+/**
+ * 横向滚动提示。
+ *
+ * 窄屏下表格宽度超过视口，纯靠用户猜到"这里可以横向滑动"。用滚动阴影
+ * （4 层渐变 + background-attachment: local/scroll）在还有内容的一侧显示
+ * 渐隐，滑到边缘自动消失，不需要 JS，也不占用垂直空间。
+ * 遮罩层用卡片底色，保证阴影只出现在真正被遮挡的一侧。
+ */
+@media (max-width: 899px) {
+  .table-wrap,
+  .wb-table-wrap {
+    background-color: var(--paper-raised);
+    background-image:
+      linear-gradient(to right, var(--paper-raised) 40%, transparent),
+      linear-gradient(to left, var(--paper-raised) 40%, transparent),
+      radial-gradient(farthest-side at 0 50%, rgb(28 27 25 / 0.16), transparent),
+      radial-gradient(farthest-side at 100% 50%, rgb(28 27 25 / 0.16), transparent);
+    background-position: left center, right center, left center, right center;
+    background-repeat: no-repeat;
+    background-size: 36px 100%, 36px 100%, 16px 100%, 16px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
+}
+
 .table {
   width: 100%;
   border-collapse: separate;

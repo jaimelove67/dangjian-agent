@@ -43,7 +43,7 @@ const hint = computed(() => {
     return '当前账号所属组织无权访问该数据。请确认查询对象是否在本组织范围内。'
   }
   if (e.httpStatus === undefined) {
-    return '请确认后端服务已在 8000 端口启动，或检查开发代理是否生效。'
+    return '请确认后端服务已启动，或检查开发代理是否生效。'
   }
   if (e.code === 50301) return '通常是向量库或大模型服务未就绪，请检查 /api/v1/health/ready。'
   if (e.code === 42901) return '稍候片刻再试；同一问题的重复提问会命中缓存。'

@@ -7,6 +7,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { session } from '@/stores/session'
+import { uuid } from '@/utils/uuid'
 
 const tab = ref<'plans' | 'history' | 'metrics'>('plans')
 const filters = reactive({ year: new Date().getFullYear(), org: '', start: '', end: '', topic: '' })
@@ -261,7 +262,7 @@ function activityPayload() {
 }
 
 function addParticipant(): void {
-  activityForm.participants.push({ participant_id: crypto.randomUUID(), name: '', attended: true })
+  activityForm.participants.push({ participant_id: uuid(), name: '', attended: true })
 }
 
 function saveActivity(): void {
@@ -360,7 +361,7 @@ function exportActivity(record: StudyActivity): void {
 
     <p v-if="loading" role="status">正在查询学习记录…</p>
     <template v-else-if="tab === 'plans'">
-      <EmptyState v-if="!plans.length" title="暂无年度学习计划" description="请选择年度和党委范围，或登记新的年度重点。" />
+      <EmptyState v-if="!plans.length" title="暂无年度学习计划" body="请选择年度和党委范围，或登记新的年度重点。" />
       <div v-else class="plan-list">
         <button v-for="plan in plans" :key="plan.id" class="u-card plan-row" :aria-pressed="selected?.id === plan.id" :disabled="busy" @click="selectPlan(plan)"><span><strong>{{ plan.title }}</strong><small>{{ plan.year }} · {{ organizationName(plan.org_unit_id) }} · {{ plan.items.length }} 项安排</small></span><span class="badge">{{ REVIEW_LABELS[plan.review_status] }} · 版本 {{ plan.revision }}</span></button>
       </div>
@@ -411,7 +412,7 @@ function exportActivity(record: StudyActivity): void {
     <section v-else-if="tab === 'history'" class="u-card panel">
       <h2 class="u-title-section">审核后历史归档</h2>
       <p v-if="!policy.enabled" class="missing">学校组织部门尚未确认电子记录效力，历史归档查询与导出暂不可用。</p>
-      <EmptyState v-else-if="!archives.length && !error" title="暂无匹配归档" description="仅显示人工审核并经合规确认归档的学习记录。" />
+      <EmptyState v-else-if="!archives.length && !error" title="暂无匹配归档" body="仅显示人工审核并经合规确认归档的学习记录。" />
       <article v-for="record in archives" :key="record.id" class="source-card"><strong>{{ record.title }}</strong><p>{{ record.scheduled_on }} · 实际学习 {{ record.held_on }} · {{ organizationName(record.org_unit_id) }}</p><p class="u-meta">审核人 {{ record.reviewed_by }} · 版本 {{ record.revision }}</p><div class="actions"><button class="btn btn--ghost" :disabled="busy" @click="openActivity(record.id)">查看归档详情</button><button class="btn btn--ghost" :disabled="busy || record.restricted" @click="exportActivity(record)">导出学习材料</button></div></article>
     </section>
 

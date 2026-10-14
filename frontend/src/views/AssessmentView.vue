@@ -30,6 +30,19 @@ const canConfigure = computed(() => session.can('assessment.configure') && filte
 const currentRun = computed(() => workspace.value?.runs.find((run) => run.fingerprint === workspace.value?.fingerprint) ?? null)
 const activeRules = computed(() => workspace.value?.indicators.filter((rule) => rule.active) ?? [])
 const missingCount = computed(() => workspace.value?.results.filter((result) => result.missing.length).length ?? 0)
+/**
+ * 归集状态徽标。
+ *
+ * 一条指标都还没有时，"规则或数据已变化，需重新归集"是没有意义的告警，
+ * 只会让首次使用者以为自己漏了什么；此时应显示"尚未归集"。
+ */
+const collectionState = computed(() => {
+  const space = workspace.value
+  if (!space) return { label: '', tone: '' }
+  if (!space.results.length) return { label: '尚未导入或确认指标', tone: '' }
+  if (space.needs_recalculation) return { label: '规则或数据已变化，需重新归集', tone: 'badge--warn' }
+  return { label: '归集与当前数据一致', tone: '' }
+})
 let sequence = 0
 
 async function load(): Promise<void> {
@@ -210,11 +223,13 @@ function evidenceReview(item: AssessmentEvidence, status: 'approved' | 'returned
     </div>
     <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
     <p v-if="success" class="success" role="status">{{ success }}</p>
-    <LoadingBlock v-if="loading" label="加载考核台账…" />
-    <ErrorState v-else-if="error" :error="error" @retry="load" />
-    <EmptyState v-else-if="!filters.org" title="暂无可管理组织" description="请先绑定有效学校、院系或支部组织。" />
+    <LoadingBlock v-if="loading" variant="table" :rows="4" />
+    <ErrorState v-else-if="error" :error="error">
+      <button class="btn btn--ghost" type="button" :disabled="busy" @click="load">重新加载</button>
+    </ErrorState>
+    <EmptyState v-else-if="!filters.org" title="暂无可管理组织" body="请先绑定有效的学校、院系或支部组织。" />
     <template v-else-if="workspace">
-      <div class="summary"><span>{{ workspace.year }} · {{ workspace.org_name }}</span><span>截至 {{ workspace.as_of }}</span><span>{{ workspace.results.length }} 项指标 · {{ missingCount }} 项有缺项</span><span class="badge">{{ workspace.needs_recalculation ? '规则或数据已变化，需重新归集' : '归集与当前数据一致' }}</span></div>
+      <div class="summary"><span>{{ workspace.year }} · {{ workspace.org_name }}</span><span>截至 {{ workspace.as_of }}</span><span>{{ workspace.results.length }} 项指标 · {{ missingCount }} 项有缺项</span><span class="badge" :class="collectionState.tone">{{ collectionState.label }}</span></div>
       <div class="tabs" role="tablist" aria-label="考核工作台"><button v-for="item in tabs" :key="item.id" role="tab" :aria-selected="tab === item.id" :class="{ selected: tab === item.id }" @click="tab = item.id">{{ item.label }}</button></div>
       <section v-if="tab === 'indicators'" class="panel">
         <div class="panel-head"><h2>指标与可复核归集</h2><button v-if="canConfigure" class="btn btn--ghost" :disabled="busy" @click="editRule()">新增指标</button></div>

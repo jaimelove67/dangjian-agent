@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 
 import { createDocument, deleteDocument, listDocuments, updateDocumentStatus, replaceDocumentContent } from '@/api/knowledge'
 import { ApiError } from '@/api/http'
@@ -12,6 +12,7 @@ import {
   DOC_VISIBILITY_LABELS,
   PERM,
 } from '@/api/types'
+import ActionDialog from '@/components/ActionDialog.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -41,6 +42,7 @@ const keyword = ref('')
 const levelFilter = ref<DocLevel | 'all'>('all')
 const compact = ref(false)
 const selected = ref<DocumentResponse | null>(null)
+const detail = ref<HTMLElement | null>(null)
 const statusBusy = ref<string | null>(null)
 const uploadOpen = ref(false)
 const replacement = ref<File | null>(null)
@@ -143,20 +145,35 @@ async function changeStatus(doc: DocumentResponse, status: DocStatus): Promise<v
   }
 }
 
-async function removeDocument(doc: DocumentResponse): Promise<void> {
+/** 待移除文件；用站内确认弹窗替代 window.confirm，保持设计语言一致 */
+const removing = ref<DocumentResponse | null>(null)
+
+function askRemove(doc: DocumentResponse): void {
   if (!canManage.value) return
-  if (!window.confirm(`确认移除《${doc.title}》？移除后不再参与检索，历史记录保留。`)) return
+  removing.value = doc
+}
+
+async function confirmRemove(): Promise<void> {
+  const doc = removing.value
+  if (!doc) return
   statusBusy.value = doc.doc_id
   try {
     await deleteDocument(doc.doc_id)
     if (selected.value?.doc_id === doc.doc_id) selected.value = null
     if (docs.value.length === 1 && page.value > 1) page.value -= 1
+    removing.value = null
     await load()
   } catch (err) {
     error.value = err
   } finally {
     statusBusy.value = null
   }
+}
+
+async function selectDocument(doc: DocumentResponse): Promise<void> {
+  selected.value = doc
+  await nextTick()
+  detail.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 /* ---------------------------- 上传表单 ------------------------------ */
@@ -430,6 +447,10 @@ async function submitUpload(): Promise<void> {
     </div>
 
     <!-- ---------------------------- 表格 ---------------------------- -->
+    <p v-if="!loading && !error && filtered.length" class="u-meta table-hint">
+      选择任意行可在下方查看完整文件信息{{ canManage ? '与版本操作' : '' }}。
+    </p>
+
     <LoadingBlock v-if="loading" variant="table" :rows="6" />
 
     <ErrorState v-else-if="error" :error="error">
@@ -466,7 +487,7 @@ async function submitUpload(): Promise<void> {
             v-for="d in filtered"
             :key="d.doc_id"
             :aria-selected="selected?.doc_id === d.doc_id"
-            @click="selected = d"
+            @click="selectDocument(d)"
           >
             <td>
               <div class="cell-title">
@@ -507,7 +528,7 @@ async function submitUpload(): Promise<void> {
               >
                 恢复生效
               </button>
-              <button class="btn btn--quiet" type="button" :disabled="statusBusy !== null || replacementBusy" @click="removeDocument(d)">移除</button>
+              <button class="btn btn--quiet" type="button" :disabled="statusBusy !== null || replacementBusy" @click="askRemove(d)">移除</button>
             </td>
           </tr>
         </tbody>
@@ -515,7 +536,7 @@ async function submitUpload(): Promise<void> {
     </div>
 
     <p v-if="!loading && !error && filtered.length" class="table-foot u-meta">
-      共 {{ total }} 条，第 {{ page }} 页。选择行可查看完整信息。
+      共 {{ total }} 条，第 {{ page }} 页。
     </p>
     <div v-if="!loading && !error && total > pageSize" class="table-foot">
       <button class="btn btn--ghost" :disabled="page <= 1" @click="turnPage(-1)">上一页</button>
@@ -523,7 +544,7 @@ async function submitUpload(): Promise<void> {
     </div>
 
     <!-- ---------------------------- 详情抽屉 ---------------------------- -->
-    <aside v-if="selected" class="detail u-card">
+    <aside v-if="selected" ref="detail" class="detail u-card">
       <header class="u-panel-head">
         <h2 class="detail__title">文件详情</h2>
         <button class="btn btn--quiet" type="button" @click="selected = null">
@@ -584,6 +605,31 @@ async function submitUpload(): Promise<void> {
         <p v-if="replacementMessage" role="status">{{ replacementMessage }}</p>
       </footer>
     </aside>
+
+    <!-- 移除确认：站内弹窗，替代原生 window.confirm -->
+    <ActionDialog
+      :open="Boolean(removing)"
+      title="确认移除制度文件"
+      :busy="statusBusy !== null"
+      @close="removing = null"
+    >
+      <p class="remove-confirm">
+        确认移除《{{ removing?.title }}》？
+      </p>
+      <ul class="remove-confirm__list">
+        <li>移除后该文件不再参与制度问答检索。</li>
+        <li>历史问答记录与审计记录保留，不会被删除。</li>
+        <li>如只是文件失效，请改用"废止"，保留可追溯性。</li>
+      </ul>
+      <div class="remove-confirm__actions">
+        <button class="btn btn--quiet" type="button" :disabled="statusBusy !== null" @click="removing = null">
+          取消
+        </button>
+        <button class="btn btn--primary" type="button" :disabled="statusBusy !== null" @click="confirmRemove">
+          {{ statusBusy !== null ? '移除中…' : '确认移除' }}
+        </button>
+      </div>
+    </ActionDialog>
   </div>
 </template>
 
@@ -812,9 +858,41 @@ async function submitUpload(): Promise<void> {
   padding-left: 2px;
 }
 
+.table-hint {
+  padding-left: 2px;
+}
+
+/* ---------------------------- 移除确认 ---------------------------- */
+.remove-confirm {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.remove-confirm__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  padding-left: var(--space-5);
+  list-style: disc;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink-muted);
+}
+
+.remove-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
 /* ---------------------------- 详情 -------------------------------- */
 .detail {
   overflow: hidden;
+  /* 从表格点选后会被滚动定位到这里，给粘性顶栏留出安全距离 */
+  scroll-margin-top: calc(var(--nav-h) + var(--space-4));
 }
 
 .detail__title {

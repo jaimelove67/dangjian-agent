@@ -5,6 +5,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import { uuid } from '@/utils/uuid'
 
 const archive = ref<PersonalArchive | null>(null)
 const list = ref<MaterialList | null>(null)
@@ -16,9 +17,9 @@ const success = ref('')
 const submitting = ref(false)
 const downloading = ref<string | null>(null)
 const input = ref<HTMLInputElement | null>(null)
-let submissionKey = crypto.randomUUID()
+let submissionKey = uuid()
 const form = reactive({ title: '', category: 'thought_report' as MaterialCategory, description: '', file: null as File | null })
-watch(() => [form.title, form.category, form.description, form.file], () => { submissionKey = crypto.randomUUID() })
+watch(() => [form.title, form.category, form.description, form.file], () => { submissionKey = uuid() })
 const limit = computed(() => archive.value?.max_upload_size ?? 10 * 1024 * 1024)
 const tooLarge = computed(() => !!form.file && form.file.size > limit.value)
 const valid = computed(() => !!archive.value?.profile && !!form.title.trim() && !!form.file?.size && !tooLarge.value)
@@ -37,7 +38,7 @@ async function submit(): Promise<void> {
   success.value = ''
   try {
     await submitOwnMaterial({ ...form, title: form.title.trim(), file: form.file, submission_key: submissionKey })
-    submissionKey = crypto.randomUUID()
+    submissionKey = uuid()
     success.value = '材料已提交，待组织核验。'
     Object.assign(form, { title: '', description: '', file: null })
     if (input.value) input.value.value = ''
@@ -72,7 +73,7 @@ onMounted(load)
         <div class="field"><label for="material-title">材料标题</label><input id="material-title" v-model="form.title" class="input" maxlength="200" required :disabled="submitting" /></div>
         <div class="field"><label for="material-category">材料类型</label><select id="material-category" v-model="form.category" class="select" :disabled="submitting"><option v-for="(label, value) in MATERIAL_CATEGORIES" :key="value" :value="value">{{ label }}</option></select></div>
         <div class="field"><label for="material-description">材料说明（选填）</label><textarea id="material-description" v-model="form.description" class="textarea" rows="3" maxlength="2000" :disabled="submitting"></textarea></div>
-        <div class="field"><label for="material-file">材料文件</label><input id="material-file" ref="input" type="file" accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg" required :disabled="submitting" @change="chooseFile" /><p class="u-meta">支持 PDF、DOCX、文本、PNG、JPG；单个文件不超过 {{ formatFileSize(limit) }}。</p><p v-if="tooLarge" role="alert">文件超过大小限制，请重新选择。</p></div>
+        <div class="field"><label for="material-file">材料文件</label><input id="material-file" ref="input" type="file" accept=".pdf,.PDF,.docx,.DOCX,.txt,.TXT,.md,.MD,.png,.PNG,.jpg,.JPG,.jpeg,.JPEG" required :disabled="submitting" @change="chooseFile" /><p class="u-meta">支持 PDF、DOCX、文本、PNG、JPG；单个文件不超过 {{ formatFileSize(limit) }}。</p><p v-if="tooLarge" role="alert">文件超过大小限制，请重新选择。</p></div>
         <p class="u-meta">提交记录不等于审核通过，不会自动修改本人阶段或组织登记的材料清单。</p>
         <button class="btn btn--primary" :disabled="!valid || submitting">{{ submitting ? '提交中' : '提交材料' }}</button>
       </form>
