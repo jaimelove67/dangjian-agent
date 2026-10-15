@@ -354,6 +354,9 @@ ROLE_PROFILES: dict[UserRole, RoleProfile] = {
     ),
     UserRole.APPLICANT: RoleProfile(
         role=UserRole.APPLICANT,
+        # 需求文档 §4.1 明确规定"申请人：仅公开制度问答"，因此这里的可见范围
+        # 必须比党员更窄，不能为了"菜单一致"而放宽。申请人的制度目录为空是
+        # 预期行为（本部署尚未上传公开制度），界面上用空态说明去向而不是放宽权限。
         knowledge_scopes=frozenset({KS_PUBLIC}),
         business_scope=BS_SELF,
         permissions=_APPLICANT_PERMISSIONS,

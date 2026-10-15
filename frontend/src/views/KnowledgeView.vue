@@ -110,6 +110,18 @@ const filtered = computed(() => docs.value)
 const hasActiveFilter = computed(
   () => keyword.value.trim() !== '' || levelFilter.value !== 'all' || tab.value !== 'all',
 )
+
+/**
+ * 授权范围为空时的说明。
+ *
+ * 申请人的可见范围按需求 §4.1 只有"公开"一级，制度目录天然为空——这时必须
+ * 直接讲清限制来自角色，否则用户只会反复换关键词找一个不可能出现的结果。
+ */
+const emptyScopeBody = computed(() =>
+  session.state.user?.role === 'applicant'
+    ? '按权限设定，申请人只能查阅公开制度，当前尚未上传公开制度。如需查阅某项制度，请联系所在党支部或院系管理员。'
+    : '可查阅范围由你的角色与所属组织决定；如需查阅某项制度，请联系所在党支部或院系管理员。',
+)
 let searchTimer: number | undefined
 watch([tab, keyword, levelFilter], () => {
   page.value = 1
@@ -484,11 +496,7 @@ async function submitUpload(): Promise<void> {
       v-else-if="!filtered.length"
       icon="search"
       :title="hasActiveFilter ? '没有匹配的文件' : '授权范围内暂无可读文件'"
-      :body="
-        hasActiveFilter
-          ? '换个关键词，或清除筛选条件后重试。'
-          : '可查阅范围由你的角色与所属组织决定；如需查阅某项制度，请联系所在党支部或院系管理员。'
-      "
+      :body="hasActiveFilter ? '换个关键词，或清除筛选条件后重试。' : emptyScopeBody"
     >
       <button
         v-if="hasActiveFilter"

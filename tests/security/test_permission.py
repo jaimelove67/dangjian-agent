@@ -77,10 +77,20 @@ class TestDataScope:
 
     def test_knowledge_visibility(self):
         assert can_access_knowledge_scope(UserRole.APPLICANT, "public")
+        # 需求文档 §4.1：申请人仅公开制度问答。该边界比党员更窄是规定动作，
+        # 不是遗漏；不要为了"菜单与权限一致"而放宽。
         assert not can_access_knowledge_scope(UserRole.APPLICANT, "school")
         assert can_access_knowledge_scope(UserRole.MEMBER, "school")
         assert not can_access_knowledge_scope(UserRole.MEMBER, "department")
         assert can_access_knowledge_scope(UserRole.BRANCH_SECRETARY, "branch")
+
+    def test_applicant_knowledge_scope_stays_public_only(self):
+        """申请人可见范围必须严格窄于党员：这是需求 §4.1 的保密边界，不能被'同权'改写。"""
+        applicant = get_role_profile(UserRole.APPLICANT)
+        member = get_role_profile(UserRole.MEMBER)
+        assert applicant.knowledge_scopes == frozenset({"public"})
+        assert applicant.knowledge_scopes < member.knowledge_scopes
+        assert resolve_data_level(UserRole.APPLICANT) == DataLevel.PUBLIC
 
     def test_business_scope_hierarchy(self):
         assert can_access_business_scope(UserRole.MEMBER, "self")
