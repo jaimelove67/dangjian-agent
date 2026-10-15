@@ -66,6 +66,20 @@ async def test_core_tables_exist(conn):
     assert not missing, f"缺少核心表 {missing}，请先执行 alembic upgrade head"
 
 
+async def test_database_is_at_expected_schema_head(conn):
+    """库版本等于由迁移脚本推导的 head。
+
+    就绪探针的“期望版本”必须跟着迁移脚本走：写死成某个 revision 常量时，新增迁移与
+    常量不同步会让 ``/health/ready`` 永久 503，故障表现和真实原因完全错位。
+    """
+    from app.api.v1.health import expected_schema_head
+
+    expected = expected_schema_head()
+    assert expected, "无法从迁移脚本解析 head（检查 alembic.ini / migrations 路径）"
+    head = await conn.scalar(text("SELECT version_num FROM alembic_version"))
+    assert head == expected, f"数据库版本 {head} 落后于迁移 head {expected}"
+
+
 async def test_chinese_ts_config_exists(conn):
     """中文全文检索配置存在"""
     result = await conn.execute(

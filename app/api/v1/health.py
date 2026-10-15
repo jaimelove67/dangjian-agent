@@ -1,6 +1,8 @@
 """健康检查接口"""
 
 import logging
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, status
@@ -15,6 +17,32 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _require_system = require_roles(UserRole.SYSTEM_ADMIN)
+
+
+@lru_cache(maxsize=1)
+def expected_schema_head() -> str | None:
+    """从迁移脚本推导期望的数据库版本，而不是写死版本号。
+
+    写死常量时，新增迁移与这行不同步就会让 ``/health/ready`` 永久 503：故障表现
+    （就绪探针失败）与真实原因（常量忘改）完全错位。解析不到 alembic 配置时返回
+    ``None``，交由表结构检查判定，不误报就绪失败。
+    """
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        for base in (Path.cwd(), Path(__file__).resolve().parents[3]):
+            ini = base / "alembic.ini"
+            if not ini.is_file():
+                continue
+            config = Config(str(ini))
+            location = config.get_main_option("script_location") or "migrations"
+            if "%(here)s" not in location and not Path(location).is_absolute():
+                config.set_main_option("script_location", str((base / location).resolve()))
+            return ScriptDirectory.from_config(config).get_current_head()
+    except Exception:
+        logger.warning("schema_head_unresolved", exc_info=True)
+    return None
 
 
 @router.get(
@@ -130,7 +158,8 @@ async def _readiness_details() -> JSONResponse:
             checks["schema"] = "healthy" if tables_ready and fts_ready else "migration_required"
             if tables_ready:
                 head = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                if head != "012_member_self":
+                expected_head = expected_schema_head()
+                if expected_head and head != expected_head:
                     checks["schema"] = "migration_required"
             if settings.ENV == "production" and tables_ready:
                 safe_role = await conn.scalar(
