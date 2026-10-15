@@ -235,6 +235,14 @@ def test_created_account_is_hashed_audited_and_can_log_in(workspace):
     assert wrong_password.status_code == 401
 
 
+def test_duplicate_username_is_rejected_without_creating_a_second_account(workspace):
+    assert create(workspace, username="new-member").status_code == 201
+    duplicate = create(workspace, username="new-member")
+    assert duplicate.status_code == 409
+    assert "synthetic-password" not in duplicate.text
+    assert workspace.session.scalar(select(func.count(User.id))) == 2
+
+
 @pytest.mark.parametrize(
     "role,org",
     [

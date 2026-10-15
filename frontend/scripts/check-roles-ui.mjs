@@ -213,6 +213,7 @@ async function checkRole(browser, spec) {
     }
 
     await checkKnowledgeTools(page, spec)
+    await checkGovernanceIdentity(page, spec)
   } finally {
     await context.close()
   }
@@ -253,6 +254,35 @@ async function checkKnowledgeTools(page, spec) {
   }
   if (await page.locator('.document-tools .state.err').count()) {
     fail(`${spec.username}: 知识库工具区出现错误态`)
+  }
+}
+
+/**
+ * 治理页「组织与账号」的新增入口必须与服务端权限一致。
+ *
+ * POST /admin/users（开户）与「登记租户」在服务端只允许平台系统管理员，页面却曾按
+ * IDENTITY_MANAGE 显示按钮：学校管理员点下去必然 403「权限不足」，看得到、点不通。
+ * 这里按角色断言入口显隐，避免这类"死入口"再回来。
+ */
+async function checkGovernanceIdentity(page, spec) {
+  if (!spec.allow.includes('/governance')) return
+  await page.goto(`${BASE}/governance`, { waitUntil: 'domcontentloaded' })
+  await settle(page)
+  const identityTab = page.getByRole('tab', { name: '组织与账号' })
+  if (!(await identityTab.count())) {
+    notes.push(`${spec.username}: 治理页无「组织与账号」标签，跳过身份入口检查`)
+    return
+  }
+  await identityTab.first().click()
+  await page.waitForTimeout(1000)
+  const createUser = await page.getByRole('button', { name: '新增用户' }).count()
+  const registerTenant = await page.getByRole('button', { name: '登记租户' }).count()
+  if (spec.role === 'system_admin') {
+    if (!(createUser && registerTenant)) {
+      fail(`${spec.username}: 平台系统管理员应看到「新增用户」与「登记租户」入口`)
+    }
+  } else if (createUser || registerTenant) {
+    fail(`${spec.username}: 非平台系统管理员却出现「新增用户/登记租户」入口（点击必然 403）`)
   }
 }
 

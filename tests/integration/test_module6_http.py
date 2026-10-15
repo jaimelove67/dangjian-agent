@@ -136,23 +136,41 @@ async def test_school_admin_http_configuration_identity_conflicts_and_safe_respo
         {"parent_id": c["branch"].id},
         status=422,
     )
-    body = {
-        "username": "native_" + uuid.uuid4().hex,
-        "name": "synthetic admin",
-        "password": "Isolated_Test_2026!",
-        "role": "department_admin",
-        "org_unit_id": department["id"],
-    }
-    user = await call(c, admin, "POST", "/admin/users", body)
-    assert "password" not in str(user) and "hash" not in str(user)
-    await call(c, admin, "POST", "/admin/users", body, status=409)
+    # 开户只允许平台系统管理员（见 ADMINISTRATION.md「系统→创建账号」）。学校管理员在
+    # 治理页点"新增用户"会被服务端拒绝，用例把这条 HTTP 边界固定下来。
     await call(
-        c, admin, "PATCH", "/admin/users/" + user["id"], {"role": "school_admin"}, status=422
+        c,
+        admin,
+        "POST",
+        "/admin/users",
+        {
+            "username": "native_" + uuid.uuid4().hex,
+            "name": "synthetic admin",
+            "password": "Isolated_Test_2026!",
+            "role": "department_admin",
+            "org_unit_id": department["id"],
+        },
+        status=403,
     )
+    # 既有账号的角色/组织一致性校验与读取仍属学校管理员（IDENTITY_MANAGE）职责。
+    # 账号由平台管理员开户，这里直接建库准备被测数据。
+    user = User(
+        id=str(uuid.uuid4()),
+        tenant_id=c["school"].id,
+        username="native_" + uuid.uuid4().hex,
+        name="synthetic admin",
+        password_hash="synthetic",
+        role=UserRole.DEPARTMENT_ADMIN,
+        org_unit_id=department["id"],
+        is_active=True,
+    )
+    async with c["maker"]() as db:
+        with bypass_tenant_filter():
+            db.add(user)
+            await db.commit()
+    await call(c, admin, "PATCH", "/admin/users/" + user.id, {"role": "school_admin"}, status=422)
     users = await call(c, admin, "GET", "/admin/users")
-    assert (
-        next(row for row in users["items"] if row["id"] == user["id"])["role"] == "department_admin"
-    )
+    assert next(row for row in users["items"] if row["id"] == user.id)["role"] == "department_admin"
     await call(
         c, admin, "GET", "/admin/organizations?tenant_id=" + c["other_school"].id, status=403
     )
@@ -168,22 +186,21 @@ async def test_school_admin_http_configuration_identity_conflicts_and_safe_respo
 
 async def test_same_signed_token_observes_role_user_and_ancestor_revocation(http_case):
     c, admin = http_case, http_case["admin"]
-    created = await call(
-        c,
-        admin,
-        "POST",
-        "/admin/users",
-        {
-            "username": "native_" + uuid.uuid4().hex,
-            "name": "synthetic school admin",
-            "password": "Isolated_Test_2026!",
-            "role": "school_admin",
-            "org_unit_id": c["root"].id,
-        },
+    # 开户限平台系统管理员，这里直接建库准备待撤销的学校管理员账号。
+    actor = User(
+        id=str(uuid.uuid4()),
+        tenant_id=c["school"].id,
+        username="native_" + uuid.uuid4().hex,
+        name="synthetic school admin",
+        password_hash="synthetic",
+        role=UserRole.SCHOOL_ADMIN,
+        org_unit_id=c["root"].id,
+        is_active=True,
     )
     async with c["maker"]() as db:
         with bypass_tenant_filter():
-            actor = await db.get(User, created["id"])
+            db.add(actor)
+            await db.commit()
     same_token = authorization(actor)
     await call(c, actor, "GET", "/admin/users", headers=same_token)
     await call(
