@@ -39,7 +39,7 @@ from app.schemas.member_ext import (
     TransitionRequest,
     VoteBatch,
 )
-from app.services.org_scope import accessible_org_units
+from app.services.org_scope import visible_org_units
 
 DECISION_BOUNDARY = "阶段流转仅由人工操作完成；辅助结果不构成组织认定或选拔结论。"
 BATCH_RULES_PATH = "config/business_rules.yaml"
@@ -89,7 +89,7 @@ class MemberDevelopment:
         self.org_ids: list[str] = []
 
     async def initialize(self) -> "MemberDevelopment":
-        self.orgs = await accessible_org_units(self.db, self.user)
+        self.orgs = await visible_org_units(self.db, self.user)
         self.org_ids = [str(org.id) for org in self.orgs]
         return self
 

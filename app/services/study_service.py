@@ -33,7 +33,7 @@ from app.services.meeting_service import (
     utc_now,
     validate_minutes,
 )
-from app.services.org_scope import accessible_org_units
+from app.services.org_scope import visible_org_units
 from app.services.study_materials import recommend_sources, selected_sources, visible_sources
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "config" / "study_templates.yaml"
@@ -63,7 +63,7 @@ class StudyService:
         """中心组学习仅登记学校/院系党委范围，不能以任意组织编号扩大授权。"""
         self.orgs = [
             org
-            for org in await accessible_org_units(self.db, self.user)
+            for org in await visible_org_units(self.db, self.user)
             if org.org_type in ("school", "department")
         ]
         self.org_ids = [str(org.id) for org in self.orgs]

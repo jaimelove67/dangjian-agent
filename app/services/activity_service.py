@@ -35,7 +35,7 @@ from app.services.meeting_service import (
     utc_now,
     validate_minutes,
 )
-from app.services.org_scope import accessible_org_units
+from app.services.org_scope import visible_org_units
 from app.services.study_materials import recommend_sources, selected_sources, visible_sources
 
 ORGANIZATION_LIFE_NOTICE = "供支部委员会研究确定，不作为正式纪要"
@@ -108,7 +108,7 @@ class ActivityService:
 
     async def initialize(self) -> "ActivityService":
         """组织生活活动以登录人的有效组织范围为准。"""
-        self.orgs = await accessible_org_units(self.db, self.user)
+        self.orgs = await visible_org_units(self.db, self.user)
         self.org_ids = [str(org.id) for org in self.orgs]
         return self
 
