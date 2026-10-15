@@ -106,7 +106,7 @@ def visible_org_ids(user: User, organizations: Mapping[str, OrgUnit]) -> set[str
     if not tenant_id:
         raise TenantIsolationError("缺少租户 ID，无法计算可见组织范围")
 
-    def _valid(org: OrgUnit | None) -> bool:
+    def _valid(org: OrgUnit | None) -> TypeGuard[OrgUnit]:
         """节点必须同租户、未删除且启用，才可进入可见范围。"""
         return (
             org is not None

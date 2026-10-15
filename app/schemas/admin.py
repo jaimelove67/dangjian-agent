@@ -37,12 +37,15 @@ class AccountCreateRequest(BaseModel):
         return value
 
 
+AccountOrgType = Literal["school", "department", "branch"]
+
+
 class AccountOrgOption(BaseModel):
     """当前租户内可以分配给新账号的有效组织。"""
 
     id: str
     name: str
-    org_type: Literal["school", "department", "branch"]
+    org_type: AccountOrgType
 
 
 class AccountCreated(UserInfo):

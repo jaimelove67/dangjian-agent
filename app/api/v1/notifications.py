@@ -19,10 +19,10 @@ from app.core.security import Permission
 from app.db.session import get_db
 from app.deps import require_permissions
 from app.models.notification import (
+    KNOWN_EVENTS,
     STATUS_FAILED,
     STATUS_PENDING,
     STATUS_SENT,
-    KNOWN_EVENTS,
     NotificationDelivery,
 )
 from app.models.user import User

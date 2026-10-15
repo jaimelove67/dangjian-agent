@@ -3,6 +3,7 @@
 import hashlib
 from datetime import date
 from pathlib import PurePath
+from typing import cast
 from urllib.parse import quote
 from uuid import UUID
 
@@ -35,6 +36,7 @@ from app.schemas.common import APIResponse
 from app.schemas.member import MemberRosterItem
 from app.schemas.member_self import (
     AccountLinkRequest,
+    MaterialCategory,
     MaterialList,
     MaterialSubmission,
     PersonalArchive,
@@ -237,7 +239,10 @@ async def submit_material(
     tenant_id = str(user.tenant_id)
     user_id = str(user.id)
     try:
-        body = MaterialSubmission(title=title, category=category, description=description)
+        # 表单字段是 str，这里只做静态收窄；取值合法性仍由 pydantic 校验并转 422。
+        body = MaterialSubmission(
+            title=title, category=cast(MaterialCategory, category), description=description
+        )
     except ValidationError:
         raise HTTPException(422, "请检查材料标题、类型和说明长度") from None
     name = file.filename or ""
@@ -365,7 +370,9 @@ async def _download(
         content=record.content,
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(record.file_name, safe='')}",
+            "Content-Disposition": (
+                f"attachment; filename*=UTF-8''{quote(record.file_name, safe='')}"
+            ),
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "no-store",
         },

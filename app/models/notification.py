@@ -56,9 +56,7 @@ class NotificationDelivery(Base):
         UniqueConstraint(
             "tenant_id", "dedup_key", "channel", name="uq_notification_delivery_dedup"
         ),
-        Index(
-            "ix_notification_deliveries_owner", "tenant_id", "recipient_id", "created_at"
-        ),
+        Index("ix_notification_deliveries_owner", "tenant_id", "recipient_id", "created_at"),
         Index("ix_notification_deliveries_status", "tenant_id", "status"),
     )
 

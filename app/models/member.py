@@ -33,9 +33,7 @@ class MemberProfile(Base):
     )
 
     name: Mapped[str] = mapped_column(String(50), nullable=False)
-    user_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=True
-    )
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     org_name: Mapped[str] = mapped_column(String(200), nullable=False)
     org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     current_stage: Mapped[str] = mapped_column(String(20), nullable=False, default="applicant")
@@ -77,9 +75,7 @@ class MemberMaterial(Base):
     )
 
     profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    user_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=True
-    )
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     material_type: Mapped[str] = mapped_column(String(100), nullable=False, default="")

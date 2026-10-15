@@ -365,6 +365,16 @@ async def test_production_readiness_keeps_unconfirmed_school_and_models_unready(
         "FILE_ENCRYPTION_KEYS", '{"acceptance":"' + base64.b64encode(os.urandom(32)).decode() + '"}'
     )
     monkeypatch.setenv("FILE_ENCRYPTION_ACTIVE_KEY", "acceptance")
+    # 本用例断言的是「模型尚未确认时不得报 healthy」，而 model_readiness() 读的是进程级
+    # 全局注册表；本地 .env 若配置了真实密钥，只要同进程内跑过一次应用 lifespan，注册表
+    # 就会带上云端模型。这里显式固定注册状态，避免用例之间通过该单例互相影响。
+    import app.llm.init_models as init_models
+
+    monkeypatch.setattr(
+        init_models,
+        "model_readiness",
+        lambda: {"llm": "missing", "embedding": "missing", "reranker": "missing"},
+    )
     response = await http_case["http"].get("/api/v1/health/ready")
     assert response.status_code == 503, response.text
     # 公开探针只暴露整体状态；依赖明细只对平台管理员开放（/admin/health/ready）。
@@ -377,6 +387,36 @@ async def test_production_readiness_keeps_unconfirmed_school_and_models_unready(
     assert checks["school_admission"] == "configuration_required"
     assert checks["runtime_role"] == "configuration_required"
     assert checks["models"] != "healthy"
+
+
+async def test_production_readiness_ignores_recent_model_traffic(http_case, native, monkeypatch):
+    """模型已配置但近期无人提问时，就绪不得因此翻转（连通性只作观察项）。"""
+    import app.db.session as sessions
+    import app.llm.init_models as init_models
+
+    engine, maker = native
+    monkeypatch.setattr(sessions, "engine", engine)
+    monkeypatch.setattr(sessions, "async_session_maker", maker)
+    monkeypatch.setattr(settings, "ENV", "production")
+    monkeypatch.setattr(settings, "SECRET_KEY", "synthetic-readiness-cold-model-secret-2026")
+    monkeypatch.setenv(
+        "FILE_ENCRYPTION_KEYS", '{"acceptance":"' + base64.b64encode(os.urandom(32)).decode() + '"}'
+    )
+    monkeypatch.setenv("FILE_ENCRYPTION_ACTIVE_KEY", "acceptance")
+    monkeypatch.setattr(
+        init_models,
+        "model_readiness",
+        lambda: {"llm": "configured", "embedding": "configured", "reranker": "configured"},
+    )
+    response = await http_case["http"].get("/api/v1/health/ready")
+    details = json.loads((await _readiness_details()).body)
+    checks = details["checks"]
+    # 配置齐全即 model 健康；「最近 15 分钟有成功调用」只体现在 model_warm 观察项上。
+    assert checks["models"] == "healthy"
+    assert checks["model_warm"] == "unverified"
+    # 学校效力确认与运行角色仍未确认，整体依旧未就绪——但原因不应是「模型冷」。
+    assert response.status_code == 503, response.text
+    assert checks["school_admission"] == "configuration_required"
 
 
 async def test_encrypted_original_versions_survive_update_and_reject_foreign_downloads(

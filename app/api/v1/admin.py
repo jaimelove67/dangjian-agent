@@ -2,7 +2,7 @@
 
 from contextlib import nullcontext
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,7 +21,7 @@ from app.deps import require_permissions, require_roles
 from app.models.audit import AuditLog
 from app.models.org import OrgUnit
 from app.models.user import User, UserRole
-from app.schemas.admin import AccountCreated, AccountCreateRequest, AccountOrgOption
+from app.schemas.admin import AccountCreated, AccountCreateRequest, AccountOrgOption, AccountOrgType
 from app.schemas.auth import UserInfo
 from app.schemas.common import APIResponse
 from app.services.identity_service import is_platform_admin
@@ -57,7 +57,9 @@ async def account_org_units(
     organizations = await accessible_org_units(db, user)
     return APIResponse(
         data=[
-            AccountOrgOption(id=str(org.id), name=org.name, org_type=org.org_type)
+            AccountOrgOption(
+                id=str(org.id), name=org.name, org_type=cast(AccountOrgType, org.org_type)
+            )
             for org in organizations
             if org.org_type in {"school", "department", "branch"}
         ],

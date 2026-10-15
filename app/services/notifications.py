@@ -206,9 +206,10 @@ async def _claim(
             await db.flush()
     except IntegrityError:
         # 并发下另一个请求先写入了同一台账行；复用它即代表本请求不再外发。
-        row = await _find(db, dedup_key, channel)
-        if row is None:
+        found = await _find(db, dedup_key, channel)
+        if found is None:
             raise
+        row = found
     return row
 
 
@@ -248,9 +249,7 @@ async def _record(
             "recipient_id": row.recipient_id,
         },
     )
-    return DeliveryResult(
-        channel=row.channel, status=status, attempts=attempts, error=error
-    )
+    return DeliveryResult(channel=row.channel, status=status, attempts=attempts, error=error)
 
 
 async def dispatch(
@@ -276,9 +275,7 @@ async def dispatch(
     for name in names:
         row = await _claim(db, message, name, actor_id)
         if row.status == STATUS_SENT:
-            results.append(
-                DeliveryResult(name, STATUS_SENT, row.attempts, skipped=True)
-            )
+            results.append(DeliveryResult(name, STATUS_SENT, row.attempts, skipped=True))
             continue
         channel = registry.get(name)
         if channel is None:
