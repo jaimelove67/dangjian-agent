@@ -18,6 +18,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import DocumentTools from '@/components/knowledge/DocumentTools.vue'
 import { session } from '@/stores/session'
 
 /**
@@ -99,6 +100,16 @@ async function load(): Promise<void> {
 onMounted(load)
 
 const filtered = computed(() => docs.value)
+
+/**
+ * 是否由用户主动设置了筛选。
+ *
+ * 空列表有两种完全不同的成因：筛掉了，或当前账号的授权范围内本就没有文件。
+ * 前者提示"换个关键词"有用，后者只会让人反复尝试——必须分开说明。
+ */
+const hasActiveFilter = computed(
+  () => keyword.value.trim() !== '' || levelFilter.value !== 'all' || tab.value !== 'all',
+)
 let searchTimer: number | undefined
 watch([tab, keyword, levelFilter], () => {
   page.value = 1
@@ -174,6 +185,18 @@ async function selectDocument(doc: DocumentResponse): Promise<void> {
   selected.value = doc
   await nextTick()
   detail.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+/**
+ * 元数据修正后同步表格行与详情面板。
+ *
+ * 接口已返回最新文档，无需重新拉列表；只更新对应行，避免整页重载导致
+ * 详情面板被重新挂载、用户填写的表单状态丢失。
+ */
+function onDocumentUpdated(doc: DocumentResponse): void {
+  const index = docs.value.findIndex((item) => item.doc_id === doc.doc_id)
+  if (index >= 0) docs.value[index] = doc
+  selected.value = doc
 }
 
 /* ---------------------------- 上传表单 ------------------------------ */
@@ -448,7 +471,7 @@ async function submitUpload(): Promise<void> {
 
     <!-- ---------------------------- 表格 ---------------------------- -->
     <p v-if="!loading && !error && filtered.length" class="u-meta table-hint">
-      选择任意行可在下方查看完整文件信息{{ canManage ? '与版本操作' : '' }}。
+      选择任意行可在下方查看完整信息、下载原件{{ canManage ? '、修正元数据与更新正文' : '' }}。
     </p>
 
     <LoadingBlock v-if="loading" variant="table" :rows="6" />
@@ -460,10 +483,19 @@ async function submitUpload(): Promise<void> {
     <EmptyState
       v-else-if="!filtered.length"
       icon="search"
-      title="没有匹配的文件"
-      body="换个关键词，或清除筛选条件后重试。"
+      :title="hasActiveFilter ? '没有匹配的文件' : '授权范围内暂无可读文件'"
+      :body="
+        hasActiveFilter
+          ? '换个关键词，或清除筛选条件后重试。'
+          : '可查阅范围由你的角色与所属组织决定；如需查阅某项制度，请联系所在党支部或院系管理员。'
+      "
     >
-      <button class="btn btn--ghost" type="button" @click="((keyword = ''), (levelFilter = 'all'), (tab = 'all'))">
+      <button
+        v-if="hasActiveFilter"
+        class="btn btn--ghost"
+        type="button"
+        @click="((keyword = ''), (levelFilter = 'all'), (tab = 'all'))"
+      >
         清除筛选
       </button>
     </EmptyState>
@@ -593,6 +625,11 @@ async function submitUpload(): Promise<void> {
           <dd class="detail__summary">{{ selected.summary ?? '未填写' }}</dd>
         </div>
       </dl>
+
+      <!-- 处理状态、原件下载与元数据修正。此前该组件已实现但没有任何页面引用，
+           导致后端能力齐备而用户拿不到原件；这里把它接回详情面板。 -->
+      <DocumentTools :document="selected" @updated="onDocumentUpdated" />
+
       <footer v-if="canManage" class="detail__foot">
         <p class="u-meta">状态变更会直接影响该文件是否被问答环节检索到。</p>
         <label class="field">

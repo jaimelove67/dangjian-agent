@@ -32,30 +32,35 @@ const EXPECTED = [
   {
     username: 'admin',
     role: 'system_admin',
+    managesKnowledge: true,
     allow: ['/ask', '/knowledge', '/members', '/meeting', '/assessment', '/study', '/governance', '/accounts', '/system'],
     deny: ['/my-archive', '/my-materials'],
   },
   {
     username: 'test-reviewer',
     role: 'school_admin',
+    managesKnowledge: true,
     allow: ['/ask', '/knowledge', '/members', '/meeting', '/assessment', '/study', '/governance'],
     deny: ['/accounts', '/system', '/my-archive', '/my-materials'],
   },
   {
     username: 'test-dept',
     role: 'department_admin',
+    managesKnowledge: true,
     allow: ['/ask', '/knowledge', '/members', '/meeting', '/assessment', '/study', '/governance'],
     deny: ['/accounts', '/system', '/my-archive', '/my-materials'],
   },
   {
     username: 'branch-secretary',
     role: 'branch_secretary',
+    managesKnowledge: false,
     allow: ['/ask', '/knowledge', '/members', '/meeting', '/assessment', '/governance'],
     deny: ['/study', '/accounts', '/system', '/my-archive', '/my-materials'],
   },
   {
     username: 'test-organizer',
     role: 'organizer',
+    managesKnowledge: false,
     allow: ['/ask', '/knowledge', '/members', '/meeting', '/assessment', '/governance'],
     deny: ['/study', '/accounts', '/system', '/my-archive', '/my-materials'],
   },
@@ -63,12 +68,14 @@ const EXPECTED = [
     // 党员与申请人必须同权：知识库只读 + 本人档案/材料
     username: 'test-member',
     role: 'member',
+    managesKnowledge: false,
     allow: ['/ask', '/knowledge', '/my-archive', '/my-materials'],
     deny: ['/members', '/meeting', '/assessment', '/study', '/governance', '/accounts', '/system'],
   },
   {
     username: 'test-applicant',
     role: 'applicant',
+    managesKnowledge: false,
     allow: ['/ask', '/knowledge', '/my-archive', '/my-materials'],
     deny: ['/members', '/meeting', '/assessment', '/study', '/governance', '/accounts', '/system'],
   },
@@ -161,9 +168,16 @@ async function checkRole(browser, spec) {
         const rateLimited = [...guardRedirects, ...consoleErrors].some((line) =>
           line.includes('429'),
         )
-        if (rateLimited && attempt < 3) {
-          console.log(`[wait] ${spec.username} ${route} 命中接口限流，等待 25s 后复核`)
-          await page.waitForTimeout(25000)
+        // 前端资源加载失败时整个单页应用白屏，路由守卫根本没运行：
+        // 此时把"能打开"当成越权是误报（CI 上表现为 ERR_INSUFFICIENT_RESOURCES）。
+        // 先等一下重试，仍挂不上再按真实缺陷上报。
+        const shellMissing = (await page.locator('main').count()) === 0
+        if ((rateLimited || shellMissing) && attempt < 3) {
+          const waitSeconds = rateLimited ? 25 : 5
+          console.log(
+            `[wait] ${spec.username} ${route} ${rateLimited ? '命中接口限流' : '页面未挂载'}，等待 ${waitSeconds}s 后复核`,
+          )
+          await page.waitForTimeout(waitSeconds * 1000)
           continue
         }
         settled = true
@@ -197,8 +211,48 @@ async function checkRole(browser, spec) {
       // 路由之间留出间隔，避免整轮检查把通用接口限流打满
       await page.waitForTimeout(500)
     }
+
+    await checkKnowledgeTools(page, spec)
   } finally {
     await context.close()
+  }
+}
+
+/**
+ * 知识库详情面板必须挂载「处理与原件」工具。
+ *
+ * DocumentTools 曾实现完整但没有任何页面引用，导致后端能下载原件、用户却拿不到，
+ * 而接口清单仍显示「已接入」。这里显式断言入口存在，并按权限区分：
+ * 只读角色只能刷新状态与下载原件，不应出现元数据修正表单。
+ */
+async function checkKnowledgeTools(page, spec) {
+  if (!spec.allow.includes('/knowledge')) return
+  await page.goto(`${BASE}/knowledge`, { waitUntil: 'domcontentloaded' })
+  await settle(page)
+  const rows = await page.locator('table.table tbody tr').count()
+  if (!rows) {
+    notes.push(`${spec.username}: 知识库无数据，跳过原件下载入口检查`)
+    return
+  }
+  await page.locator('table.table tbody tr').first().click()
+  await page.waitForTimeout(1200)
+  if (!(await page.locator('.document-tools').count())) {
+    fail(`${spec.username}: 知识库详情面板未挂载「处理与原件」工具（原件下载入口缺失）`)
+    return
+  }
+  const download = page.locator('.document-tools .wb-actions:has(input[type=number]) button')
+  if (!(await download.count())) {
+    fail(`${spec.username}: 知识库详情面板缺少「下载原件」按钮`)
+  }
+  const metadataForm = await page.locator('.document-tools details.wb-disclosure').count()
+  if (spec.managesKnowledge && !metadataForm) {
+    fail(`${spec.username}: 具备 knowledge.manage 却看不到元数据修正表单`)
+  }
+  if (!spec.managesKnowledge && metadataForm) {
+    fail(`${spec.username}: 不具备 knowledge.manage 却出现元数据修正表单`)
+  }
+  if (await page.locator('.document-tools .state.err').count()) {
+    fail(`${spec.username}: 知识库工具区出现错误态`)
   }
 }
 
@@ -206,15 +260,18 @@ async function main() {
   const launch = process.env.PARTY_CHROMIUM
     ? { executablePath: process.env.PARTY_CHROMIUM }
     : {}
-  const browser = await chromium.launch(launch)
-  try {
-    for (const spec of EXPECTED) {
+  // 每个角色单独起一个浏览器进程：7 个角色共用同一浏览器时，前面的上下文
+  // 会累积内存与连接，后段角色容易整体白屏（ERR_INSUFFICIENT_RESOURCES），
+  // 把环境问题误报成权限回归。重启进程的代价远低于一次误判。
+  for (const spec of EXPECTED) {
+    const browser = await chromium.launch(launch)
+    try {
       await checkRole(browser, spec)
-      // 登录接口有每分钟次数限制（默认 10 次），角色之间留出足够间隔
-      await new Promise((r) => setTimeout(r, 9000))
+    } finally {
+      await browser.close()
     }
-  } finally {
-    await browser.close()
+    // 登录接口有每分钟次数限制（默认 10 次），角色之间留出足够间隔
+    await new Promise((r) => setTimeout(r, 9000))
   }
 
   for (const note of notes) console.log(`[info] ${note}`)

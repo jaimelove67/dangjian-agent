@@ -31,10 +31,15 @@ node frontend\scripts\check-roles-ui.mjs
 ```
 
 脚本用 Playwright 依次以 7 个角色登录，逐路由检查：菜单项集合、越权路由是否被拦截、
-本人页面是否可达、页面级横向溢出、主内容地标数量、接口与控制台报错。
+本人页面是否可达、页面级横向溢出、主内容地标数量、接口与控制台报错。知识库部分额外断言
+详情面板挂载了「处理与原件」工具，并按权限区分：只有具备 `knowledge.manage` 的角色能看到
+元数据修正表单，只读角色仍能刷新处理状态与下载原件。
 默认连接 `http://127.0.0.1:5666`、密码 `Test123456`，可用 `PARTY_BASE_URL`、
 `PARTY_PASSWORD` 覆盖；Playwright 自带浏览器版本不匹配时用 `PARTY_CHROMIUM` 指定
 本机 Chromium 可执行文件。脚本会自行等待登录/接口限流窗口，无需手工调整频率。
+
+该检查已接入 CI（`.github/workflows/role-ui.yml`）：用隔离的 PostgreSQL/Redis 服务容器
+跑迁移与合成账号初始化，起后端与前端后执行同一脚本，报告作为构建产物上传。
 
 Linux/macOS 使用 `DASHSCOPE_API_KEY= QWEN_API_KEY= python -m pytest tests/unit tests/security`。这些设置不改写 `.env`；真实模型评测另用已授权的环境。
 
