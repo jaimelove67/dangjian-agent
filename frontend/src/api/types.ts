@@ -299,6 +299,15 @@ export const DOC_STATUS_TONE: Record<DocStatus, 'ok' | 'warn' | 'bad'> = {
   abolished: 'bad',
 }
 
+/** 权威来源由强到弱：学校供给机制与列表筛选项都按此顺序展示 */
+export const DOC_AUTHORITY_ORDER: DocAuthority[] = [
+  'party_constitution',
+  'party_regulation',
+  'superior_document',
+  'school_policy',
+  'reference',
+]
+
 export const DOC_AUTHORITY_LABELS: Record<DocAuthority, string> = {
   party_constitution: '党章',
   party_regulation: '党内法规',
@@ -354,6 +363,12 @@ export interface DocumentResponse {
   reviewed_at?: string | null
   review_note?: string | null
   field_levels?: Record<string, DataLevel>
+  owner_unit?: string | null
+  owner_name?: string | null
+  review_cycle_days?: number | null
+  maintained_at?: string | null
+  next_review_at?: string | null
+  review_due?: boolean
   effective_date?: string | null
   expiration_date?: string | null
   tags: string[]
@@ -406,6 +421,15 @@ export interface DocumentReviewRequest {
   decision: 'approve' | 'reject'
   note?: string
 }
+
+/** app/api/v1/knowledge.py::DocumentMaintenanceRequest —— 供给复核确认（T-KB-13） */
+export interface DocumentMaintenanceRequest {
+  note?: string
+}
+
+/** 「待复核」徽标语义：到期是维护信号，不等于失效 */
+export const DOC_REVIEW_DUE_LABEL = '待复核'
+export const DOC_REVIEW_DUE_TONE: 'warn' = 'warn'
 
 /* ============================ 党员发展 ================================= */
 

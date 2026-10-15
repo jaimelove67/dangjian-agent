@@ -27,7 +27,8 @@ const values = { registration: {...approval}, organization_approval: {...approva
   it_approval: {...approval}, secrecy_approval: {...approval}, pilot_scope: '',
   model_policy: {external_enabled:false, internal_approved:false, local_sensitive_enabled:false,
     allowed_hosts:[], local_hosts:[], evidence:''}, model_routes:{}, scoring_weights:{},
-  prompt_versions:{}, retention:{file_days:365, audit_days:365, physical_purge:'disabled', evidence:''} }
+  prompt_versions:{}, retention:{file_days:365, audit_days:365, physical_purge:'disabled', evidence:''},
+  knowledge_supply:{} }
 const config = {version:0, values, inherited:{}, model_catalog:[],
   admission:{status:'pending', pending:['registration','organization_approval','it_approval',
     'secrecy_approval','pilot_scope'], electronic_archive:'pending'},
@@ -68,7 +69,8 @@ async function page(width=1440, readonly=false) {
     else if (path==='/admin/organizations') data={items:orgs}
     else if (path==='/admin/users') data={items:[{id:'user',name:'界面验收样例用户',
       username:'fixture-user',role:'member',org_unit_id:'branch',is_active:true}]}
-    else if (path==='/admin/governance') data=config
+    else if (path==='/admin/governance') data=method==='GET'?config:{...config,
+      version:config.version+1, values:body.values}
     else if (path==='/admin/reviews' && method==='GET') data={items:[review],has_more:false,total:1}
     else if (path==='/admin/reviews/review') data={...review,stale,submitted_by:self?'viewer':'other',
       snapshot:stale?null:review.snapshot}
@@ -125,6 +127,38 @@ try {
   assert.equal(await tab.locator('input[type=checkbox]:checked').count(),0)
   await tab.screenshot({path:resolve(OUT,'governance-config-desktop.png'),fullPage:true})
   checks.push('未确认学校、模型和电子归档保持关闭')
+  // 供给机制（T-KB-13）：按权威来源登记责任部门、责任人与更新周期。整行留空的
+  // 类别不写入配置；半填的行必须当场拦下，否则学校会以为"登记好了"，而条目
+  // 既没有复核责任人也没有到期提醒。
+  await tab.getByLabel('党章 · 责任部门',{exact:true}).fill('党委办公室')
+  await tab.getByLabel('责任人',{exact:true}).first().fill('李老师')
+  await tab.getByLabel('更新周期（天，30–3650）',{exact:true}).first().fill('730')
+  await tab.getByLabel('本次变更说明',{exact:true}).fill('登记党章供给机制')
+  await tab.getByRole('button',{name:'保存学校配置',exact:true}).click()
+  try {
+    await tab.getByText('配置已保存，版本',{exact:false}).first().waitFor({timeout:5000})
+  } catch {
+    // 保存失败时把页面上的错误提示带出来，否则只能看到"等不到成功提示"。
+    const failures = await tab.locator('.wb-error').allInnerTexts()
+    throw new Error('保存学校配置失败：' + (failures.join(' / ') || '页面没有给出错误提示'))
+  }
+  const saved = mutations.at(-1).body.values.knowledge_supply
+  assert.equal(mutations.at(-1).path,'/admin/governance')
+  assert.equal(saved.party_constitution.owner_unit,'党委办公室')
+  assert.equal(saved.party_constitution.review_cycle_days,730)
+  assert.equal(Object.keys(saved).length,1)
+  checks.push('供给机制按权威来源登记，未填写的类别不写入配置')
+  // 保存后表单回显服务端值：登记错了必须能看见，而不是刷新后一片空白。
+  assert.equal(await tab.getByLabel('党章 · 责任部门',{exact:true}).inputValue(),'党委办公室')
+  await tab.screenshot({path:resolve(OUT,'governance-supply-desktop.png'),fullPage:true})
+  const sent = mutations.length
+  await tab.getByLabel('学校制度 · 责任部门',{exact:true}).fill('党委组织部')
+  await tab.getByLabel('本次变更说明',{exact:true}).fill('登记学校制度供给机制')
+  await tab.getByRole('button',{name:'保存学校配置',exact:true}).click()
+  await tab.getByRole('alert').filter({hasText:'供给机制「学校制度」'}).waitFor()
+  assert.equal(mutations.length,sent)
+  checks.push('半填的供给机制当场拦下且不发起请求')
+  await tab.getByLabel('学校制度 · 责任部门',{exact:true}).fill('')
   await tab.getByRole('tab',{name:'组织与账号',exact:true}).click()
   await tab.getByRole('button',{name:'新增组织',exact:true}).click()
   await tab.getByLabel('名称',{exact:true}).fill('界面验收样例院系')

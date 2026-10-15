@@ -24,6 +24,8 @@ export interface GovernanceValues {
   model_routes: Record<string, string>; scoring_weights: Record<string, number>
   prompt_versions: Record<string, 'v1' | 'v2'>
   retention: { file_days: number; audit_days: number; physical_purge: string; evidence: string }
+  /** T-KB-13：按权威来源登记供给责任部门、责任人与更新周期（天）；未登记为 null */
+  knowledge_supply: Record<string, { owner_unit: string; owner_name: string; review_cycle_days: number | null }>
 }
 export interface GovernanceConfig {
   version: number; values: GovernanceValues

@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.audit import audit_operation
 from app.core.config import settings
-from app.core.constants import DocumentStatus, DocumentValidity
+from app.core.constants import AuditAction, DocumentStatus, DocumentValidity
 from app.core.security import BS_ALL, Permission, get_role_profile, has_permission
 from app.db.session import get_db
 from app.deps import get_current_tenant, require_permissions
@@ -55,21 +55,27 @@ from app.schemas.common import APIResponse, ErrorCode
 from app.schemas.knowledge import (
     DocumentCreateResponse,
     DocumentListResponse,
+    DocumentMaintenanceRequest,
     DocumentResponse,
     DocumentReviewRequest,
     DocumentStatusUpdate,
 )
 from app.services.file_store import read_original, save_original, validate_identifier
+from app.services.governance_service import supply_rules
 from app.services.knowledge_service import (
     DocumentConflictError,
+    DocumentMaintenanceError,
     DocumentNotFoundError,
     DocumentReviewError,
     change_document_status,
+    confirm_maintenance,
     create_document,
     delete_document,
     reopen_review,
     replace_document_content,
     review_document,
+    supply_cycle,
+    sync_review_schedule,
 )
 from app.services.org_scope import accessible_org_units
 
@@ -332,7 +338,11 @@ async def create_knowledge_document(
     await db.commit()
     return APIResponse(
         data=DocumentCreateResponse(
-            document=DocumentResponse.from_document(document, page_count=page_count),
+            document=DocumentResponse.from_document(
+                document,
+                page_count=page_count,
+                supply=await _supply_rule(db, document),
+            ),
             chunk_count=chunk_count,
         ),
         trace_id=_trace_id(request),
@@ -350,6 +360,9 @@ async def list_knowledge_documents(
     doc_status: str | None = Query(None, alias="status"),
     level: str | None = Query(None),
     review_status: str | None = Query(None, description="pending/published/rejected（需维护权限）"),
+    due_for_review: bool | None = Query(
+        None, description="true=只看已到复核期限且仍现行有效的条目（T-KB-13）"
+    ),
     user: User = Depends(_require_query),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[DocumentListResponse]:
@@ -373,6 +386,14 @@ async def list_knowledge_documents(
         if not can_manage:
             raise HTTPException(status_code=403, detail="无权查看审核状态筛选结果")
         stmt = stmt.where(KnowledgeDoc.review_status == review_status)
+    if due_for_review:
+        # 与 DocumentResponse.review_due 同口径：有日程、仍在现行有效、且已到期。
+        stmt = stmt.where(
+            KnowledgeDoc.next_review_at.isnot(None),
+            KnowledgeDoc.next_review_at <= date_type.today(),
+            KnowledgeDoc.status == DocumentStatus.EFFECTIVE.value,
+            KnowledgeDoc.validity == DocumentValidity.EFFECTIVE.value,
+        )
     counts_query = stmt.with_only_columns(KnowledgeDoc.status, func.count()).group_by(
         KnowledgeDoc.status
     )
@@ -394,9 +415,19 @@ async def list_knowledge_documents(
         .scalars()
         .all()
     )
+    # 供给机制按租户读取（管理端可能跨租户查看），每个租户只查一次（T-KB-13）。
+    supply_cache: dict[str, dict[str, Any]] = {}
+    items: list[DocumentResponse] = []
+    for doc in documents:
+        tenant_key = str(doc.tenant_id)
+        if tenant_key not in supply_cache:
+            supply_cache[tenant_key] = await supply_rules(db, tenant_key)
+        items.append(
+            DocumentResponse.from_document(doc, supply=supply_cache[tenant_key].get(doc.authority))
+        )
     return APIResponse(
         data=DocumentListResponse(
-            items=[DocumentResponse.from_document(doc) for doc in documents],
+            items=items,
             total=total,
             page=page,
             page_size=page_size,
@@ -418,6 +449,23 @@ async def _readable_document(
     if lock:
         stmt = stmt.with_for_update().execution_options(populate_existing=True)
     return (await execute_knowledge_query(db, stmt)).scalar_one_or_none()
+
+
+async def _supply_rule(db: AsyncSession, document: KnowledgeDoc) -> dict[str, Any] | None:
+    """按条目的权威来源解析供给机制（T-KB-13）
+
+    责任部门 / 责任人与更新周期由学校「供给机制」按权威来源统一给出，条目本身
+    不复制一份，机制调整后立刻对所有条目生效。未登记该类别时返回 ``None``，
+    出参对应字段为空，前端据此提示「尚未登记供给责任人」。
+    """
+    rules = await supply_rules(db, str(document.tenant_id))
+    rule = rules.get(document.authority)
+    return dict(rule) if rule else None
+
+
+async def _document_response(db: AsyncSession, document: KnowledgeDoc) -> DocumentResponse:
+    """单条文档出参：并入该条目权威来源的供给责任与复核日程"""
+    return DocumentResponse.from_document(document, supply=await _supply_rule(db, document))
 
 
 @router.put(
@@ -492,7 +540,7 @@ async def replace_knowledge_content(
     await db.commit()
     return APIResponse(
         data=DocumentCreateResponse(
-            document=DocumentResponse.from_document(document), chunk_count=count
+            document=await _document_response(db, document), chunk_count=count
         ),
         trace_id=_trace_id(request),
     )
@@ -518,7 +566,7 @@ async def read_knowledge_document(
             detail={"code": ErrorCode.NOT_FOUND, "message": "文档不存在"},
         )
     return APIResponse(
-        data=DocumentResponse.from_document(document),
+        data=await _document_response(db, document),
         trace_id=_trace_id(request),
     )
 
@@ -574,7 +622,7 @@ async def update_knowledge_document_status(
     )
     await db.commit()
     return APIResponse(
-        data=DocumentResponse.from_document(document),
+        data=await _document_response(db, document),
         trace_id=_trace_id(request),
     )
 
@@ -636,7 +684,79 @@ async def review_knowledge_document(
     )
     await db.commit()
     return APIResponse(
-        data=DocumentResponse.from_document(document),
+        data=await _document_response(db, document),
+        trace_id=_trace_id(request),
+    )
+
+
+@router.post(
+    "/knowledge-docs/{doc_id}/maintenance",
+    response_model=APIResponse[DocumentResponse],
+    summary="登记供给复核确认",
+    description=(
+        "确认条目仍现行有效或已随法规修订同步更新，并按学校「供给机制」的更新周期"
+        "重排下次复核日程；非现行有效的条目不予复核。复核留痕记录复核人与说明"
+        "（T-KB-13）。"
+    ),
+    tags=["知识库"],
+)
+async def confirm_knowledge_maintenance(
+    doc_id: str,
+    body: DocumentMaintenanceRequest,
+    request: Request,
+    user: User = Depends(_require_manage),
+    tenant_id: str = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[DocumentResponse]:
+    """登记一次复核确认：核对现行有效并重排下次复核日程"""
+    original = await _readable_document(db, user, doc_id)
+    if original is None or str(original.tenant_id) != str(user.tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": ErrorCode.NOT_FOUND, "message": "文档不存在"},
+        )
+    previous_maintained = original.maintained_at
+    previous_next_review = original.next_review_at
+    try:
+        document = await confirm_maintenance(
+            db,
+            doc_id=doc_id,
+            tenant_id=tenant_id,
+            reviewer_id=str(user.id),
+            note=body.note,
+        )
+    except DocumentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": ErrorCode.NOT_FOUND, "message": str(exc)},
+        ) from exc
+    except DocumentMaintenanceError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    def stamp(value: Any) -> str | None:
+        return value.isoformat() if value else None
+
+    await audit_operation(
+        db,
+        request,
+        user,
+        action=AuditAction.MAINTAIN.value,
+        resource_type="knowledge_doc",
+        resource_id=str(document.id),
+        data_level=document.security_level,
+        old_value={
+            "maintained_at": stamp(previous_maintained),
+            "next_review_at": stamp(previous_next_review),
+        },
+        new_value={
+            "maintained_at": stamp(document.maintained_at),
+            "next_review_at": stamp(document.next_review_at),
+            "note": body.note,
+        },
+    )
+    await db.commit()
+    return APIResponse(
+        data=await _document_response(db, document),
         trace_id=_trace_id(request),
     )
 
@@ -678,7 +798,7 @@ async def delete_knowledge_document(
         new_value={"is_deleted": True, "status": document.status},
     )
     await db.commit()
-    return APIResponse(data=DocumentResponse.from_document(document), trace_id=_trace_id(request))
+    return APIResponse(data=await _document_response(db, document), trace_id=_trace_id(request))
 
 
 @router.get(
@@ -761,6 +881,9 @@ async def patch_knowledge_document_metadata(
     changes = body.model_dump(exclude_unset=True, exclude={"reason"})
     if not changes:
         raise HTTPException(status_code=422, detail="没有需要修正的元数据")
+    # 复核日程不参与元数据修正循环（那是 date 列，不能当字符串写回），
+    # 只在下面「生效日期 / 权威来源变更」时重排，审计单独记录前后值。
+    previous_next_review = document.next_review_at
     old_value: dict[str, Any] = {
         "title": document.title,
         "issuer": document.issuer,
@@ -853,6 +976,14 @@ async def patch_knowledge_document_metadata(
     if new_value["visibility"] == "public" and old_value["visibility"] != "public":
         if reopen_review(document):
             logger.info("knowledge_document_review_reopened", extra={"doc_id": doc_id})
+    # 生效日期或权威来源变了，复核日程的基准与周期随之改变（T-KB-13）。
+    if "effective_date" in changes or "authority" in changes:
+        sync_review_schedule(
+            document,
+            review_cycle_days=await supply_cycle(
+                db, tenant_id=str(document.tenant_id), authority=document.authority
+            ),
+        )
     await audit_operation(
         db,
         request,
@@ -861,12 +992,20 @@ async def patch_knowledge_document_metadata(
         resource_type="knowledge_doc",
         resource_id=str(document.id),
         data_level=document.security_level,
-        old_value=old_value,
-        new_value=dict(new_value),
+        old_value={
+            **old_value,
+            "next_review_at": (previous_next_review.isoformat() if previous_next_review else None),
+        },
+        new_value={
+            **new_value,
+            "next_review_at": (
+                document.next_review_at.isoformat() if document.next_review_at else None
+            ),
+        },
     )
     await db.commit()
     return APIResponse(
-        data=DocumentResponse.from_document(document),
+        data=await _document_response(db, document),
         trace_id=_trace_id(request),
     )
 

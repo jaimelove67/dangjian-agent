@@ -8,11 +8,13 @@ import json
 import os
 import tempfile
 from contextlib import asynccontextmanager
+from datetime import date
 
 import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -135,22 +137,24 @@ async def client_for(url, current_user):
 UPLOAD_BYTES = ("第一条 综合党建知识库增量测试原文，仅用于回归验证。\n").encode()
 
 
-async def upload_document(client, doc_id="M1-EXTRA-001"):
+async def upload_document(client, doc_id="M1-EXTRA-001", **overrides):
+    data = {
+        "doc_id": doc_id,
+        "file_name": "extras.txt",
+        "title": "增量能力测试文档",
+        "issuer": "合成单位",
+        "level": "school",
+        "visibility": "school",
+        "effective_date": "2026-01-01",
+        "tags": "测试,回归",
+        "security_level": "public",
+        "status": "effective",
+        "summary": "测试摘要",
+    }
+    data.update(overrides)
     response = await client.post(
         "/api/v1/knowledge-docs",
-        data={
-            "doc_id": doc_id,
-            "file_name": "extras.txt",
-            "title": "增量能力测试文档",
-            "issuer": "合成单位",
-            "level": "school",
-            "visibility": "school",
-            "effective_date": "2026-01-01",
-            "tags": "测试,回归",
-            "security_level": "public",
-            "status": "effective",
-            "summary": "测试摘要",
-        },
+        data=data,
         files={"file": ("extras.txt", UPLOAD_BYTES, "text/plain")},
     )
     return response
@@ -360,3 +364,126 @@ async def test_review_requires_review_permission(kb_url):
         ).status_code == 403
         # 普通党员也不能查看待审队列
         assert (await client.get("/api/v1/knowledge-docs?review_status=pending")).status_code == 403
+
+
+# ---------------------------------------------------------------- T-KB-13 供给机制与复核日程
+
+SUPPLY_CONFIG = {
+    "knowledge_supply": {
+        "school_policy": {
+            "owner_unit": "党委组织部",
+            "owner_name": "张老师",
+            "review_cycle_days": 365,
+        }
+    }
+}
+
+
+async def set_supply_config(engine, tenant_id, config):
+    """直接写入租户配置：治理页的保存/审批流由 test_module6_governance 覆盖。"""
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        await db.execute(
+            text(
+                "UPDATE tenants SET config = CAST(:config AS json),"
+                " config_version = config_version + 1 WHERE id = :tid"
+            ),
+            {"config": json.dumps(config), "tid": tenant_id},
+        )
+        await db.commit()
+
+
+async def set_next_review(engine, doc_id, value):
+    """把某条目的复核日程改到过去，模拟"到期未复核"。"""
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        await db.execute(
+            text("UPDATE knowledge_docs SET next_review_at = :value WHERE doc_id = :doc_id"),
+            {"value": value, "doc_id": doc_id},
+        )
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_supply_mechanism_schedules_review_and_confirmation(kb_url):
+    manager = actor(user_id="kb-supply")
+    async with client_for(kb_url, manager) as (client, engine):
+        await set_supply_config(engine, "kb-a", SUPPLY_CONFIG)
+        try:
+            # 入库即按学校供给机制带出责任部门 / 责任人与更新周期，并排定下次复核日程
+            document = (await upload_document(client, "M1-SUPPLY-001")).json()["data"]["document"]
+            assert document["authority"] == "school_policy"
+            assert document["owner_unit"] == "党委组织部"
+            assert document["owner_name"] == "张老师"
+            assert document["review_cycle_days"] == 365
+            assert document["next_review_at"] == "2027-01-01"  # 生效日 2026-01-01 + 365 天
+            assert document["review_due"] is False
+
+            # 未到期的条目不出现在"待复核"筛选里
+            due = await ok_json(client, "GET", "/knowledge-docs?due_for_review=true")
+            assert [item["doc_id"] for item in due["items"]] == []
+
+            # 到期（含逾期）条目进入筛选，并带维护信号
+            await set_next_review(engine, "M1-SUPPLY-001", date(2025, 1, 1))
+            due = await ok_json(client, "GET", "/knowledge-docs?due_for_review=true")
+            assert [item["doc_id"] for item in due["items"]] == ["M1-SUPPLY-001"]
+            assert due["items"][0]["review_due"] is True
+
+            # 复核确认：以确认时间为基准重排（一年一核），留痕且不再逾期
+            confirmed = await ok_json(
+                client,
+                "POST",
+                "/knowledge-docs/M1-SUPPLY-001/maintenance",
+                {"note": "已核对仍现行有效，无需修订"},
+            )
+            assert confirmed["review_due"] is False
+            assert confirmed["maintained_at"]
+            assert (
+                364 <= (date.fromisoformat(confirmed["next_review_at"]) - date.today()).days <= 366
+            )
+            assert await ok_json(client, "GET", "/knowledge-docs?due_for_review=true") == {
+                "items": [],
+                "total": 0,
+                "page": 1,
+                "page_size": 40,
+                "counts": {"all": 0},
+            }
+
+            # 非现行有效的条目没有复核义务：废止后不接受复核登记
+            await ok_json(
+                client,
+                "PATCH",
+                "/knowledge-docs/M1-SUPPLY-001/metadata",
+                {"validity": "repealed", "reason": "对应法规已废止，同步退出使用"},
+            )
+            assert (
+                await client.post(
+                    "/api/v1/knowledge-docs/M1-SUPPLY-001/maintenance",
+                    json={"note": "越权复核"},
+                )
+            ).status_code == 409
+
+            # 未登记机制的权威类别不排日程，也不误报"到期"
+            reference = (
+                await upload_document(
+                    client, "M1-SUPPLY-002", authority="reference", validity="effective"
+                )
+            ).json()["data"]["document"]
+            assert reference["owner_unit"] is None
+            assert reference["review_cycle_days"] is None
+            assert reference["next_review_at"] is None
+            assert reference["review_due"] is False
+        finally:
+            await set_supply_config(engine, "kb-a", {})
+
+
+@pytest.mark.asyncio
+async def test_supply_maintenance_requires_manage_permission(kb_url):
+    # 普通党员不能登记复核确认
+    async with client_for(kb_url, actor(user_id="kb-member-2", role=UserRole.MEMBER)) as (
+        client,
+        _,
+    ):
+        assert (
+            await client.post(
+                "/api/v1/knowledge-docs/M1-SUPPLY-001/maintenance", json={"note": "越权"}
+            )
+        ).status_code == 403

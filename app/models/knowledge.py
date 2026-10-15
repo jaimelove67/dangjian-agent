@@ -76,6 +76,13 @@ class KnowledgeDoc(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     review_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # 供给复核日程（T-KB-13）。责任部门、责任人与更新周期由学校「供给机制」按
+    # 权威来源统一给出（见 app/services/governance_service.py 的 SupplyRule），
+    # 条目上只落"最近一次复核/更新确认时间"与据此排定的"下次复核日期"。
+    # 日程在入库、内容更新与复核确认时重排，不随机制变更回溯改写。
+    maintained_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_review_at: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+
     # 字段级敏感等级（T-DATA-05）：{字段名: public/internal/sensitive/classified}。
     # 文档密级是该条目的上限，字段标注不得高于密级（入库与修元数据时校验），
     # 供下游脱敏与外发规则使用。

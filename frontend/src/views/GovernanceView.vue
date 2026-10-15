@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import * as api from '@/api/governance'
 import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, ReviewRecord, TenantRecord, UserRecord } from '@/api/governance'
 import { ApiError } from '@/api/http'
-import { PERM, ROLE_LABELS, type UserRole } from '@/api/types'
+import { DOC_AUTHORITY_LABELS, DOC_AUTHORITY_ORDER, PERM, ROLE_LABELS, type UserRole } from '@/api/types'
 import ActionDialog from '@/components/ActionDialog.vue'
 import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
 import { session } from '@/stores/session'
@@ -61,6 +61,24 @@ const approvalText: Record<string,string> = {registration:'真实组织登记', 
   it_approval:'信息化部门评审', secrecy_approval:'保密部门评审', pilot_scope:'批准的试点范围'}
 const approvals = ['registration','organization_approval','it_approval','secrecy_approval'] as const
 const roles = Object.keys(ROLE_LABELS) as UserRole[]
+/** 供给机制（T-KB-13）：五类权威来源固定成行——缺行就不显示，等于把机制藏起来。 */
+const supplyRows = computed(() => DOC_AUTHORITY_ORDER.map(authority => ({
+  authority,
+  label: DOC_AUTHORITY_LABELS[authority],
+  rule: config.value?.values.knowledge_supply?.[authority]
+    ?? { owner_unit: '', owner_name: '', review_cycle_days: null },
+})))
+/** 后端对未登记的类别返回空对象；补齐空行以便学校直接登记，而不是先点一次“新增”。
+ *  空行的周期留 null（渲染为空输入框），避免别人一进来就看到"每 0 天复核一次"。 */
+function useConfig(value: GovernanceConfig): GovernanceConfig {
+  if (!value.values.knowledge_supply) value.values.knowledge_supply = {}
+  for (const authority of DOC_AUTHORITY_ORDER) {
+    if (!value.values.knowledge_supply[authority]) {
+      value.values.knowledge_supply[authority] = { owner_unit: '', owner_name: '', review_cycle_days: null }
+    }
+  }
+  return value
+}
 const selectedRecord = computed(() => {
   const snapshot = detail.value?.snapshot
   return (snapshot?.record ?? snapshot ?? {}) as Record<string, unknown>
@@ -115,9 +133,10 @@ async function loadTab(): Promise<void> {
     }
     if (tab.value === 'jobs') jobs.value = (await api.listJobs()).items
     if (tab.value === 'config') {
-      config.value = await api.getGovernance()
-      allowedHosts.value = config.value.values.model_policy.allowed_hosts.join('\n')
-      localHosts.value = config.value.values.model_policy.local_hosts.join('\n')
+      const loaded = useConfig(await api.getGovernance())
+      config.value = loaded
+      allowedHosts.value = loaded.values.model_policy.allowed_hosts.join('\n')
+      localHosts.value = loaded.values.model_policy.local_hosts.join('\n')
     }
     if (tab.value === 'operations') {
       const params: Record<string, string|number> = {page:auditPage.value}
@@ -191,7 +210,27 @@ async function saveConfig(): Promise<void> {
     const values = JSON.parse(JSON.stringify(config.value.values)) as api.GovernanceValues
     values.model_policy.allowed_hosts = allowedHosts.value.split(/[\s,，]+/).filter(Boolean)
     values.model_policy.local_hosts = localHosts.value.split(/[\s,，]+/).filter(Boolean)
-    config.value = await api.saveGovernance({expected_version:config.value.version, reason:configReason.value, values})
+    // 供给机制：整行留空表示该权威类别尚未登记，直接丢弃；半填的行不能悄悄丢，
+    // 否则学校会以为"登记好了"，实际上条目根本没有复核责任人与周期（T-KB-13）。
+    const supply: api.GovernanceValues['knowledge_supply'] = {}
+    for (const authority of DOC_AUTHORITY_ORDER) {
+      const row = values.knowledge_supply?.[authority]
+      if (!row) continue
+      const owner = row.owner_unit.trim(), name = row.owner_name.trim()
+      const cycle = Number(row.review_cycle_days)
+      if (!owner && !name && !cycle) continue
+      if (!owner || !name || !cycle) {
+        throw new Error('供给机制「' + DOC_AUTHORITY_LABELS[authority]
+          + '」要同时填写责任部门、责任人与更新周期（天）')
+      }
+      if (cycle < 30 || cycle > 3650) {
+        throw new Error('供给机制「' + DOC_AUTHORITY_LABELS[authority]
+          + '」的更新周期需在 30–3650 天之间')
+      }
+      supply[authority] = { owner_unit: owner, owner_name: name, review_cycle_days: cycle }
+    }
+    values.knowledge_supply = supply
+    config.value = useConfig(await api.saveGovernance({expected_version:config.value.version, reason:configReason.value, values}))
     configReason.value = ''; notice.value = '配置已保存，版本 ' + config.value.version
   } catch (err) { fail(err) } finally { busy.value = false }
 }
@@ -273,6 +312,17 @@ function formatDate(value: string | null): string {
           <label class="wb-field"><span>文件保留天数</span><input class="input" v-model.number="config.values.retention.file_days" type="number" min="365" max="36500" /></label>
           <label class="wb-field"><span>审计保留天数（不少于一年）</span><input class="input" v-model.number="config.values.retention.audit_days" type="number" min="365" max="36500" /></label>
           <p class="wb-note">物理清理默认禁用。软删除保留历史证据，清理须按学校批准的保留与删除流程执行。</p>
+        </section>
+        <section class="wb-section wb-stack"><h2>知识库供给机制</h2>
+          <p class="wb-note">按权威来源明确供给责任部门、责任人与更新周期。条目入库即据此排定下次复核日期，到期后在知识库列表提示「待复核」；未登记的类别不排日程。法规修订后更新正文视为一次复核，日程随之重排。</p>
+          <div v-for="row in supplyRows" :key="row.authority" class="wb-grid">
+            <label class="wb-field"><span>{{ row.label }} · 责任部门</span>
+              <input class="input" v-model="row.rule.owner_unit" maxlength="100" placeholder="如：党委组织部" /></label>
+            <label class="wb-field"><span>责任人</span>
+              <input class="input" v-model="row.rule.owner_name" maxlength="50" placeholder="如：组织科 张老师" /></label>
+            <label class="wb-field"><span>更新周期（天，30–3650）</span>
+              <input class="input" v-model.number="row.rule.review_cycle_days" type="number" min="30" max="3650" /></label>
+          </div>
         </section>
         <section class="wb-section wb-toolbar"><div><h2>电子记录效力</h2><p>{{ config.archive_policy?.enabled ? '学校已确认，可按业务权限归档' : '尚未确认，归档默认关闭' }}</p></div><button class="btn btn--quiet" type="button" @click="open('archive')">登记或撤销确认</button></section>
         <label class="wb-field"><span>本次变更说明</span><input class="input" v-model="configReason" required maxlength="500" /></label>

@@ -12,6 +12,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
@@ -29,7 +30,12 @@ from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.governance import JobCreate, ReviewDecision, ReviewSubmit
 from app.services import job_service
-from app.services.governance_service import GovernanceUpdate, read_governance, save_governance
+from app.services.governance_service import (
+    GovernanceUpdate,
+    read_governance,
+    save_governance,
+    supply_rules,
+)
 from app.services.identity_guard import ensure_active_identity
 from app.services.identity_service import IdentityService
 from app.services.member_service import _load_scoring_rules
@@ -431,6 +437,52 @@ async def test_school_governance_version_conflict_and_pending_model_policy(nativ
                     ),
                 )
             assert pending.value.status_code == 422
+
+
+async def test_school_governance_records_knowledge_supply(native):
+    """T-KB-13：供给机制经治理配置持久化，并按权威来源供知识库读取"""
+    _, maker = native
+    rule = {
+        "owner_unit": "党委组织部",
+        "owner_name": "张老师",
+        "review_cycle_days": 365,
+    }
+    async with maker() as db:
+        school, _, _, _, reviewer = await seed(db)
+        with tenant_context(school.id, reviewer.id):
+            values = (await read_governance(db, reviewer))["values"]
+            values["knowledge_supply"] = {"school_policy": dict(rule)}
+            saved = await save_governance(
+                db,
+                reviewer,
+                GovernanceUpdate(expected_version=0, reason="登记学校制度供给机制", values=values),
+            )
+            await db.commit()
+            assert saved["values"]["knowledge_supply"] == {"school_policy": rule}
+            # 供给机制是条目排定复核日程的依据，必须能按租户原样读出
+            assert await supply_rules(db, school.id) == {"school_policy": rule}
+
+            # 无法识别的权威类别会被拒绝（请求边界上即 FastAPI 的 422）：
+            # 否则会存下一个永远匹配不到知识条目的制度类别。
+            with pytest.raises(ValidationError):
+                GovernanceUpdate(
+                    expected_version=1,
+                    reason="非法权威类别",
+                    values={**values, "knowledge_supply": {"party_document": dict(rule)}},
+                )
+
+            # 半填的机制同样拒绝：只写人不写周期，机制不会产生任何到期提醒
+            with pytest.raises(ValidationError):
+                GovernanceUpdate(
+                    expected_version=1,
+                    reason="半填机制",
+                    values={
+                        **values,
+                        "knowledge_supply": {
+                            "school_policy": {"owner_unit": "党委组织部", "owner_name": "张老师"}
+                        },
+                    },
+                )
 
 
 async def test_runtime_role_rejects_privileged_membership_and_database_owner(

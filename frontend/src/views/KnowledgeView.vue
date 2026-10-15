@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 
-import { createDocument, deleteDocument, listDocuments, reviewDocument, updateDocumentStatus, replaceDocumentContent } from '@/api/knowledge'
+import { confirmDocumentMaintenance, createDocument, deleteDocument, listDocuments, reviewDocument, updateDocumentStatus, replaceDocumentContent } from '@/api/knowledge'
 import { ApiError } from '@/api/http'
 import type {
   DocumentResponse,
@@ -16,6 +16,8 @@ import {
   DATA_LEVEL_LABELS,
   DOC_AUTHORITY_LABELS,
   DOC_LEVEL_LABELS,
+  DOC_REVIEW_DUE_LABEL,
+  DOC_REVIEW_DUE_TONE,
   DOC_REVIEW_STATUS_LABELS,
   DOC_REVIEW_STATUS_TONE,
   DOC_STATUS_LABELS,
@@ -57,6 +59,8 @@ const keyword = ref('')
 const levelFilter = ref<DocLevel | 'all'>('all')
 /** 审核状态筛选：仅具备 knowledge.review 的管理员使用，默认不附加筛选 */
 const reviewFilter = ref<DocReviewStatus | 'all'>('all')
+/** 复核期限筛选（T-KB-13）：只看已到复核期限的条目，默认不附加筛选 */
+const dueFilter = ref<'all' | 'due'>('all')
 const compact = ref(false)
 const selected = ref<DocumentResponse | null>(null)
 const detail = ref<HTMLElement | null>(null)
@@ -102,6 +106,7 @@ async function load(): Promise<void> {
       status: tab.value === 'all' ? undefined : tab.value,
       level: levelFilter.value === 'all' ? undefined : levelFilter.value,
       review_status: reviewFilter.value === 'all' ? undefined : reviewFilter.value,
+      due_for_review: dueFilter.value === 'all' ? undefined : true,
     })
     if (sequence !== requestSequence) return
     docs.value = response.items
@@ -129,7 +134,8 @@ const hasActiveFilter = computed(
     keyword.value.trim() !== '' ||
     levelFilter.value !== 'all' ||
     tab.value !== 'all' ||
-    reviewFilter.value !== 'all',
+    reviewFilter.value !== 'all' ||
+    dueFilter.value !== 'all',
 )
 
 /**
@@ -144,7 +150,7 @@ const emptyScopeBody = computed(() =>
     : '可查阅范围由你的角色与所属组织决定；如需查阅某项制度，请联系所在党支部或院系管理员。',
 )
 let searchTimer: number | undefined
-watch([tab, keyword, levelFilter, reviewFilter], () => {
+watch([tab, keyword, levelFilter, reviewFilter, dueFilter], () => {
   page.value = 1
   window.clearTimeout(searchTimer)
   searchTimer = window.setTimeout(() => { void load() }, 200)
@@ -288,6 +294,49 @@ async function confirmReview(): Promise<void> {
     reviewError.value = err instanceof ApiError ? err.message : '审核失败，请重试'
   } finally {
     reviewBusy.value = false
+  }
+}
+
+/* ---------------------------- 供给复核确认 ------------------------------ */
+
+/**
+ * 学校「供给机制」按权威来源给出责任部门、责任人与更新周期；条目到达期限后
+ * 需要供给方核对是否仍然现行有效或已随法规修订更新（T-KB-13）。复核确认把
+ * 日程重排到「确认时间 + 更新周期」，到期提醒因此不会被无限拖延。
+ */
+const maintaining = ref<DocumentResponse | null>(null)
+const maintenanceNote = ref('')
+const maintenanceBusy = ref(false)
+const maintenanceError = ref('')
+
+function reviewDueText(doc: DocumentResponse): string {
+  if (!doc.next_review_at) return '未排定复核日程（学校尚未登记该类别的供给机制）'
+  return doc.review_due
+    ? `已到复核期限（${doc.next_review_at}）`
+    : `下次复核 ${doc.next_review_at}`
+}
+
+function askMaintenance(doc: DocumentResponse): void {
+  if (!canManage.value) return
+  maintaining.value = doc
+  maintenanceNote.value = ''
+  maintenanceError.value = ''
+}
+
+async function confirmMaintenance(): Promise<void> {
+  const doc = maintaining.value
+  if (!doc) return
+  maintenanceBusy.value = true
+  maintenanceError.value = ''
+  try {
+    const updated = await confirmDocumentMaintenance(doc.doc_id, maintenanceNote.value.trim() || undefined)
+    onDocumentUpdated(updated)
+    maintaining.value = null
+    await load()
+  } catch (err) {
+    maintenanceError.value = err instanceof ApiError ? err.message : '复核登记失败，请重试'
+  } finally {
+    maintenanceBusy.value = false
   }
 }
 
@@ -589,6 +638,10 @@ async function submitUpload(): Promise<void> {
           <option value="all">全部审核状态</option>
           <option v-for="(l, k) in DOC_REVIEW_STATUS_LABELS" :key="k" :value="k">{{ l }}</option>
         </select>
+        <select v-if="canManage" v-model="dueFilter" class="select filters__level" aria-label="复核状态">
+          <option value="all">全部复核状态</option>
+          <option value="due">待复核</option>
+        </select>
       </div>
     </div>
 
@@ -679,6 +732,13 @@ async function submitUpload(): Promise<void> {
                 {{ DOC_REVIEW_STATUS_LABELS[d.review_status] }}
               </span>
               <span v-if="expiringSoon(d)" class="badge badge--warn cell-expiring">即将到期</span>
+              <span
+                v-if="d.review_due"
+                class="badge cell-expiring"
+                :class="`badge--${DOC_REVIEW_DUE_TONE}`"
+              >
+                {{ DOC_REVIEW_DUE_LABEL }}
+              </span>
             </td>
             <td v-if="canManage" class="td-right" @click.stop>
               <template v-if="canReview && d.review_status === 'pending'">
@@ -717,6 +777,7 @@ async function submitUpload(): Promise<void> {
               >
                 恢复生效
               </button>
+              <button v-if="d.review_due" class="btn btn--quiet" type="button" :disabled="statusBusy === d.doc_id || reviewBusy || maintenanceBusy" @click="askMaintenance(d)">复核</button>
               <button class="btn btn--quiet" type="button" :disabled="statusBusy !== null || replacementBusy" @click="askRemove(d)">移除</button>
             </td>
           </tr>
@@ -807,6 +868,30 @@ async function submitUpload(): Promise<void> {
           </dd>
         </div>
         <div class="detail__row">
+          <dt>供给责任</dt>
+          <dd>
+            <template v-if="selected.owner_unit || selected.owner_name">
+              {{ selected.owner_unit ?? '未登记部门' }}
+              <span v-if="selected.owner_name">· {{ selected.owner_name }}</span>
+            </template>
+            <span v-else class="u-meta">学校尚未为该权威来源登记供给机制</span>
+          </dd>
+        </div>
+        <div class="detail__row">
+          <dt>复核周期</dt>
+          <dd>
+            <span v-if="selected.review_cycle_days" class="u-num">
+              每 {{ selected.review_cycle_days }} 天
+            </span>
+            <span v-else class="u-faint">未设定</span>
+            <span class="u-meta">{{ reviewDueText(selected) }}</span>
+          </dd>
+        </div>
+        <div class="detail__row">
+          <dt>最近复核</dt>
+          <dd>{{ selected.maintained_at ?? '尚无复核记录' }}</dd>
+        </div>
+        <div class="detail__row">
           <dt>标签</dt>
           <dd>
             <span v-if="!selected.tags.length" class="u-faint">无</span>
@@ -844,6 +929,25 @@ async function submitUpload(): Promise<void> {
             @click="askReview(selected, 'reject')"
           >
             退回修正
+          </button>
+        </div>
+      </div>
+
+      <!-- 供给复核确认：到期后由供给方核对是否仍现行有效或已随法规修订更新（T-KB-13） -->
+      <div v-if="canManage" class="detail__review">
+        <p class="u-meta">
+          复核确认后，下次复核日期按学校供给机制的更新周期重排：更新正文同样视为一次
+          复核，日程以本次更新为基准。
+        </p>
+        <div class="wb-actions">
+          <button
+            class="btn"
+            :class="selected.review_due ? 'btn--primary' : 'btn--quiet'"
+            type="button"
+            :disabled="maintenanceBusy || reviewBusy"
+            @click="askMaintenance(selected)"
+          >
+            {{ selected.review_due ? '登记复核（已到期）' : '登记复核' }}
           </button>
         </div>
       </div>
@@ -898,6 +1002,43 @@ async function submitUpload(): Promise<void> {
           {{
             reviewBusy ? '提交中…' : reviewDecision === 'approve' ? '确认批准' : '确认退回'
           }}
+        </button>
+      </div>
+    </ActionDialog>
+
+    <!-- 供给复核确认：核对仍现行有效或已随法规修订更新，确认后重排下次复核日程（T-KB-13） -->
+    <ActionDialog
+      :open="Boolean(maintaining)"
+      title="登记供给复核确认"
+      :busy="maintenanceBusy"
+      @close="maintaining = null"
+    >
+      <p class="remove-confirm">{{ maintaining?.title }}（{{ maintaining?.doc_id }}）</p>
+      <ul class="remove-confirm__list">
+        <li>确认人已核对本条目仍是现行有效版本，或已随法规修订同步更新。</li>
+        <li>
+          确认后按学校供给机制重排下次复核日期{{
+            maintaining?.review_cycle_days ? `（每 ${maintaining.review_cycle_days} 天）` : ''
+          }}；需要对制度本身作出效力变更，请改用元数据修正或状态变更。
+        </li>
+        <li>复核人、时间与说明写入审计记录。</li>
+      </ul>
+      <label class="field">
+        <span>复核说明（选填）</span>
+        <textarea v-model="maintenanceNote" class="textarea" rows="2" maxlength="500" />
+      </label>
+      <p v-if="maintenanceError" class="field__error" role="alert">{{ maintenanceError }}</p>
+      <div class="remove-confirm__actions">
+        <button class="btn btn--quiet" type="button" :disabled="maintenanceBusy" @click="maintaining = null">
+          取消
+        </button>
+        <button
+          class="btn btn--primary"
+          type="button"
+          :disabled="maintenanceBusy"
+          @click="confirmMaintenance"
+        >
+          {{ maintenanceBusy ? '提交中…' : '确认复核' }}
         </button>
       </div>
     </ActionDialog>

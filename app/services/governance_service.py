@@ -1,15 +1,17 @@
 """学校配置与准入状态。配置能力与正式审批证据分开记录。"""
 
 import ipaddress
+import logging
 import re
 from typing import Any, Literal
 
 from fastapi import HTTPException
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings, tenant_config
+from app.core.constants import REVIEW_CYCLE_MAX_DAYS, REVIEW_CYCLE_MIN_DAYS, DocumentAuthority
 from app.llm.registry import get_model_registry
 from app.models.governance import ConfigRevision
 from app.models.tenant import Tenant
@@ -17,6 +19,8 @@ from app.models.user import User
 from app.schemas.governance import StrictInput
 from app.services.archive_service import archive_policy
 from app.services.member_service import _load_scoring_rules
+
+logger = logging.getLogger(__name__)
 
 
 def exact_host(value: str) -> str:
@@ -81,6 +85,19 @@ class RetentionPolicy(StrictInput):
         return self
 
 
+class SupplyRule(StrictInput):
+    """某一权威来源的供给机制（T-KB-13）
+
+    责任部门与责任人回答"谁来维护"，更新周期回答"多久复核一次"。三者必须同时
+    给出：只写周期不写责任人，到期后没人知道该找谁；只写人不写周期，机制不会
+    产生任何到期提醒。
+    """
+
+    owner_unit: str = Field(min_length=1, max_length=100)
+    owner_name: str = Field(min_length=1, max_length=50)
+    review_cycle_days: int = Field(ge=REVIEW_CYCLE_MIN_DAYS, le=REVIEW_CYCLE_MAX_DAYS)
+
+
 class GovernanceValues(StrictInput):
     registration: Approval = Field(default_factory=Approval)
     organization_approval: Approval = Field(default_factory=Approval)
@@ -94,6 +111,23 @@ class GovernanceValues(StrictInput):
         default_factory=dict
     )
     retention: RetentionPolicy = Field(default_factory=RetentionPolicy)
+    # 供给机制（T-KB-13）：按权威来源登记责任部门、责任人与更新周期。未登记
+    # 的类别不回填日程，条目仍可按元数据维护，只是没有到期提醒。
+    knowledge_supply: dict[str, SupplyRule] = Field(default_factory=dict)
+
+    @field_validator("knowledge_supply")
+    @classmethod
+    def supply_authorities(cls, values: dict[str, SupplyRule]) -> dict[str, SupplyRule]:
+        known = {item.value for item in DocumentAuthority}
+        unknown = sorted(set(values) - known)
+        if unknown:
+            raise ValueError(
+                "供给机制只能按权威来源登记（"
+                + "、".join(sorted(known))
+                + "）；无法识别的类别："
+                + "、".join(unknown)
+            )
+        return values
 
     @field_validator("scoring_weights")
     @classmethod
@@ -118,6 +152,26 @@ def default_values(config: dict[str, Any]) -> dict[str, Any]:
     return GovernanceValues.model_validate(
         {key: config[key] for key in keys if key in config}
     ).model_dump()
+
+
+async def supply_rules(db: AsyncSession, tenant_id: str) -> dict[str, dict[str, Any]]:
+    """读取租户的供给机制（T-KB-13）：权威来源 → 责任部门 / 责任人 / 更新周期
+
+    供给机制只是条目排定复核日程的依据，不是使用知识库的前提：租户未登记、
+    或配置本身已损坏时都按"没有机制"处理，绝不让知识条目入库因此失败。治理页
+    读取同一份配置时会显式报错，问题不会被悄悄掩盖。
+    """
+    tenant = (
+        await db.execute(select(Tenant).where(Tenant.id == tenant_id, Tenant.is_deleted.is_(False)))
+    ).scalar_one_or_none()
+    if tenant is None or not tenant.config:
+        return {}
+    try:
+        values = default_values(tenant.config)
+    except ValidationError:
+        logger.warning("governance_config_invalid", extra={"tenant_id": tenant_id}, exc_info=True)
+        return {}
+    return values.get("knowledge_supply") or {}
 
 
 def admission(values: dict[str, Any], archive: dict[str, Any]) -> dict[str, Any]:

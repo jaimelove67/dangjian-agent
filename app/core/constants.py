@@ -6,6 +6,7 @@
 此处独立定义是为了让 core 层（审计、权限）不依赖 ``app.llm`` 包。
 """
 
+from datetime import date
 from enum import Enum
 
 
@@ -36,6 +37,7 @@ class AuditAction(str, Enum):
     MODEL_INVOKE = "model_invoke"
     STAGE_TRANSITION = "stage_transition"
     REVIEW = "review"
+    MAINTAIN = "maintain"
 
 
 class AuditResult(str, Enum):
@@ -115,6 +117,12 @@ class DocumentReviewStatus(str, Enum):
     REJECTED = "rejected"
 
 
+# 供给机制的更新周期边界（T-KB-13）：下限一个月，避免"每周复核"退化成空转；
+# 上限十年，避免机制被写成"基本不复核"。
+REVIEW_CYCLE_MIN_DAYS = 30
+REVIEW_CYCLE_MAX_DAYS = 3650
+
+
 # 字段级敏感等级允许标注的文档元数据字段（T-DATA-05）
 SENSITIVE_FIELD_KEYS: tuple[str, ...] = (
     "title",
@@ -142,3 +150,25 @@ def is_in_force(validity: str | None) -> bool:
     有效处理，与迁移回填口径一致。
     """
     return validity in (None, "", DocumentValidity.EFFECTIVE.value)
+
+
+def is_review_due(
+    next_review_at: date | None,
+    *,
+    status: str | None,
+    validity: str | None,
+    today: date | None = None,
+) -> bool:
+    """是否已到复核期限（T-KB-13）
+
+    这是内容维护信号，**不**参与检索依据判定：到期意味着"该找责任人核对了"，
+    而不是"不能用了"。只有现行有效的条目才谈得上到期——已废止、已失效或尚未
+    生效的条目没有复核义务。
+    """
+    if next_review_at is None:
+        return False
+    if status not in (None, DocumentStatus.EFFECTIVE.value):
+        return False
+    if not is_in_force(validity):
+        return False
+    return next_review_at <= (today or date.today())

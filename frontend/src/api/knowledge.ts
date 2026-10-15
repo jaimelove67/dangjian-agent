@@ -12,7 +12,7 @@ import type {
 } from './types'
 
 /** app/api/v1/knowledge.py：列表、详情、创建和状态维护均为真实接口。 */
-export function listDocuments(params: { page?: number; page_size?: number; q?: string; status?: string; level?: string; review_status?: DocReviewStatus }): Promise<DocumentListResponse> {
+export function listDocuments(params: { page?: number; page_size?: number; q?: string; status?: string; level?: string; review_status?: DocReviewStatus; due_for_review?: boolean }): Promise<DocumentListResponse> {
   return http.get('/knowledge-docs', { params })
 }
 
@@ -74,6 +74,14 @@ export function reviewDocument(
   note?: string,
 ): Promise<DocumentResponse> {
   return http.post(`/knowledge-docs/${encodeURIComponent(docId)}/review`, { decision, note })
+}
+
+/** 登记供给复核确认：核对仍现行有效并重排下次复核日程（T-KB-13）。 */
+export function confirmDocumentMaintenance(
+  docId: string,
+  note?: string,
+): Promise<DocumentResponse> {
+  return http.post(`/knowledge-docs/${encodeURIComponent(docId)}/maintenance`, { note })
 }
 
 export interface DocumentProcessing {

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Mapping, Optional
 
 from sqlalchemy import select, update
@@ -22,6 +22,7 @@ from app.core.constants import (
     DocumentStatus,
     DocumentValidity,
     DocumentVisibility,
+    is_review_due,
 )
 from app.core.tenant import get_tenant_id
 from app.llm.base import DataLevel
@@ -31,6 +32,7 @@ from app.rag.loader import ParserRegistry, default_registry
 from app.rag.privacy import content_level
 from app.rag.splitter import ChapterArticleSplitter
 from app.rules.document_metadata import MetadataValidationError, validate_document_metadata
+from app.services.governance_service import supply_rules
 from app.utils.datetime import to_date
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,10 @@ class DocumentConflictError(Exception):
 
 class DocumentReviewError(Exception):
     """审核状态或操作非法"""
+
+
+class DocumentMaintenanceError(Exception):
+    """复核确认操作非法（例如对非现行有效条目登记复核）"""
 
 
 def default_authority(level: str) -> str:
@@ -91,6 +97,49 @@ def reopen_review(document: KnowledgeDoc) -> bool:
     document.reviewed_at = None
     document.review_note = None
     return True
+
+
+def sync_review_schedule(document: KnowledgeDoc, *, review_cycle_days: int | None) -> date | None:
+    """按更新周期排定下次复核日期（T-KB-13）
+
+    基准取「最近一次复核确认 / 内容更新」，没有复核记录时取生效日期。周期为空
+    表示该条目不受周期约束（例如未登记供给机制的参考资料），此时不排日程。
+
+    日程在排定后**不**随机制调整回溯改写：已排定的复核计划是条目级的承诺，
+    悄悄改期会让"到期"失去可追溯性；机制变更自下次复核起生效。
+    """
+    if not review_cycle_days:
+        document.next_review_at = None
+        return None
+    base = document.maintained_at.date() if document.maintained_at else document.effective_date
+    if base is None:
+        document.next_review_at = None
+        return None
+    document.next_review_at = base + timedelta(days=review_cycle_days)
+    return document.next_review_at
+
+
+def review_due(document: KnowledgeDoc, *, today: date | None = None) -> bool:
+    """是否已到复核期限（T-KB-13）
+
+    判定规则委托给 :func:`app.core.constants.is_review_due`，与出参字段同源，
+    避免列表徽标与接口字段各判一套。这只是维护信号，**不**参与检索依据判定。
+    """
+    return is_review_due(
+        document.next_review_at,
+        status=document.status,
+        validity=document.validity,
+        today=today,
+    )
+
+
+async def supply_cycle(db: AsyncSession, *, tenant_id: str, authority: str | None) -> int | None:
+    """条目所属权威来源的更新周期（天）；学校未登记该类别机制时为 None"""
+    if not tenant_id or not authority:
+        return None
+    rules = await supply_rules(db, tenant_id)
+    cycle = (rules.get(authority) or {}).get("review_cycle_days")
+    return int(cycle) if cycle else None
 
 
 async def get_document(db: AsyncSession, *, doc_id: str) -> Optional[KnowledgeDoc]:
@@ -224,6 +273,13 @@ async def create_document(
     # tags 为 ARRAY(String) 列，SQLAlchemy 类型插件将其推导为 Sequence[_T]（自由类型变量），
     # 无法用具体类型标注匹配，故在构造后通过属性赋值注入。
     setattr(document, "tags", [str(tag) for tag in metadata["tags"]])
+    # 供给机制（T-KB-13）：按权威来源带出复核周期并排定下次复核日程。
+    sync_review_schedule(
+        document,
+        review_cycle_days=await supply_cycle(
+            db, tenant_id=str(tenant_id or get_tenant_id() or ""), authority=authority
+        ),
+    )
     db.add(document)
     await db.flush()  # 触发 tenant_id 注入并取得 document.id
 
@@ -343,6 +399,13 @@ async def replace_document_content(
     # 放行新内容（T-KB-12）。
     if reopen_review(document):
         logger.info("knowledge_document_review_reopened", extra={"doc_id": doc_id})
+    # 正文更新即一次复核确认（T-KB-13）：法规修订后同步更新知识库，日程以本次
+    # 更新为基准重排，而不是继续沿用旧内容的到期日。
+    document.maintained_at = datetime.utcnow()
+    sync_review_schedule(
+        document,
+        review_cycle_days=await supply_cycle(db, tenant_id=tenant_id, authority=document.authority),
+    )
     await db.flush()
     return document, len(chunks), revision
 
@@ -375,6 +438,75 @@ async def delete_document(db: AsyncSession, *, doc_id: str, tenant_id: str) -> K
         .values(is_deleted=True)
     )
     await db.flush()
+    return document
+
+
+async def confirm_maintenance(
+    db: AsyncSession,
+    *,
+    doc_id: str,
+    tenant_id: str,
+    reviewer_id: str,
+    note: Optional[str] = None,
+) -> KnowledgeDoc:
+    """登记一次复核确认（T-KB-13）
+
+    确认人已核对条目仍然现行有效，或已随法规修订同步更新。确认时间成为下次复核
+    日程的基准；下一次的周期按**当前**供给机制计算，因此机制调整自下次复核生效，
+    已排定的日程不被回溯改写。
+
+    Args:
+        db: 数据库会话
+        doc_id: 文档标识
+        tenant_id: 归属租户
+        reviewer_id: 复核人（账号 id，用于日志与审计）
+        note: 复核说明（写入审计，不落库到条目）
+
+    Returns:
+        更新后的文档对象
+
+    Raises:
+        DocumentNotFoundError: 文档不存在
+        DocumentMaintenanceError: 对非现行有效条目登记复核
+    """
+    document = (
+        await db.execute(
+            select(KnowledgeDoc)
+            .where(
+                KnowledgeDoc.doc_id == doc_id,
+                KnowledgeDoc.tenant_id == tenant_id,
+                KnowledgeDoc.is_deleted.is_(False),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if document is None:
+        raise DocumentNotFoundError("文档不存在")
+    if (
+        document.status != DocumentStatus.EFFECTIVE.value
+        or document.validity != DocumentValidity.EFFECTIVE.value
+    ):
+        raise DocumentMaintenanceError(
+            "该条目当前不是现行有效，无需复核；如已恢复效力，请先更新效力状态"
+        )
+    document.maintained_at = datetime.utcnow()
+    sync_review_schedule(
+        document,
+        review_cycle_days=await supply_cycle(db, tenant_id=tenant_id, authority=document.authority),
+    )
+    await db.flush()
+
+    logger.info(
+        "knowledge_document_maintained",
+        extra={
+            "doc_id": doc_id,
+            "tenant_id": tenant_id,
+            "reviewer_id": reviewer_id,
+            "next_review_at": str(document.next_review_at),
+            "note": note,
+        },
+    )
     return document
 
 

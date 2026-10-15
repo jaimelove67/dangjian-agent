@@ -229,6 +229,8 @@ def document_for_patch():
         reviewed_at=None,
         review_note=None,
         field_levels=None,
+        maintained_at=None,
+        next_review_at=None,
         doc_metadata={"org_unit_id": "branch-a"},
     )
 
