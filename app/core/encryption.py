@@ -16,6 +16,22 @@ from app.core.config import settings
 MAGIC = b"DJAE1\n"
 
 
+def filesystem_path(path: Path) -> Path:
+    """返回用于实际系统调用的路径；Windows 上超过 MAX_PATH(260) 时加 ``\\\\?\\`` 前缀。
+
+    仅用于读写/建删等系统调用，逻辑判断（relative_to、路径包含）仍用原 Path，
+    这样长路径（长存储根 + 内容寻址文件名）不会在发布阶段静默失败。
+    """
+    if os.name != "nt":
+        return path
+    text = str(path)
+    if text.startswith("\\\\?\\") or not path.is_absolute():
+        return path
+    if text.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + text[2:])
+    return Path("\\\\?\\" + text)
+
+
 class EncryptionError(ValueError):
     pass
 
@@ -71,17 +87,19 @@ def unseal(content: bytes, purpose: str) -> bytes:
 
 def atomic_write(path: Path, value: bytes, *, replace: bool = False) -> None:
     """完整写入并fsync后原子发布，只生成加密的同目录临时文件。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".part")
+    filesystem_path(path.parent).mkdir(parents=True, exist_ok=True)
+    # 临时名保持定长且极短：目标名本身已接近 Windows MAX_PATH，再拼 38 个字符会直接失败。
+    temporary = path.with_name("." + uuid.uuid4().hex[:12] + ".part")
+    raw_temporary = filesystem_path(temporary)
     try:
-        with temporary.open("xb") as stream:
+        with raw_temporary.open("xb") as stream:
             stream.write(value)
             stream.flush()
             os.fsync(stream.fileno())
         if replace:
-            os.replace(temporary, path)
+            os.replace(raw_temporary, filesystem_path(path))
         else:
-            os.link(temporary, path)
+            os.link(raw_temporary, filesystem_path(path))
     finally:
-        if temporary.exists():
-            temporary.unlink()
+        if raw_temporary.exists():
+            raw_temporary.unlink()

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
-from app.core.encryption import MAGIC, EncryptionError, atomic_write, seal, unseal
+from app.core.encryption import MAGIC, EncryptionError, atomic_write, filesystem_path, seal, unseal
 
 
 def validate_identifier(value: str) -> None:
@@ -74,12 +74,12 @@ def save_original(
     digest = hashlib.sha256(content).hexdigest()
     path = original_path(tenant_id, doc_id, revision, digest)
     relative = path.relative_to(storage_root())
-    path.parent.mkdir(parents=True, exist_ok=True)
+    filesystem_path(path.parent).mkdir(parents=True, exist_ok=True)
     encrypted = seal(content, file_purpose(relative))
     try:
         atomic_write(path, encrypted)
     except FileExistsError:
-        if authenticated_content(path.read_bytes(), relative) != content:
+        if authenticated_content(filesystem_path(path).read_bytes(), relative) != content:
             raise EncryptionError("已发布原件完整性校验失败") from None
     return {
         "path": relative.as_posix(),
@@ -98,24 +98,28 @@ def read_original(
     path = (
         original_path(tenant_id, doc_id, revision, expected_sha256) if expected_sha256 else legacy
     )
-    if not path.exists():
+    if not filesystem_path(path).exists():
         path = legacy
-    if not path.exists() and expected_sha256 is None and legacy.parent.exists():
+    if (
+        not filesystem_path(path).exists()
+        and expected_sha256 is None
+        and filesystem_path(legacy.parent).exists()
+    ):
         prefix = f"{doc_id}__v{revision}__h"
         choices = [
-            item
-            for item in legacy.parent.iterdir()
+            legacy.parent / item.name
+            for item in filesystem_path(legacy.parent).iterdir()
             if item.name.startswith(prefix) and item.suffix == ".bin"
         ]
         if len(choices) > 1:
             raise EncryptionError("该版本存在多个未登记产物，读取必须提供登记校验值")
         if choices:
             path = choices[0]
-    if not path.exists():
+    if not filesystem_path(path).exists():
         return None
     if path.resolve() != path:
         raise ValueError("原件存储路径不能经过符号链接")
-    raw = path.read_bytes()
+    raw = filesystem_path(path).read_bytes()
     if raw.startswith(MAGIC):
         content = authenticated_content(raw, path.relative_to(storage_root()))
     elif settings.ENV != "production" or settings.ALLOW_LEGACY_PLAINTEXT_FILES:

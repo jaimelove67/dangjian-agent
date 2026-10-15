@@ -274,7 +274,9 @@ async def create_knowledge_document(
     except OSError:
         if settings.ENV == "production":
             raise HTTPException(503, "加密原件保存失败，入库未提交") from None
-        logger.warning("original_file_save_failed", extra={"doc_id": doc_id})
+        # 非生产环境不阻断入库，但必须留下可诊断的堆栈：否则原件静默缺失，
+        # 直到用户点"下载原件"才以 404 暴露，且现场已无从查证。
+        logger.warning("original_file_save_failed", extra={"doc_id": doc_id}, exc_info=True)
     await db.commit()
     return APIResponse(
         data=DocumentCreateResponse(
@@ -424,7 +426,9 @@ async def replace_knowledge_content(
     except OSError:
         if settings.ENV == "production":
             raise HTTPException(503, "加密原件保存失败，更新未提交") from None
-        logger.warning("original_file_save_failed", extra={"doc_id": doc_id})
+        # 非生产环境不阻断入库，但必须留下可诊断的堆栈：否则原件静默缺失，
+        # 直到用户点"下载原件"才以 404 暴露，且现场已无从查证。
+        logger.warning("original_file_save_failed", extra={"doc_id": doc_id}, exc_info=True)
     await db.commit()
     return APIResponse(
         data=DocumentCreateResponse(
