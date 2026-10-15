@@ -1,0 +1,106 @@
+name: Role UI regression
+
+# 菜单显隐与真实权限必须一致：不能出现「点进去才 403」，也不能出现某个角色
+# 看不到自己该有的入口。权限或导航改动后由此工作流把关。
+on:
+  push:
+    branches: [master, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: role-ui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  roles:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: role_ui_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_ci_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d role_ui_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ENV: testing
+      DATABASE_URL: postgresql+asyncpg://postgres:isolated_ci_only@127.0.0.1:5432/role_ui_ci
+      REDIS_URL: redis://127.0.0.1:6379/3
+      JOB_WORKER_ENABLED: 'false'
+      DASHSCOPE_API_KEY: ''
+      FILE_STORAGE_DIR: ${{ github.workspace }}/tmp/ci-originals
+      AUDIT_SPOOL_DIR: ${{ github.workspace }}/tmp/ci-audit
+      PARTY_PASSWORD: Test123456
+      PARTY_BASE_URL: http://127.0.0.1:5666
+      VITE_API_TARGET: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Prepare report directory
+        run: mkdir -p tmp/role-ui
+      - name: Clean hash-locked install
+        run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Frontend dependencies and browser
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Prepare isolated database and synthetic accounts
+        run: |
+          python -m alembic upgrade head
+          python scripts/dev_bootstrap.py --password "$PARTY_PASSWORD" --with-sample-roles
+          python scripts/seed_member_profiles.py --tenant TEST_TENANT --org-unit-id TEST_BRANCH
+      - name: Start backend
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
+            > tmp/role-ui/backend.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/api/v1/health/live >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "backend did not become live"; tail -n 80 tmp/role-ui/backend.log; exit 1
+      - name: Seed knowledge documents
+        run: python scripts/seed_knowledge_docs.py --username test-reviewer --password "$PARTY_PASSWORD"
+      - name: Start frontend
+        working-directory: frontend
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 --port 5666 --strictPort > ../tmp/role-ui/frontend.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5666/login >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "frontend did not become ready"; tail -n 80 ../tmp/role-ui/frontend.log; exit 1
+      - name: Role and route regression
+        run: node frontend/scripts/check-roles-ui.mjs 2>&1 | tee tmp/role-ui/report.txt
+      - name: Dump server logs on failure
+        if: failure()
+        run: |
+          echo '--- backend ---'; tail -n 200 tmp/role-ui/backend.log || true
+          echo '--- frontend ---'; tail -n 200 tmp/role-ui/frontend.log || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: role-ui-report
+          path: tmp/role-ui/
+          retention-days: 14
+          if-no-files-found: warn
