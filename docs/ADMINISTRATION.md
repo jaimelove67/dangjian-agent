@@ -1,6 +1,6 @@
 # 管理与党员自助指南
 
-更新日期：2026-10-11。依据本次与主分支的文档合并结果；操作前按[运行指南](RUNNING.md)准备环境并迁移至 `012_member_self`。本次仅合并文档，没有部署或升级业务库。
+更新日期：2026-10-15。依据本次与主分支的文档合并结果；操作前按[运行指南](RUNNING.md)准备环境并迁移至 `013_notification_delivery`。涉及迁移的部署需先执行 `alembic upgrade head`。
 
 ## 主分支当前管理入口
 
@@ -18,6 +18,20 @@
 已有平台管理员从“系统→创建账号”开户。学校/院系管理员分别绑定学校/院系；支部书记、组织员、普通党员及申请人绑定支部。用户名全局唯一，重复返回冲突；密码至少8字符且不超过72个UTF-8字节，创建结果不返回密码明文。普通党员开户后还需组织人员关联本人档案。
 
 开户接口为 `POST /api/v1/admin/users`，组织选项为 `GET /api/v1/admin/org-units`。该接口只注册一次：同一方法+路径出现两个处理函数时，后注册的那个会被静默遮蔽，权限判定随注册顺序变化。治理模块的“组织与账号”页对学校/院系管理员只提供组织维护与既有账号维护，新增账号与登记租户在服务端仅限平台系统管理员，界面同样不对其他角色显示这两个入口。本指南不提供默认管理员密码，也不以删表脚本处理初始化问题。
+
+## 对外通知渠道
+
+站内提醒与外部通知共用同一条“事件→渠道”链路，已登记事件为 `member_reminder`、`assessment_reminder`、`member_stage_transition`、`meeting_archived`、`assessment_completed`、`channel_self_test`。渠道实现只需登记即可接入；出厂登记的站内渠道 `inapp` 把投递记录直接作为用户可见提醒，不产生任何外部调用。
+
+系统默认**不投递任何消息**：`NOTIFICATION_ROUTES` 为空即不外发；按事件配置渠道后才投递，例如：
+
+```bash
+NOTIFICATION_ROUTES={"member_stage_transition": ["inapp"]}
+```
+
+单渠道投递失败最多重试 `NOTIFICATION_MAX_ATTEMPTS` 次（默认 3），退避基数为 `NOTIFICATION_BACKOFF_SECONDS`（默认 2 秒，设 0 表示不等待）。同一 `(租户, 去重键, 渠道)` 只投递一次：补偿扫描与重复请求命中台账去重，不重复外发、也不重复写审计；重试用尽后保留失败分类（如 `delivery_failed:TimeoutError`），不记录渠道异常原文、凭据或正文。
+
+治理页「运行审计」展示渠道清单（含“未配置（不投递）”状态）、事件路由与投递台账；具备 `config.manage` 的角色可“发起渠道自检”，确认动作与投递结果都进审计。接口为 `GET /api/v1/admin/notification-channels`、`GET /api/v1/admin/notification-deliveries` 与 `POST /api/v1/admin/notifications/dispatch`（后者需 `config.manage`）。企业微信、邮件等外部渠道尚未实现：凭据与主机补齐后按同一渠道协议登记即可接入，未配置的渠道不参与投递。
 
 ## 本人档案与私有材料
 

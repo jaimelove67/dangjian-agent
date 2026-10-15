@@ -169,6 +169,18 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 
 开户复用现有用户表，无新增数据库迁移。未在业务库创建实际账号，未执行生产部署、真实 PostgreSQL 并发或负载测试；正式租户/组织与真实账号人工验收仍需完成。
 
+## 对外通知渠道抽象层回归
+
+2026-10-15，新增 `013_notification_delivery` 迁移、`app/services/notifications.py`（事件→渠道协议、登记表、去重/重试/审计）以及治理页「运行审计」的通知渠道与投递台账区块。
+
+- `tests/integration/test_notifications.py`：7 项通过。使用一次性 PostgreSQL 库并 `alembic upgrade head`（顺带验证 `013` 真的建表），外部渠道由假发送器代替，不依赖任何凭据；覆盖默认不外发、站内渠道按路由投递、同键重放不重复外发、失败重试到成功、重试用尽保留失败分类且不抛异常、未登记与未配置渠道一律留痕、按内容派生去重键。
+- `tests/integration/test_db_migration.py` 新增用例断言库版本等于由迁移脚本推导的 head：此前就绪探针把期望版本写死为 `012_member_self`，新增迁移会让 `/health/ready` 永久 503，故障表现与真实原因完全错位。
+- 与 `tests/integration/test_module6_http.py`、`tests/integration/test_admin_accounts.py`、`tests/integration/test_module6_governance.py`、`tests/unit/test_module6_security_ops.py`、`tests/security/test_permission.py` 一并执行：全部通过。
+- `node frontend/scripts/check-roles-ui.mjs`（7 个角色）通过：具备 `ops.query` 的角色能在「运行审计」看到渠道 `inapp`、路由与投递台账并带「发起渠道自检」，其他角色连标签都不出现。
+- 开发库端到端手工核对：`POST /api/v1/admin/notifications/dispatch` 对站内渠道返回 `sent`（尝试 1 次），对未登记渠道返回 `failed/unknown_channel` 并留下台账与审计；普通党员访问三个通知接口均为 403。
+
+未覆盖：企业微信/邮件等外部渠道尚无实现与凭据，未做真实外发验收，也未做多副本投递协调。
+
 ## 本地扩展证据与主分支区分
 
 文档分支所引用的 `admin-workspace-isolated.xml`（179项、0失败/错误/跳过）与 `admin-workspace-backend.xml`（205项、30项准备错误）属于未合入的本地管理员工作台扩展，不能套用到本次主分支合并结果；各范围有重复用例，不累加为通过总数。原先开户43项及相关91项记录保留其原始范围。
