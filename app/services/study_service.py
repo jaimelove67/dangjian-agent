@@ -2,7 +2,7 @@
 
 from datetime import date
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import yaml
 from fastapi import HTTPException
@@ -35,18 +35,9 @@ from app.services.meeting_service import (
 )
 from app.services.org_scope import visible_org_units
 from app.services.study_materials import recommend_sources, selected_sources, visible_sources
+from app.utils.snapshot import record_snapshot as row_data
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "config" / "study_templates.yaml"
-
-
-def row_data(record: Any) -> dict[str, Any]:
-    """版本快照保留真实字段；不保存 SQLAlchemy 内部状态。"""
-    return cast(
-        dict[str, Any],
-        jsonable_encoder(
-            {column.key: getattr(record, column.key) for column in record.__table__.columns}
-        ),
-    )
 
 
 class StudyService:

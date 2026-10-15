@@ -5,7 +5,7 @@
 """
 
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 import yaml
 from fastapi import HTTPException
@@ -40,6 +40,7 @@ from app.schemas.member_ext import (
     VoteBatch,
 )
 from app.services.org_scope import visible_org_units
+from app.utils.snapshot import record_snapshot as row_data
 
 DECISION_BOUNDARY = "阶段流转仅由人工操作完成；辅助结果不构成组织认定或选拔结论。"
 BATCH_RULES_PATH = "config/business_rules.yaml"
@@ -825,15 +826,6 @@ class MemberDevelopment:
             "by_stage": {stage: count for stage, count in stages},
             "total": await self.db.scalar(select(func.count(MemberProfile.id)).where(*conditions)),
         }
-
-
-def row_data(record: Any) -> dict[str, Any]:
-    return cast(
-        dict[str, Any],
-        jsonable_encoder(
-            {column.key: getattr(record, column.key) for column in record.__table__.columns}
-        ),
-    )
 
 
 def _has_evidence_markers(text: str) -> bool:

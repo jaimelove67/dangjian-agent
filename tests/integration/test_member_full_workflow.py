@@ -177,6 +177,8 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
         assert listed["items"] and all(
             item["review_status"] == "pending" for item in listed["items"]
         )
+        # 材料二进制不得进入响应，也不得因延迟列懒加载而 500。
+        assert all("content" not in item for item in listed["items"])
         for item in listed["items"]:
             if not item.get("legacy_material"):
                 await ok(
