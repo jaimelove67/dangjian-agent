@@ -1130,8 +1130,11 @@ async function submitUpload(): Promise<void> {
 }
 
 /* ---------------------------- 表格 -------------------------------- */
+/* 用 max-height 把表格限制在一屏内（表头粘性），但必须允许滚动：此前写成
+   overflow: hidden，条目超过容器高度后多出来的行既没有滚动条也无法用滚轮到达，
+   用户会以为列表只有这么多条。窄屏下同一处还依赖滚动才能看到右侧的「操作」列。 */
 .table-wrap {
-  overflow: hidden;
+  overflow: auto;
   max-height: calc(100dvh - 320px);
 }
 
