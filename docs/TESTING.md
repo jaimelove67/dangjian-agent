@@ -61,6 +61,16 @@ python -m pytest --basetemp="$env:TEMP\pytest-bt"
 这一错误发生在 setup 阶段，会把用例直接吞成 ERROR，并顺势掩盖同一批文件里真实的断言失败。
 先绕开它、再解读结果，否则"31 个错误"之类的数字并不能说明代码有问题。
 
+### 排障：本地全量测试的连接数会爬升并顶穿 max_connections
+
+`tests/conftest.py` 会在导入应用之前把 `ENV` 默认为 `testing`，以对齐应用引擎的连接策略：
+`app/db/session.py` 仅在 `ENV=testing` 时使用 `NullPool`，其余情况走连接池，而 pytest 每个
+用例使用独立的事件循环，池化连接会跨已关闭的循环泄漏。此前本地 `.env` 的
+`ENV=development` 会让全量测试的连接数持续爬升，最终顶穿 Postgres 的 `max_connections`
+（实测峰值 104 / 上限 100，失败清一色是 `asyncpg.exceptions.TooManyConnectionsError`，
+且会把真实的断言失败一起掩盖——单跑每个失败用例都能过）。想显式覆盖该默认值，导出 `ENV`
+即可（`$env:ENV="development"; python -m pytest ...`），但那样请自行留意连接数。
+
 ## 生成测试产物
 
 ```bash
