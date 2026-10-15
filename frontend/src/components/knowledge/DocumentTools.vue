@@ -10,9 +10,13 @@ import {
 } from '@/api/knowledge'
 import {
   DATA_LEVEL_LABELS,
+  DOC_AUTHORITY_LABELS,
   DOC_LEVEL_LABELS,
+  DOC_VALIDITY_LABELS,
   DOC_VISIBILITY_LABELS,
+  type DocAuthority,
   type DocumentResponse,
+  type DocValidity,
 } from '@/api/types'
 import ErrorState from '@/components/ErrorState.vue'
 import { session } from '@/stores/session'
@@ -41,6 +45,8 @@ const meta = reactive({
   level: 'school' as DocumentResponse['level'],
   visibility: 'school' as DocumentResponse['visibility'],
   security_level: 'internal' as DocumentResponse['security_level'],
+  authority: 'reference' as DocAuthority,
+  validity: 'effective' as DocValidity,
   effective_date: '',
   expiration_date: '',
   tags: '',
@@ -130,6 +136,8 @@ async function save(): Promise<void> {
       level: meta.level,
       visibility: meta.visibility,
       security_level: meta.security_level,
+      authority: meta.authority,
+      validity: meta.validity,
       effective_date: meta.effective_date,
       expiration_date: meta.expiration_date || null,
       tags: meta.tags.trim(),
@@ -266,6 +274,22 @@ async function save(): Promise<void> {
             </select></label
           >
           <label class="wb-field"
+            ><span>权威来源</span
+            ><select v-model="meta.authority" class="select">
+              <option v-for="(label, key) in DOC_AUTHORITY_LABELS" :key="key" :value="key">
+                {{ label }}
+              </option>
+            </select></label
+          >
+          <label class="wb-field"
+            ><span>效力状态</span
+            ><select v-model="meta.validity" class="select">
+              <option v-for="(label, key) in DOC_VALIDITY_LABELS" :key="key" :value="key">
+                {{ label }}
+              </option>
+            </select></label
+          >
+          <label class="wb-field"
             ><span>生效日期</span
             ><input v-model="meta.effective_date" class="input" type="date" required
           /></label>
@@ -290,7 +314,9 @@ async function save(): Promise<void> {
           ><span>修正理由</span
           ><textarea v-model="meta.reason" class="textarea" rows="2" maxlength="2000" required />
         </label>
-        <p class="u-meta">公共库、组织范围和密级变更会再次核验权限与正文分级。</p>
+        <p class="u-meta">
+          公共库、组织范围和密级变更会再次核验权限与正文分级；参考资料与非现行有效内容不会被问答当作依据。
+        </p>
         <div class="wb-actions">
           <button class="btn btn--primary" type="submit" :disabled="!!busy || !meta.reason.trim()">
             {{ busy === 'metadata' ? '保存中…' : '保存元数据' }}

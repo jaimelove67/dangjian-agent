@@ -193,6 +193,7 @@ class Permission(str, Enum):
     QA_ASK = "qa.ask"  # 知识问答：登录用户
     KNOWLEDGE_QUERY = "knowledge.query"  # 知识库查询；普通党员仅通过制度问答检索
     KNOWLEDGE_MANAGE = "knowledge.manage"  # 知识库维护：院系级及以上管理员
+    KNOWLEDGE_REVIEW = "knowledge.review"  # 公共库内容审核发布：学校级及以上管理员
     MEMBER_QUERY = "member.query"  # 党员发展查询：支部书记及以上
     SELF_QUERY = "member.self_query"  # 普通党员查询本人档案和材料
     MATERIAL_SUBMIT = "member.material_submit"  # 普通党员提交本人材料
@@ -253,6 +254,7 @@ _MANAGER_PERMISSIONS = frozenset(
         Permission.QA_ASK,
         Permission.KNOWLEDGE_QUERY,
         Permission.KNOWLEDGE_MANAGE,
+        Permission.KNOWLEDGE_REVIEW,
         Permission.MEMBER_QUERY,
         Permission.STAGE_TRANSITION,
         Permission.SCORING,

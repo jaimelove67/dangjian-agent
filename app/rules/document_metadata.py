@@ -6,7 +6,9 @@
 - 涉密材料不入向量库（validation 结果携带 ``embedding_allowed``）；
 - 中央级文件必须标注公开密级；
 - 层级 / 可见范围 / 保密级别 / 状态取值必须合法；
-- 失效日期不得早于生效日期。
+- 失效日期不得早于生效日期；
+- 权威来源与效力状态取值必须合法（T-DATA-05）；
+- 字段级敏感等级只能标注已知字段，且不得高于文档密级（T-DATA-05）。
 """
 
 from __future__ import annotations
@@ -15,7 +17,15 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Mapping, Optional
 
-from app.core.constants import DataLevel, DocumentLevel, DocumentStatus, DocumentVisibility
+from app.core.constants import (
+    SENSITIVE_FIELD_KEYS,
+    DataLevel,
+    DocumentAuthority,
+    DocumentLevel,
+    DocumentStatus,
+    DocumentValidity,
+    DocumentVisibility,
+)
 
 REQUIRED_FIELDS: tuple[str, ...] = (
     "doc_id",
@@ -117,6 +127,38 @@ def validate_document_metadata(data: Mapping[str, Any]) -> MetadataValidationRes
     status = data.get("status")
     if not _is_missing(status) and status not in status_values:
         errors.append(f"文件状态非法: {status}")
+
+    authority_values = {e.value for e in DocumentAuthority}
+    authority = data.get("authority")
+    if not _is_missing(authority) and authority not in authority_values:
+        errors.append(f"权威来源非法: {authority}（应为 {'/'.join(sorted(authority_values))}）")
+
+    validity_values = {e.value for e in DocumentValidity}
+    validity = data.get("validity")
+    if not _is_missing(validity) and validity not in validity_values:
+        errors.append(f"效力状态非法: {validity}（应为 {'/'.join(sorted(validity_values))}）")
+
+    # 字段级敏感等级：只能标注已知字段，且不得高于文档密级（密级是条目上限）。
+    field_levels = data.get("field_levels")
+    if field_levels is not None:
+        if not isinstance(field_levels, Mapping):
+            errors.append("字段级敏感等级必须是「字段名: 等级」的对象")
+        else:
+            data_order = [level.value for level in DataLevel]
+            ceiling = data_order.index(security) if security in data_order else len(data_order) - 1
+            for field, value in field_levels.items():
+                if field not in SENSITIVE_FIELD_KEYS:
+                    errors.append(
+                        f"字段级敏感等级含未知字段: {field}"
+                        f"（可用 {'/'.join(SENSITIVE_FIELD_KEYS)}）"
+                    )
+                if value not in data_order:
+                    errors.append(f"字段 {field} 的敏感等级非法: {value}")
+                elif data_order.index(value) > ceiling:
+                    errors.append(
+                        f"字段 {field} 标注为 {value}，高于文档密级 {security}；"
+                        "请上调文档密级或降低字段标注"
+                    )
 
     # 日期
     effective = _coerce_date(data.get("effective_date"))

@@ -222,6 +222,13 @@ def document_for_patch():
         status="effective",
         tags=["test"],
         summary="policy",
+        authority="school_policy",
+        validity="effective",
+        review_status="published",
+        reviewed_by=None,
+        reviewed_at=None,
+        review_note=None,
+        field_levels=None,
         doc_metadata={"org_unit_id": "branch-a"},
     )
 

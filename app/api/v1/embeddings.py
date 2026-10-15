@@ -78,9 +78,13 @@ async def embed_chunks(
     data_level = body.data_level or DataLevel.INTERNAL
     require_cloud_eligible(data_level)
 
-    # 创建向量化服务
+    # 创建向量化服务。向量化属维护操作：待审内容也要生成向量，
+    # 审核通过后才能立即被检索到（T-KB-12）。
     embedding_service = EmbeddingService(
-        db, data_level=data_level, tenant_id=tenant_id, access_filters=knowledge_filters(user)
+        db,
+        data_level=data_level,
+        tenant_id=tenant_id,
+        access_filters=knowledge_filters(user, include_unpublished=True),
     )
 
     # 执行向量化
@@ -141,9 +145,12 @@ async def embed_all_pending(
     dl = data_level or DataLevel.INTERNAL
     require_cloud_eligible(dl)
 
-    # 创建向量化服务
+    # 创建向量化服务（同上传接口：维护操作需覆盖待审内容）
     embedding_service = EmbeddingService(
-        db, data_level=dl, tenant_id=tenant_id, access_filters=knowledge_filters(user)
+        db,
+        data_level=dl,
+        tenant_id=tenant_id,
+        access_filters=knowledge_filters(user, include_unpublished=True),
     )
 
     # 执行向量化

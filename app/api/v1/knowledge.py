@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date as date_type
 from typing import Any
@@ -34,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.audit import audit_operation
 from app.core.config import settings
+from app.core.constants import DocumentStatus, DocumentValidity
 from app.core.security import BS_ALL, Permission, get_role_profile, has_permission
 from app.db.session import get_db
 from app.deps import get_current_tenant, require_permissions
@@ -54,16 +56,20 @@ from app.schemas.knowledge import (
     DocumentCreateResponse,
     DocumentListResponse,
     DocumentResponse,
+    DocumentReviewRequest,
     DocumentStatusUpdate,
 )
 from app.services.file_store import read_original, save_original, validate_identifier
 from app.services.knowledge_service import (
     DocumentConflictError,
     DocumentNotFoundError,
+    DocumentReviewError,
     change_document_status,
     create_document,
     delete_document,
+    reopen_review,
     replace_document_content,
+    review_document,
 )
 from app.services.org_scope import accessible_org_units
 
@@ -73,6 +79,12 @@ logger = logging.getLogger(__name__)
 # 入库 / 维护需要"院系级及以上管理员"权限
 _require_manage = require_permissions(Permission.KNOWLEDGE_MANAGE)
 _require_query = require_permissions(Permission.KNOWLEDGE_QUERY)
+# 公共库内容审核发布：知识库审核权限（T-KB-12）
+_require_knowledge_review = require_permissions(Permission.KNOWLEDGE_REVIEW)
+_AUTHORITY_PATTERN = (
+    "^(party_constitution|party_regulation|superior_document|school_policy|reference)$"
+)
+_VALIDITY_PATTERN = "^(effective|pending|superseded|repealed)$"
 
 
 class KnowledgeSearch(BaseModel):
@@ -137,6 +149,32 @@ def _split_tags(raw: str) -> list[str]:
     return [tag.strip() for tag in normalized.split(",") if tag.strip()]
 
 
+def _parse_field_levels(raw: str | None) -> dict[str, str] | None:
+    """解析字段级敏感等级 JSON（T-DATA-05）；空值表示不标注。
+
+    取值合法性（字段名、等级、与文档密级的关系）统一由元数据校验规则负责，
+    这里只负责拒绝无法解析的报文。
+    """
+    if raw is None or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": ErrorCode.BUSINESS_ERROR,
+                "message": f"字段级敏感等级不是合法 JSON: {exc}",
+            },
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": ErrorCode.BUSINESS_ERROR, "message": "字段级敏感等级必须是 JSON 对象"},
+        )
+    return {str(key): value for key, value in parsed.items()}
+
+
 @router.post(
     "/knowledge-docs",
     response_model=APIResponse[DocumentCreateResponse],
@@ -157,6 +195,15 @@ async def create_knowledge_document(
     tags: str = Form(..., description="主题标签，逗号分隔"),
     security_level: str = Form("public", description="public/internal/sensitive/classified"),
     expiration_date: str | None = Form(None, description="YYYY-MM-DD，空表示长期有效"),
+    authority: str = Form(
+        "", description="权威来源：党章/党内法规/上级文件/学校制度/参考资料；空=按层级推定"
+    ),
+    validity: str = Form(
+        "effective", description="效力状态：effective/pending/superseded/repealed"
+    ),
+    field_levels: str | None = Form(
+        None, description='字段级敏感等级 JSON，如 {"summary":"internal"}'
+    ),
     doc_status: str = Form("effective", alias="status", description="effective/expired/abolished"),
     doc_number: str | None = Form(None),
     summary: str | None = Form(None),
@@ -204,9 +251,14 @@ async def create_knowledge_document(
         "effective_date": effective_date,
         "expiration_date": expiration_date,
         "status": doc_status,
+        "authority": authority or None,
+        "validity": validity,
+        "field_levels": _parse_field_levels(field_levels),
         "tags": _split_tags(tags),
         "summary": summary,
         "org_unit_id": user.org_unit_id,
+        # 供给责任人（T-KB-13）：记录入库账号，便于内容维护与审核追溯。
+        "uploaded_by": str(user.id),
     }
 
     try:
@@ -297,11 +349,13 @@ async def list_knowledge_documents(
     q: str = Query("", max_length=200),
     doc_status: str | None = Query(None, alias="status"),
     level: str | None = Query(None),
+    review_status: str | None = Query(None, description="pending/published/rejected（需维护权限）"),
     user: User = Depends(_require_query),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[DocumentListResponse]:
-    filters = knowledge_filters(user, include_expired=True)
-    filters["include_future"] = has_permission(user.role, Permission.KNOWLEDGE_MANAGE)
+    can_manage = has_permission(user.role, Permission.KNOWLEDGE_MANAGE)
+    filters = knowledge_filters(user, include_expired=True, include_unpublished=can_manage)
+    filters["include_future"] = can_manage
     stmt = apply_knowledge_access(select(KnowledgeDoc), filters, chunks=False)
     if q.strip():
         stmt = stmt.where(
@@ -314,6 +368,11 @@ async def list_knowledge_documents(
         )
     if level:
         stmt = stmt.where(KnowledgeDoc.level == level)
+    if review_status:
+        # 待审队列只对维护人员开放，否则未发布内容会经列表页泄露给普通党员。
+        if not can_manage:
+            raise HTTPException(status_code=403, detail="无权查看审核状态筛选结果")
+        stmt = stmt.where(KnowledgeDoc.review_status == review_status)
     counts_query = stmt.with_only_columns(KnowledgeDoc.status, func.count()).group_by(
         KnowledgeDoc.status
     )
@@ -350,8 +409,9 @@ async def list_knowledge_documents(
 async def _readable_document(
     db: AsyncSession, user: User, doc_id: str, *, lock: bool = False
 ) -> KnowledgeDoc | None:
-    filters = knowledge_filters(user, include_expired=True)
-    filters["include_future"] = has_permission(user.role, Permission.KNOWLEDGE_MANAGE)
+    can_manage = has_permission(user.role, Permission.KNOWLEDGE_MANAGE)
+    filters = knowledge_filters(user, include_expired=True, include_unpublished=can_manage)
+    filters["include_future"] = can_manage
     stmt = apply_knowledge_access(select(KnowledgeDoc), filters, chunks=False).where(
         KnowledgeDoc.doc_id == doc_id
     )
@@ -519,6 +579,68 @@ async def update_knowledge_document_status(
     )
 
 
+@router.post(
+    "/knowledge-docs/{doc_id}/review",
+    response_model=APIResponse[DocumentResponse],
+    summary="审核发布公共库内容",
+    description=(
+        "公共可见内容入库后为待审，批准后才进入检索范围；退回须填写审核意见。"
+        "审核留痕记录审核人、时间与意见（T-KB-12）。"
+    ),
+    tags=["知识库"],
+)
+async def review_knowledge_document(
+    doc_id: str,
+    body: DocumentReviewRequest,
+    request: Request,
+    user: User = Depends(_require_knowledge_review),
+    tenant_id: str = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[DocumentResponse]:
+    """审核公共库内容：批准发布或退回修正"""
+    try:
+        document = await review_document(
+            db,
+            doc_id=doc_id,
+            tenant_id=tenant_id,
+            decision=body.decision,
+            reviewer_id=str(user.id),
+            note=body.note,
+        )
+    except DocumentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": ErrorCode.NOT_FOUND, "message": str(exc)},
+        ) from exc
+    except DocumentReviewError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": ErrorCode.BUSINESS_ERROR, "message": str(exc)},
+        ) from exc
+
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="review",
+        resource_type="knowledge_doc",
+        resource_id=str(document.id),
+        data_level=document.security_level,
+        new_value={
+            "decision": body.decision,
+            "review_status": document.review_status,
+            "note": document.review_note,
+        },
+    )
+    await db.commit()
+    return APIResponse(
+        data=DocumentResponse.from_document(document),
+        trace_id=_trace_id(request),
+    )
+
+
 @router.delete(
     "/knowledge-docs/{doc_id}",
     response_model=APIResponse[DocumentResponse],
@@ -606,6 +728,11 @@ class DocumentMetadataPatch(BaseModel):
     level: str | None = Field(None, pattern="^(central|provincial|school|department)$")
     visibility: str | None = Field(None, pattern="^(public|school|department|branch)$")
     security_level: str | None = Field(None, pattern="^(public|internal|sensitive|classified)$")
+    authority: str | None = Field(None, pattern=_AUTHORITY_PATTERN)
+    validity: str | None = Field(None, pattern=_VALIDITY_PATTERN)
+    field_levels: dict[str, str] | None = Field(
+        None, description="字段级敏感等级，置 null 表示清除"
+    )
     effective_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     expiration_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     tags: str | None = Field(None, max_length=500)
@@ -647,11 +774,17 @@ async def patch_knowledge_document_metadata(
         ),
         "tags": list(document.tags or []),
         "summary": document.summary,
+        "authority": document.authority,
+        "validity": document.validity,
+        "field_levels": dict(document.field_levels or {}),
     }
     new_value = dict(old_value)
     for key, value in changes.items():
         if key in ("effective_date", "expiration_date"):
             new_value[key] = value or None
+            continue
+        if key == "field_levels":
+            new_value[key] = dict(value) if value else None
             continue
         if key == "tags":
             new_value[key] = _split_tags(value) if value else []
@@ -705,10 +838,21 @@ async def patch_knowledge_document_metadata(
     for key, value in new_value.items():
         if key in ("effective_date", "expiration_date"):
             setattr(document, key, date_type.fromisoformat(value) if value else None)
-        elif key == "tags":
-            setattr(document, key, value)
         else:
             setattr(document, key, value)
+    # 效力状态与运行状态在「废止」处对齐（T-DATA-05）：标为已废止即退出运行有效；
+    # 把效力状态显式恢复为现行有效时，运行状态也从「已废止」恢复。
+    if new_value.get("validity") == DocumentValidity.REPEALED.value:
+        document.status = DocumentStatus.ABOLISHED.value
+    elif (
+        new_value.get("validity") == DocumentValidity.EFFECTIVE.value
+        and document.status == DocumentStatus.ABOLISHED.value
+    ):
+        document.status = DocumentStatus.EFFECTIVE.value
+    # 可见范围从非公共提升为公共=进入公共库，必须重新审核（T-KB-12）。
+    if new_value["visibility"] == "public" and old_value["visibility"] != "public":
+        if reopen_review(document):
+            logger.info("knowledge_document_review_reopened", extra={"doc_id": doc_id})
     await audit_operation(
         db,
         request,

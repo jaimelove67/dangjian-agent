@@ -35,6 +35,7 @@ class AuditAction(str, Enum):
     PERMISSION_DENIED = "permission_denied"
     MODEL_INVOKE = "model_invoke"
     STAGE_TRANSITION = "stage_transition"
+    REVIEW = "review"
 
 
 class AuditResult(str, Enum):
@@ -64,8 +65,80 @@ class DocumentVisibility(str, Enum):
 
 
 class DocumentStatus(str, Enum):
-    """知识文档状态（有效 / 已失效 / 已废止）"""
+    """知识文档状态（有效 / 已失效 / 已废止）
+
+    这是按``生效日期 / 失效日期``自动判定的运行状态；与人工维护的
+    :class:`DocumentValidity`（效力状态）相互独立，两者在``废止``处对齐。
+    """
 
     EFFECTIVE = "effective"
     EXPIRED = "expired"
     ABOLISHED = "abolished"
+
+
+class DocumentAuthority(str, Enum):
+    """知识条目权威来源类别（FR-KB-04 / FR-KB-10）
+
+    ``reference``（参考资料）是非权威来源：可以入库和检索，但不能作为问答的
+    唯一依据输出（见 :func:`is_authoritative`）。
+    """
+
+    PARTY_CONSTITUTION = "party_constitution"  # 党章
+    PARTY_REGULATION = "party_regulation"  # 党内法规
+    SUPERIOR_DOCUMENT = "superior_document"  # 上级文件
+    SCHOOL_POLICY = "school_policy"  # 学校 / 院系制度
+    REFERENCE = "reference"  # 参考资料（非权威）
+
+
+class DocumentValidity(str, Enum):
+    """知识条目效力状态（FR-KB-04）
+
+    现行有效 / 尚未生效 / 已被新版替代 / 已废止；由维护人员人工确认，用于
+    判定条目能否作为权威依据（见 :func:`is_in_force`）。
+    """
+
+    EFFECTIVE = "effective"  # 现行有效
+    PENDING = "pending"  # 尚未生效
+    SUPERSEDED = "superseded"  # 已被新版替代
+    REPEALED = "repealed"  # 已废止
+
+
+class DocumentReviewStatus(str, Enum):
+    """公共库内容的审核发布状态（T-KB-12）
+
+    公共可见内容入库后为``pending``，经审核人批准才``published``（可被检索）；
+    非公共内容不需要审核，直接``published``。``rejected``表示已退回待修正。
+    """
+
+    PENDING = "pending"
+    PUBLISHED = "published"
+    REJECTED = "rejected"
+
+
+# 字段级敏感等级允许标注的文档元数据字段（T-DATA-05）
+SENSITIVE_FIELD_KEYS: tuple[str, ...] = (
+    "title",
+    "issuer",
+    "doc_number",
+    "summary",
+    "file_name",
+    "tags",
+)
+
+
+def is_authoritative(authority: str | None) -> bool:
+    """是否为权威来源
+
+    只有显式标注``reference``才算非权威。历史数据或未标注来源的调用方按权威
+    处理，与迁移回填口径一致——不能因为缺少字段就把存量制度整体降级。
+    """
+    return authority != DocumentAuthority.REFERENCE.value
+
+
+def is_in_force(validity: str | None) -> bool:
+    """是否现行有效
+
+    只有显式标注``pending/superseded/repealed``才算非现行效力；未标注按现行
+    有效处理，与迁移回填口径一致。
+    """
+    return validity in (None, "", DocumentValidity.EFFECTIVE.value)

@@ -36,6 +36,8 @@ class Citation:
     security_level: Optional[str] = None
     level: Optional[str] = None
     chunk_id: Optional[str] = None
+    authority: Optional[str] = None
+    validity: Optional[str] = None
 
 
 @dataclass
@@ -96,6 +98,8 @@ class _RetrieverAdapter:
                     level=meta.get("level"),
                     security_level=meta.get("security_level"),
                     chunk_id=result.chunk_id,
+                    authority=meta.get("authority"),
+                    validity=meta.get("validity"),
                 )
             )
         return chunks
@@ -200,6 +204,8 @@ class RAGService:
                 security_level=c.security_level,
                 level=c.level,
                 chunk_id=c.chunk_id,
+                authority=c.authority,
+                validity=c.validity,
             )
             for c in response.citations
         ]

@@ -2,14 +2,17 @@ import { http } from './http'
 import type {
   DocumentCreateResponse,
   DocumentResponse,
+  DocReviewStatus,
   DocumentStatusUpdate,
   DocumentUploadForm,
+  DocAuthority,
   DocStatus,
+  DocValidity,
   DocumentListResponse,
 } from './types'
 
 /** app/api/v1/knowledge.py：列表、详情、创建和状态维护均为真实接口。 */
-export function listDocuments(params: { page?: number; page_size?: number; q?: string; status?: string; level?: string }): Promise<DocumentListResponse> {
+export function listDocuments(params: { page?: number; page_size?: number; q?: string; status?: string; level?: string; review_status?: DocReviewStatus }): Promise<DocumentListResponse> {
   return http.get('/knowledge-docs', { params })
 }
 
@@ -55,10 +58,22 @@ export function createDocument(form: DocumentUploadForm): Promise<DocumentCreate
   if (form.summary) fd.append('summary', form.summary)
   if (form.expiration_date) fd.append('expiration_date', form.expiration_date)
   if (form.status) fd.append('status', form.status)
+  if (form.authority) fd.append('authority', form.authority)
+  if (form.validity) fd.append('validity', form.validity)
+  if (form.field_levels) fd.append('field_levels', form.field_levels)
 
   return http.post('/knowledge-docs', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
+}
+
+/** 公共库内容审核发布：批准进入检索范围，退回须写明意见（T-KB-12）。 */
+export function reviewDocument(
+  docId: string,
+  decision: 'approve' | 'reject',
+  note?: string,
+): Promise<DocumentResponse> {
+  return http.post(`/knowledge-docs/${encodeURIComponent(docId)}/review`, { decision, note })
 }
 
 export interface DocumentProcessing {
@@ -83,6 +98,11 @@ export interface DocumentMetadataInput {
   expiration_date: string | null
   tags: string
   summary: string | null
+  /** T-DATA-05：权威来源与效力状态可校正，语义见 app/core/constants.py */
+  authority?: DocAuthority
+  validity?: DocValidity
+  /** 字段级敏感等级；null 表示清除标注 */
+  field_levels?: Record<string, string> | null
   reason: string
 }
 

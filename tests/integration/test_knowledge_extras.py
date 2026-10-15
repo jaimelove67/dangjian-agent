@@ -23,6 +23,8 @@ from app.main import app
 from app.models.org import OrgUnit
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
+from app.rag.retrieval.access import knowledge_filters
+from app.rag.retrieval.keyword import KeywordRetriever
 from tests.integration import test_repaired_storage as storage_fixtures
 
 storage_url = storage_fixtures.storage_url
@@ -237,3 +239,124 @@ async def ok_json(client, method, path, body=None):
     assert response.status_code == 200, response.text
     assert response.json()["code"] == 0
     return response.json()["data"]
+
+
+# ---------------------------------------------------------------- T-KB-12 审核发布
+
+PUBLIC_UPLOAD = ("第一条 综合党建知识库公共库审核测试原文，仅用于回归验证。\n").encode()
+
+
+async def upload_public_document(client, doc_id="M1-REVIEW-001", **overrides):
+    """入库公共可见内容：按 T-KB-12 应进入待审，批准后才可被检索。"""
+    data = {
+        "doc_id": doc_id,
+        "file_name": "review.txt",
+        "title": "公共库审核测试文档",
+        "issuer": "合成单位",
+        "level": "school",
+        "visibility": "public",
+        "effective_date": "2026-01-01",
+        "tags": "审核,公共库",
+        "security_level": "public",
+        "status": "effective",
+        "authority": "school_policy",
+        "validity": "effective",
+        "summary": "审核测试摘要",
+    }
+    data.update(overrides)
+    return await client.post(
+        "/api/v1/knowledge-docs",
+        data=data,
+        files={"file": ("review.txt", PUBLIC_UPLOAD, "text/plain")},
+    )
+
+
+async def keyword_hits(engine, user, query):
+    """按登录身份走真实检索过滤（FTS/trigram，不调用模型）。"""
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        with tenant_context(user.tenant_id, user_id=user.id):
+            results = await KeywordRetriever(db).retrieve(
+                query, top_k=5, filters=knowledge_filters(user)
+            )
+    return {result.doc_id for result in results}
+
+
+@pytest.mark.asyncio
+async def test_public_content_requires_review_before_publish(kb_url):
+    manager = actor()
+    query = "综合党建知识库公共库审核测试原文"
+    async with client_for(kb_url, manager) as (client, engine):
+        response = await upload_public_document(client)
+        assert response.status_code == 200, response.text
+        document = response.json()["data"]["document"]
+        # T-DATA-05：条目带权威来源与效力状态；T-KB-12：公共内容入库即待审
+        assert document["authority"] == "school_policy"
+        assert document["validity"] == "effective"
+        assert document["review_status"] == "pending"
+        assert document["field_levels"] == {}
+
+        # 待审内容不进入检索范围
+        assert "M1-REVIEW-001" not in await keyword_hits(engine, manager, query)
+
+        # 维护人员能在待审队列里看到它（普通党员看不到，见下一用例）
+        pending = await ok_json(client, "GET", "/knowledge-docs?review_status=pending")
+        assert any(item["doc_id"] == "M1-REVIEW-001" for item in pending["items"])
+
+        # 对公共库内容更正可见范围外的条目审核会被拒绝
+        await upload_document(client, "M1-REVIEW-T2")
+        non_public = await client.post(
+            "/api/v1/knowledge-docs/M1-REVIEW-T2/review", json={"decision": "approve"}
+        )
+        assert non_public.status_code == 409
+
+        # 退回必须写明审核意见
+        rejected = await client.post(
+            "/api/v1/knowledge-docs/M1-REVIEW-001/review", json={"decision": "reject"}
+        )
+        assert rejected.status_code == 409
+
+        # 批准发布：留痕审核人、时间与意见
+        reviewed = await ok_json(
+            client,
+            "POST",
+            "/knowledge-docs/M1-REVIEW-001/review",
+            {"decision": "approve", "note": "已核对权威来源与效力"},
+        )
+        assert reviewed["review_status"] == "published"
+        assert reviewed["reviewed_by"]
+        assert reviewed["reviewed_at"]
+        assert reviewed["review_note"] == "已核对权威来源与效力"
+
+        # 发布后才进入检索范围
+        assert "M1-REVIEW-001" in await keyword_hits(engine, manager, query)
+
+        # 重复批准属于状态冲突
+        assert (
+            await client.post(
+                "/api/v1/knowledge-docs/M1-REVIEW-001/review", json={"decision": "approve"}
+            )
+        ).status_code == 409
+
+        # 公共内容换正文后重新进入待审，旧审核结论不再生效
+        replaced = await client.put(
+            "/api/v1/knowledge-docs/M1-REVIEW-001/content",
+            data={"expected_revision": 1},
+            files={"file": ("review.txt", PUBLIC_UPLOAD, "text/plain")},
+        )
+        assert replaced.status_code == 200, replaced.text
+        assert replaced.json()["data"]["document"]["review_status"] == "pending"
+        assert "M1-REVIEW-001" not in await keyword_hits(engine, manager, query)
+
+
+@pytest.mark.asyncio
+async def test_review_requires_review_permission(kb_url):
+    # 普通党员没有知识库审核权限
+    async with client_for(kb_url, actor(user_id="kb-member", role=UserRole.MEMBER)) as (client, _):
+        assert (
+            await client.post(
+                "/api/v1/knowledge-docs/M1-REVIEW-001/review",
+                json={"decision": "reject", "note": "越权"},
+            )
+        ).status_code == 403
+        # 普通党员也不能查看待审队列
+        assert (await client.get("/api/v1/knowledge-docs?review_status=pending")).status_code == 403

@@ -47,6 +47,8 @@ class QAService:
                     security_level=row.security_level,
                     chunk_id=row.chunk_id,
                     score=row.score,
+                    authority=row.authority,
+                    validity=row.validity,
                 )
                 for row in response.citations
             ],

@@ -18,8 +18,14 @@ from app.models.user import User
 DATA_LEVELS = ("public", "internal", "sensitive", "classified")
 
 
-def knowledge_filters(user: User, *, include_expired: bool = False) -> dict[str, Any]:
-    """只从登录用户生成授权条件，不接受客户端权限列表。"""
+def knowledge_filters(
+    user: User, *, include_expired: bool = False, include_unpublished: bool = False
+) -> dict[str, Any]:
+    """只从登录用户生成授权条件，不接受客户端权限列表。
+
+    ``include_unpublished`` 仅供知识库管理/审核界面查看待审内容，检索与问答链路
+    不会传入，保证未审核内容不进入答案依据（T-KB-12）。
+    """
     profile = get_role_profile(user.role)
     return {
         "tenant_id": str(user.tenant_id),
@@ -31,6 +37,7 @@ def knowledge_filters(user: User, *, include_expired: bool = False) -> dict[str,
         ),
         "all_org_units": profile.business_scope == "all",
         "include_expired": include_expired,
+        "include_unpublished": include_unpublished,
     }
 
 
@@ -88,6 +95,10 @@ def apply_knowledge_access(stmt: Select, filters: dict[str, Any], *, chunks: boo
         )
     elif filters.get("status"):
         stmt = stmt.where(KnowledgeDoc.status == filters["status"])
+    # 公共库内容须经审核发布（T-KB-12）：未发布内容不参与检索与问答依据，
+    # 只有知识库管理/审核界面显式要求查看待审内容时才放行。
+    if not filters.get("include_unpublished", False):
+        stmt = stmt.where(KnowledgeDoc.review_status == "published")
     if filters.get("doc_ids"):
         stmt = stmt.where(KnowledgeDoc.doc_id.in_(filters["doc_ids"]))
     if filters.get("security_level"):
@@ -119,6 +130,8 @@ def source_columns() -> tuple:
         KnowledgeDoc.effective_date,
         KnowledgeDoc.expiration_date,
         KnowledgeDoc.status,
+        KnowledgeDoc.authority,
+        KnowledgeDoc.validity,
     )
 
 
@@ -137,6 +150,8 @@ def source_metadata(row: Any, method: str) -> dict[str, Any]:
                 "effective_date",
                 "expiration_date",
                 "status",
+                "authority",
+                "validity",
             )
         },
         "retrieval_method": method,

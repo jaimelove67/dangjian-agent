@@ -1,10 +1,10 @@
 """知识文档表模型"""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Computed, Date, Integer, String, Text
+from sqlalchemy import JSON, Computed, Date, DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -51,6 +51,35 @@ class KnowledgeDoc(Base):
 
     # 文件状态：effective/expired
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="effective", index=True)
+
+    # 权威来源类别（T-DATA-05）：party_constitution/party_regulation/superior_document/
+    # school_policy/reference；reference 为非权威参考资料，不能作为问答唯一依据。
+    authority: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="reference", index=True
+    )
+
+    # 效力状态（T-DATA-05）：effective/pending/superseded/repealed；
+    # 与按日期判定的 status 相互独立，两者在「已废止」处对齐。
+    validity: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="effective", index=True
+    )
+
+    # 公共库审核发布状态（T-KB-12）。默认 published 覆盖两类内容：
+    # ① 非公共内容无需审核；② 迁移前的存量条目按已审核发布承接。
+    # 公共可见内容经入库流程显式落为 pending，审核通过后才 published。
+    review_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="published", index=True
+    )
+
+    # 审核留痕：审核人（账号 id）、审核时间、审核意见
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # 字段级敏感等级（T-DATA-05）：{字段名: public/internal/sensitive/classified}。
+    # 文档密级是该条目的上限，字段标注不得高于密级（入库与修元数据时校验），
+    # 供下游脱敏与外发规则使用。
+    field_levels: Mapped[Any | None] = mapped_column(JSON, nullable=True)
 
     # 主题标签（数组）
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)

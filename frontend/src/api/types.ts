@@ -114,6 +114,7 @@ export type PermissionCode =
   | 'qa.ask'
   | 'knowledge.query'
   | 'knowledge.manage'
+  | 'knowledge.review'
   | 'member.query'
   | 'member.self_query'
   | 'member.material_submit'
@@ -145,6 +146,7 @@ export const PERM = {
   QA_ASK: 'qa.ask',
   KNOWLEDGE_QUERY: 'knowledge.query',
   KNOWLEDGE_MANAGE: 'knowledge.manage',
+  KNOWLEDGE_REVIEW: 'knowledge.review',
   MEMBER_QUERY: 'member.query',
   SELF_QUERY: 'member.self_query',
   MATERIAL_SUBMIT: 'member.material_submit',
@@ -258,6 +260,17 @@ export interface QASessionListResponse {
 export type DocLevel = 'central' | 'provincial' | 'school' | 'department'
 export type DocVisibility = 'public' | 'school' | 'department' | 'branch'
 export type DocStatus = 'effective' | 'expired' | 'abolished'
+/** app/core/constants.py::DocumentAuthority —— 权威来源类别（reference 为非权威参考资料） */
+export type DocAuthority =
+  | 'party_constitution'
+  | 'party_regulation'
+  | 'superior_document'
+  | 'school_policy'
+  | 'reference'
+/** app/core/constants.py::DocumentValidity —— 人工确认的效力状态 */
+export type DocValidity = 'effective' | 'pending' | 'superseded' | 'repealed'
+/** app/core/constants.py::DocumentReviewStatus —— 公共库审核发布状态 */
+export type DocReviewStatus = 'pending' | 'published' | 'rejected'
 
 export const DOC_LEVEL_LABELS: Record<DocLevel, string> = {
   central: '中央',
@@ -286,6 +299,41 @@ export const DOC_STATUS_TONE: Record<DocStatus, 'ok' | 'warn' | 'bad'> = {
   abolished: 'bad',
 }
 
+export const DOC_AUTHORITY_LABELS: Record<DocAuthority, string> = {
+  party_constitution: '党章',
+  party_regulation: '党内法规',
+  superior_document: '上级文件',
+  school_policy: '学校制度',
+  reference: '参考资料',
+}
+
+export const DOC_VALIDITY_LABELS: Record<DocValidity, string> = {
+  effective: '现行有效',
+  pending: '尚未生效',
+  superseded: '已被替代',
+  repealed: '已废止',
+}
+
+/** 效力状态徽标语义：只有"现行有效"才是可靠依据 */
+export const DOC_VALIDITY_TONE: Record<DocValidity, 'ok' | 'warn' | 'bad'> = {
+  effective: 'ok',
+  pending: 'warn',
+  superseded: 'warn',
+  repealed: 'bad',
+}
+
+export const DOC_REVIEW_STATUS_LABELS: Record<DocReviewStatus, string> = {
+  pending: '待审核',
+  published: '已发布',
+  rejected: '已退回',
+}
+
+export const DOC_REVIEW_STATUS_TONE: Record<DocReviewStatus, 'ok' | 'warn' | 'bad'> = {
+  pending: 'warn',
+  published: 'ok',
+  rejected: 'bad',
+}
+
 /** app/schemas/knowledge.py::DocumentResponse */
 export interface DocumentResponse {
   content_revision?: number
@@ -299,6 +347,13 @@ export interface DocumentResponse {
   visibility: DocVisibility
   security_level: DataLevel
   status: DocStatus
+  authority: DocAuthority
+  validity: DocValidity
+  review_status: DocReviewStatus
+  reviewed_by?: string | null
+  reviewed_at?: string | null
+  review_note?: string | null
+  field_levels?: Record<string, DataLevel>
   effective_date?: string | null
   expiration_date?: string | null
   tags: string[]
@@ -341,6 +396,15 @@ export interface DocumentUploadForm {
   summary?: string
   expiration_date?: string
   status?: DocStatus
+  authority?: DocAuthority
+  validity?: DocValidity
+  field_levels?: string
+}
+
+/** app/api/v1/knowledge.py::DocumentReviewRequest —— 公共库审核（T-KB-12） */
+export interface DocumentReviewRequest {
+  decision: 'approve' | 'reject'
+  note?: string
 }
 
 /* ============================ 党员发展 ================================= */

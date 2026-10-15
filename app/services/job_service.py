@@ -236,7 +236,9 @@ async def execute(tenant_id: str, record_id: str, token: str) -> None:
                 from app.services.document_authority import require_document_write_access
 
                 embedding_service = EmbeddingService(
-                    db, tenant_id=tenant_id, access_filters=knowledge_filters(user)
+                    db,
+                    tenant_id=tenant_id,
+                    access_filters=knowledge_filters(user, include_unpublished=True),
                 )
                 count = 0
                 for document_id in job.payload["document_ids"]:

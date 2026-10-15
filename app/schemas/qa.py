@@ -38,6 +38,9 @@ class Citation(BaseModel):
     security_level: Optional[str] = None
     chunk_id: Optional[str] = None
     score: float = 0.0
+    # 权威来源（reference 为非权威）与效力状态（effective 为现行有效）
+    authority: Optional[str] = None
+    validity: Optional[str] = None
 
 
 class QAResponse(BaseModel):

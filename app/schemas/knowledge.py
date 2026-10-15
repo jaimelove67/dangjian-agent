@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date
-from typing import Any, List, Optional
+from datetime import date, datetime
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,15 @@ class DocumentStatusUpdate(BaseModel):
 
     status: str = Field(..., description="effective / expired / abolished")
     reason: Optional[str] = Field(None, max_length=500)
+
+
+class DocumentReviewRequest(BaseModel):
+    """公共库内容审核请求（T-KB-12）"""
+
+    decision: Literal["approve", "reject"] = Field(
+        ..., description="approve=批准发布；reject=退回（必须填写审核意见）"
+    )
+    note: Optional[str] = Field(None, max_length=500, description="审核意见")
 
 
 class DocumentResponse(BaseModel):
@@ -28,6 +37,13 @@ class DocumentResponse(BaseModel):
     visibility: str
     security_level: str
     status: str
+    authority: str = Field("reference", description="权威来源类别")
+    validity: str = Field("effective", description="效力状态")
+    review_status: str = Field("published", description="公共库审核发布状态")
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    review_note: Optional[str] = None
+    field_levels: Dict[str, str] = Field(default_factory=dict, description="字段级敏感等级")
     effective_date: Optional[date] = None
     expiration_date: Optional[date] = None
     tags: List[str] = Field(default_factory=list)
@@ -48,6 +64,13 @@ class DocumentResponse(BaseModel):
             visibility=document.visibility,
             security_level=document.security_level,
             status=document.status,
+            authority=document.authority or "reference",
+            validity=document.validity or "effective",
+            review_status=document.review_status or "published",
+            reviewed_by=document.reviewed_by,
+            reviewed_at=document.reviewed_at,
+            review_note=document.review_note,
+            field_levels=dict(document.field_levels or {}),
             effective_date=document.effective_date,
             expiration_date=document.expiration_date,
             tags=list(document.tags or []),

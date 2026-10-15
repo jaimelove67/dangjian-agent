@@ -1,14 +1,27 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 
-import { createDocument, deleteDocument, listDocuments, updateDocumentStatus, replaceDocumentContent } from '@/api/knowledge'
+import { createDocument, deleteDocument, listDocuments, reviewDocument, updateDocumentStatus, replaceDocumentContent } from '@/api/knowledge'
 import { ApiError } from '@/api/http'
-import type { DocumentResponse, DocLevel, DocStatus, DataLevel } from '@/api/types'
+import type {
+  DocumentResponse,
+  DocAuthority,
+  DocLevel,
+  DocReviewStatus,
+  DocStatus,
+  DocValidity,
+  DataLevel,
+} from '@/api/types'
 import {
   DATA_LEVEL_LABELS,
+  DOC_AUTHORITY_LABELS,
   DOC_LEVEL_LABELS,
+  DOC_REVIEW_STATUS_LABELS,
+  DOC_REVIEW_STATUS_TONE,
   DOC_STATUS_LABELS,
   DOC_STATUS_TONE,
+  DOC_VALIDITY_LABELS,
+  DOC_VALIDITY_TONE,
   DOC_VISIBILITY_LABELS,
   PERM,
 } from '@/api/types'
@@ -35,12 +48,15 @@ import { session } from '@/stores/session'
 type Tab = 'all' | DocStatus
 
 const canManage = computed(() => session.can(PERM.KNOWLEDGE_MANAGE))
+const canReview = computed(() => session.can(PERM.KNOWLEDGE_REVIEW))
 const docs = ref<DocumentResponse[]>([])
 const loading = ref(true)
 const error = ref<unknown>(null)
 const tab = ref<Tab>('all')
 const keyword = ref('')
 const levelFilter = ref<DocLevel | 'all'>('all')
+/** 审核状态筛选：仅具备 knowledge.review 的管理员使用，默认不附加筛选 */
+const reviewFilter = ref<DocReviewStatus | 'all'>('all')
 const compact = ref(false)
 const selected = ref<DocumentResponse | null>(null)
 const detail = ref<HTMLElement | null>(null)
@@ -85,6 +101,7 @@ async function load(): Promise<void> {
       page: page.value, page_size: pageSize, q: keyword.value.trim() || undefined,
       status: tab.value === 'all' ? undefined : tab.value,
       level: levelFilter.value === 'all' ? undefined : levelFilter.value,
+      review_status: reviewFilter.value === 'all' ? undefined : reviewFilter.value,
     })
     if (sequence !== requestSequence) return
     docs.value = response.items
@@ -108,7 +125,11 @@ const filtered = computed(() => docs.value)
  * 前者提示"换个关键词"有用，后者只会让人反复尝试——必须分开说明。
  */
 const hasActiveFilter = computed(
-  () => keyword.value.trim() !== '' || levelFilter.value !== 'all' || tab.value !== 'all',
+  () =>
+    keyword.value.trim() !== '' ||
+    levelFilter.value !== 'all' ||
+    tab.value !== 'all' ||
+    reviewFilter.value !== 'all',
 )
 
 /**
@@ -123,7 +144,7 @@ const emptyScopeBody = computed(() =>
     : '可查阅范围由你的角色与所属组织决定；如需查阅某项制度，请联系所在党支部或院系管理员。',
 )
 let searchTimer: number | undefined
-watch([tab, keyword, levelFilter], () => {
+watch([tab, keyword, levelFilter, reviewFilter], () => {
   page.value = 1
   window.clearTimeout(searchTimer)
   searchTimer = window.setTimeout(() => { void load() }, 200)
@@ -142,6 +163,20 @@ const TABS: { key: Tab; label: string }[] = [
 
 function statusTone(s: DocStatus): string {
   return `badge--${DOC_STATUS_TONE[s]}`
+}
+
+/** 效力状态徽标：只有"现行有效"可以单独作为问答依据（T-DATA-05） */
+function validityTone(v: DocValidity): string {
+  return `badge--${DOC_VALIDITY_TONE[v]}`
+}
+
+/** 权威来源徽标：参考资料不能作为唯一依据 */
+function authorityTone(a: DocAuthority): string {
+  return a === 'reference' ? 'badge--warn' : 'badge--ok'
+}
+
+function reviewTone(s: DocReviewStatus): string {
+  return `badge--${DOC_REVIEW_STATUS_TONE[s]}`
 }
 
 /** 时效提醒：距失效不足 30 天时提示，与后端 retrieval_strategy 的告警窗口一致 */
@@ -211,6 +246,51 @@ function onDocumentUpdated(doc: DocumentResponse): void {
   selected.value = doc
 }
 
+/* ---------------------------- 公共库审核 ------------------------------ */
+
+/**
+ * 公共可见内容入库后处于待审状态，批准后才进入检索与问答依据（T-KB-12）。
+ * 这里只做入口显隐，服务端仍按 knowledge.review 逐次校验。
+ */
+const reviewing = ref<DocumentResponse | null>(null)
+const reviewDecision = ref<'approve' | 'reject'>('approve')
+const reviewNote = ref('')
+const reviewBusy = ref(false)
+const reviewError = ref('')
+
+const reviewTitle = computed(() =>
+  reviewDecision.value === 'approve' ? '确认批准发布' : '确认退回修正',
+)
+
+function askReview(doc: DocumentResponse, decision: 'approve' | 'reject'): void {
+  if (!canReview.value) return
+  reviewing.value = doc
+  reviewDecision.value = decision
+  reviewNote.value = ''
+  reviewError.value = ''
+}
+
+async function confirmReview(): Promise<void> {
+  const doc = reviewing.value
+  if (!doc) return
+  reviewBusy.value = true
+  reviewError.value = ''
+  try {
+    const updated = await reviewDocument(
+      doc.doc_id,
+      reviewDecision.value,
+      reviewNote.value.trim() || undefined,
+    )
+    onDocumentUpdated(updated)
+    reviewing.value = null
+    await load()
+  } catch (err) {
+    reviewError.value = err instanceof ApiError ? err.message : '审核失败，请重试'
+  } finally {
+    reviewBusy.value = false
+  }
+}
+
 /* ---------------------------- 上传表单 ------------------------------ */
 
 const upload = reactive({
@@ -224,6 +304,9 @@ const upload = reactive({
   effective_date: '',
   expiration_date: '',
   security_level: 'internal' as DataLevel,
+  /** 空值表示按制度层级自动推定权威来源（后端 default_authority） */
+  authority: '' as DocAuthority | '',
+  validity: 'effective' as DocValidity,
   tags: '',
   summary: '',
 })
@@ -268,6 +351,8 @@ function resetUpload(): void {
     effective_date: '',
     expiration_date: '',
     security_level: 'internal',
+    authority: '',
+    validity: 'effective',
     tags: '',
     summary: '',
   })
@@ -297,8 +382,13 @@ async function submitUpload(): Promise<void> {
       doc_number: upload.doc_number.trim() || undefined,
       summary: upload.summary.trim() || undefined,
       expiration_date: upload.expiration_date || undefined,
+      authority: upload.authority || undefined,
+      validity: upload.validity,
     })
-    uploadDone.value = `已入库：${res.document.title}，切分为 ${res.chunk_count} 个片段。`
+    uploadDone.value =
+      upload.visibility === 'public'
+        ? `已入库并提交审核：${res.document.title}，切分为 ${res.chunk_count} 个片段。批准发布前不会作为问答依据。`
+        : `已入库：${res.document.title}，切分为 ${res.chunk_count} 个片段。`
     resetUpload()
     uploadOpen.value = false
     page.value = 1
@@ -401,6 +491,23 @@ async function submitUpload(): Promise<void> {
             </p>
           </div>
           <div class="field">
+            <label class="field__label" for="u-auth">权威来源</label>
+            <select id="u-auth" v-model="upload.authority" class="select">
+              <option value="">按层级自动推定</option>
+              <option v-for="(l, k) in DOC_AUTHORITY_LABELS" :key="k" :value="k">{{ l }}</option>
+            </select>
+            <p class="field__hint">参考资料不会被问答当作依据</p>
+          </div>
+          <div class="field">
+            <label class="field__label" for="u-val">效力状态</label>
+            <select id="u-val" v-model="upload.validity" class="select">
+              <option v-for="(l, k) in DOC_VALIDITY_LABELS" :key="k" :value="k">{{ l }}</option>
+            </select>
+            <p v-if="upload.visibility === 'public'" class="field__hint">
+              公开内容入库后为"待审核"，批准后才进入检索范围
+            </p>
+          </div>
+          <div class="field">
             <label class="field__label" for="u-eff">生效日期</label>
             <input id="u-eff" v-model="upload.effective_date" class="input" type="date" />
           </div>
@@ -478,6 +585,10 @@ async function submitUpload(): Promise<void> {
           <option value="all">全部层级</option>
           <option v-for="(l, k) in DOC_LEVEL_LABELS" :key="k" :value="k">{{ l }}</option>
         </select>
+        <select v-if="canReview" v-model="reviewFilter" class="select filters__level" aria-label="审核状态">
+          <option value="all">全部审核状态</option>
+          <option v-for="(l, k) in DOC_REVIEW_STATUS_LABELS" :key="k" :value="k">{{ l }}</option>
+        </select>
       </div>
     </div>
 
@@ -516,6 +627,7 @@ async function submitUpload(): Promise<void> {
             <th scope="col">发文机关</th>
             <th scope="col">层级</th>
             <th scope="col">可见范围</th>
+            <th scope="col">权威来源</th>
             <th scope="col">生效</th>
             <th scope="col">失效</th>
             <th scope="col">状态</th>
@@ -538,6 +650,11 @@ async function submitUpload(): Promise<void> {
             <td>{{ d.issuer }}</td>
             <td><span class="badge">{{ DOC_LEVEL_LABELS[d.level] }}</span></td>
             <td>{{ DOC_VISIBILITY_LABELS[d.visibility] }}</td>
+            <td>
+              <span class="badge" :class="authorityTone(d.authority)">
+                {{ DOC_AUTHORITY_LABELS[d.authority] }}
+              </span>
+            </td>
             <td class="u-mono">{{ d.effective_date ?? '未标注' }}</td>
             <td>
               <span v-if="d.expiration_date" class="u-mono">{{ d.expiration_date }}</span>
@@ -547,11 +664,43 @@ async function submitUpload(): Promise<void> {
               <span class="badge" :class="statusTone(d.status)">
                 {{ DOC_STATUS_LABELS[d.status] }}
               </span>
+              <span
+                v-if="d.validity !== 'effective'"
+                class="badge cell-expiring"
+                :class="validityTone(d.validity)"
+              >
+                {{ DOC_VALIDITY_LABELS[d.validity] }}
+              </span>
+              <span
+                v-if="d.review_status !== 'published'"
+                class="badge cell-expiring"
+                :class="reviewTone(d.review_status)"
+              >
+                {{ DOC_REVIEW_STATUS_LABELS[d.review_status] }}
+              </span>
               <span v-if="expiringSoon(d)" class="badge badge--warn cell-expiring">即将到期</span>
             </td>
             <td v-if="canManage" class="td-right" @click.stop>
+              <template v-if="canReview && d.review_status === 'pending'">
+                <button
+                  class="btn btn--quiet"
+                  type="button"
+                  :disabled="statusBusy === d.doc_id || reviewBusy"
+                  @click="askReview(d, 'approve')"
+                >
+                  批准
+                </button>
+                <button
+                  class="btn btn--quiet"
+                  type="button"
+                  :disabled="statusBusy === d.doc_id || reviewBusy"
+                  @click="askReview(d, 'reject')"
+                >
+                  退回
+                </button>
+              </template>
               <button
-                v-if="d.status === 'effective'"
+                v-else-if="d.status === 'effective'"
                 class="btn btn--quiet"
                 type="button"
                 :disabled="statusBusy === d.doc_id"
@@ -618,6 +767,46 @@ async function submitUpload(): Promise<void> {
           <dd>{{ DATA_LEVEL_LABELS[selected.security_level] }}</dd>
         </div>
         <div class="detail__row">
+          <dt>权威来源</dt>
+          <dd>
+            <span class="badge" :class="authorityTone(selected.authority)">
+              {{ DOC_AUTHORITY_LABELS[selected.authority] }}
+            </span>
+            <span v-if="selected.authority === 'reference'" class="u-meta">
+              参考资料不会被问答当作依据
+            </span>
+          </dd>
+        </div>
+        <div class="detail__row">
+          <dt>效力状态</dt>
+          <dd>
+            <span class="badge" :class="validityTone(selected.validity)">
+              {{ DOC_VALIDITY_LABELS[selected.validity] }}
+            </span>
+            <span v-if="selected.validity !== 'effective'" class="u-meta">
+              非现行有效内容不会被问答当作依据
+            </span>
+          </dd>
+        </div>
+        <div class="detail__row">
+          <dt>审核状态</dt>
+          <dd>
+            <span class="badge" :class="reviewTone(selected.review_status)">
+              {{ DOC_REVIEW_STATUS_LABELS[selected.review_status] }}
+            </span>
+            <span v-if="selected.reviewed_at" class="u-meta">
+              审核于 {{ selected.reviewed_at }}
+              <template v-if="selected.review_note">· {{ selected.review_note }}</template>
+            </span>
+            <span
+              v-else-if="selected.visibility === 'public'"
+              class="u-meta"
+            >
+              待审核，批准后才进入检索范围
+            </span>
+          </dd>
+        </div>
+        <div class="detail__row">
           <dt>标签</dt>
           <dd>
             <span v-if="!selected.tags.length" class="u-faint">无</span>
@@ -633,6 +822,31 @@ async function submitUpload(): Promise<void> {
           <dd class="detail__summary">{{ selected.summary ?? '未填写' }}</dd>
         </div>
       </dl>
+
+      <!-- 公共库审核入口：待审内容不进入检索，批准后立即生效（T-KB-12） -->
+      <div v-if="canReview && selected.review_status === 'pending'" class="detail__review">
+        <p class="u-meta">
+          该项为公共可见内容，尚未进入检索与问答依据。批准后立即生效；退回须写明意见。
+        </p>
+        <div class="wb-actions">
+          <button
+            class="btn btn--primary"
+            type="button"
+            :disabled="reviewBusy"
+            @click="askReview(selected, 'approve')"
+          >
+            批准发布
+          </button>
+          <button
+            class="btn btn--ghost"
+            type="button"
+            :disabled="reviewBusy"
+            @click="askReview(selected, 'reject')"
+          >
+            退回修正
+          </button>
+        </div>
+      </div>
 
       <!-- 处理状态、原件下载与元数据修正。此前该组件已实现但没有任何页面引用，
            导致后端能力齐备而用户拿不到原件；这里把它接回详情面板。 -->
@@ -650,6 +864,43 @@ async function submitUpload(): Promise<void> {
         <p v-if="replacementMessage" role="status">{{ replacementMessage }}</p>
       </footer>
     </aside>
+
+    <!-- 公共库审核确认：批准/退回均留痕，退回须写明意见（T-KB-12） -->
+    <ActionDialog
+      :open="Boolean(reviewing)"
+      :title="reviewTitle"
+      :busy="reviewBusy"
+      @close="reviewing = null"
+    >
+      <p class="remove-confirm">{{ reviewing?.title }}（{{ reviewing?.doc_id }}）</p>
+      <ul class="remove-confirm__list">
+        <li v-if="reviewDecision === 'approve'">
+          批准后该内容立即进入检索范围，可作为制度问答依据。
+        </li>
+        <li v-else>退回后该内容保持不参与检索，维护人员修正后可再次提交审核。</li>
+        <li>审核人、审核时间与审核意见会写入审计记录。</li>
+      </ul>
+      <label class="field">
+        <span>审核意见{{ reviewDecision === 'reject' ? '（退回必填）' : '（选填）' }}</span>
+        <textarea v-model="reviewNote" class="textarea" rows="2" maxlength="500" />
+      </label>
+      <p v-if="reviewError" class="field__error" role="alert">{{ reviewError }}</p>
+      <div class="remove-confirm__actions">
+        <button class="btn btn--quiet" type="button" :disabled="reviewBusy" @click="reviewing = null">
+          取消
+        </button>
+        <button
+          class="btn btn--primary"
+          type="button"
+          :disabled="reviewBusy || (reviewDecision === 'reject' && !reviewNote.trim())"
+          @click="confirmReview"
+        >
+          {{
+            reviewBusy ? '提交中…' : reviewDecision === 'approve' ? '确认批准' : '确认退回'
+          }}
+        </button>
+      </div>
+    </ActionDialog>
 
     <!-- 移除确认：站内弹窗，替代原生 window.confirm -->
     <ActionDialog
@@ -986,6 +1237,16 @@ async function submitUpload(): Promise<void> {
 }
 
 .detail__foot {
+  padding: var(--space-3) var(--space-4);
+  background: var(--paper-dim);
+  border-top: var(--border);
+}
+
+/* 公共库待审提示：用强调底色与其它只读信息区分（T-KB-12） */
+.detail__review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   background: var(--paper-dim);
   border-top: var(--border);

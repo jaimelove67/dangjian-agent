@@ -58,25 +58,29 @@ def assessment_url(storage_url):
                     config.attributes["connection"] = sync_connection
                     assert len(ScriptDirectory.from_config(config).get_heads()) == 1
                     command.upgrade(config, "006")
+                    # 006 时代的知识条目没有 T-DATA-05 字段：用当时存在的列插入一条真实
+                    # 记录，验证后续迁移既保留既有记录，又按层级回填权威来源 / 效力 / 审核状态。
                     sync_connection.execute(
-                        KnowledgeDoc.__table__.insert().values(
-                            id="assessment-upgrade-document",
-                            tenant_id="assessment-upgrade-tenant",
-                            doc_id="ASSESSMENT-UPGRADE-PRESERVE",
-                            title="合成迁移保留文档",
-                            file_name="synthetic.txt",
-                            issuer="合成机构",
-                            level="school",
-                            visibility="school",
-                            security_level="public",
-                            effective_date=date(2000, 1, 1),
-                            status="effective",
+                        text(
+                            "INSERT INTO knowledge_docs ("
+                            "id, tenant_id, doc_id, title, file_name, issuer, level, "
+                            "visibility, security_level, effective_date, status, is_deleted) "
+                            "VALUES ('assessment-upgrade-document', 'assessment-upgrade-tenant', "
+                            "'ASSESSMENT-UPGRADE-PRESERVE', '合成迁移保留文档', 'synthetic.txt', "
+                            "'合成机构', 'school', 'school', 'public', '2000-01-01', "
+                            "'effective', false)"
                         )
                     )
-                    query = text("SELECT * FROM knowledge_docs ORDER BY id")
+                    query = text("SELECT id, tenant_id, doc_id, title, status FROM knowledge_docs")
                     before = sync_connection.execute(query).mappings().all()
                     command.upgrade(config, "head")
                     assert sync_connection.execute(query).mappings().all() == before
+                    backfilled = sync_connection.execute(
+                        text("SELECT authority, validity, review_status FROM knowledge_docs")
+                    ).mappings().one()
+                    assert backfilled["authority"] == "school_policy"
+                    assert backfilled["validity"] == "effective"
+                    assert backfilled["review_status"] == "published"
                     command.downgrade(config, "006")
                     assert sync_connection.execute(query).mappings().all() == before
                     assert sync_connection.scalar(

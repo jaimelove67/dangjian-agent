@@ -68,6 +68,55 @@ async def test_full_chain_success():
     assert "培养期" in response.answer
 
 
+async def test_reference_only_basis_refused():
+    """非权威参考资料不能作为唯一依据（T-KB-12 / FR-KB-10）。"""
+    chain = QAChain(
+        retriever=FakeRetriever([_chunk(1, authority="reference")]),
+        generator=FakeGenerator("根据资料[1]。"),
+    )
+    response = await chain.ask(question="问", tenant_id="t1")
+
+    assert response.refused is True
+    assert response.citations == []
+    assert any("非权威或已失效" in warning for warning in response.warnings)
+
+
+async def test_out_of_force_only_basis_refused():
+    chain = QAChain(
+        retriever=FakeRetriever([_chunk(1, validity="repealed")]),
+        generator=FakeGenerator("根据文件[1]。"),
+    )
+    response = await chain.ask(question="问", tenant_id="t1")
+    assert response.refused is True
+
+
+async def test_authoritative_basis_allows_answer():
+    chain = QAChain(
+        retriever=FakeRetriever([_chunk(1, authority="superior_document", validity="effective")]),
+        generator=FakeGenerator("根据制度[1]。"),
+    )
+    response = await chain.ask(question="问", tenant_id="t1")
+    assert response.refused is False
+    assert response.citations[0].authority == "superior_document"
+
+
+async def test_reference_alongside_authoritative_is_allowed():
+    """参考资料与权威文件一同被引用时不是唯一依据，可以输出并给出提示。"""
+    chain = QAChain(
+        retriever=FakeRetriever(
+            [
+                _chunk(1, doc_name="参考资料", authority="reference"),
+                _chunk(2, authority="party_regulation"),
+            ]
+        ),
+        generator=FakeGenerator("结论[1][2]。"),
+    )
+    response = await chain.ask(question="问", tenant_id="t1")
+    assert response.refused is False
+    assert len(response.citations) == 2
+    assert any("非权威参考资料" in warning for warning in response.warnings)
+
+
 async def test_no_chunks_refuses_and_skips_generation():
     generator = FakeGenerator("不应被调用")
     chain = QAChain(retriever=FakeRetriever([]), generator=generator)

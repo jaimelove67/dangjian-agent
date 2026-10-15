@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional, Sequence
 
+from app.core.constants import is_authoritative, is_in_force
 from app.schemas.qa import Citation
 
 _CITATION_RE = re.compile(r"\[(\d+)\]")
@@ -28,6 +29,11 @@ DEFAULT_LONG_ANSWER_THRESHOLD = 80  # 超过该长度视为“长回答”
 DEFAULT_EXPIRING_DAYS = 30  # 距失效多少天提示“即将失效”
 
 _STATUS_CN = {"abolished": "已废止", "expired": "已失效", "effective": "有效"}
+_VALIDITY_CN = {
+    "pending": "尚未生效",
+    "superseded": "已被新版替代",
+    "repealed": "已废止",
+}
 
 
 @dataclass
@@ -50,6 +56,8 @@ class RetrievedChunk:
     level: Optional[str] = None
     security_level: Optional[str] = None
     chunk_id: Optional[str] = None
+    authority: Optional[str] = None
+    validity: Optional[str] = None
 
 
 @dataclass
@@ -94,12 +102,16 @@ class CitationVerifier:
             cleaned = cleaned.replace(f"[{idx}]", "")
         cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
 
-        # 逐条核验（条款真实性 + 文件时效）
+        # 逐条核验（条款真实性 + 文件时效 + 权威来源）
         article_valid = True
         for idx in valid_indices:
             chunk = by_index[idx]
             article_valid = self._check_article(cleaned, idx, chunk, warnings) and article_valid
             self._check_timeliness(chunk, warnings)
+            if not is_authoritative(chunk.authority):
+                warnings.append(
+                    f"引用[{idx}]《{chunk.doc_name}》为非权威参考资料，不能作为唯一依据"
+                )
 
         # 引用完整性 / 无依据长回答
         if not referenced and len(cleaned.strip()) >= self.long_answer_threshold:
@@ -142,10 +154,14 @@ class CitationVerifier:
         return valid
 
     def _check_timeliness(self, chunk: RetrievedChunk, warnings: list[str]) -> None:
-        """文件时效检查"""
+        """文件时效检查（运行状态 + 人工确认的效力状态）"""
         if chunk.status in ("abolished", "expired"):
             label = _STATUS_CN.get(chunk.status, chunk.status)
             warnings.append(f"引用文件《{chunk.doc_name}》{label}，请注意时效")
+            return
+        if not is_in_force(chunk.validity):
+            label = _VALIDITY_CN.get(str(chunk.validity), str(chunk.validity))
+            warnings.append(f"引用文件《{chunk.doc_name}》{label}，不能作为权威依据")
             return
         if chunk.expiration_date is not None:
             if chunk.expiration_date < self.today:
@@ -170,6 +186,8 @@ class CitationVerifier:
             level=chunk.level,
             security_level=chunk.security_level,
             chunk_id=chunk.chunk_id,
+            authority=chunk.authority,
+            validity=chunk.validity,
             score=chunk.score or 0.0,
         )
 
@@ -180,3 +198,15 @@ class CitationVerifier:
             if item not in seen:
                 seen.append(item)
         return seen
+
+
+def has_authoritative_basis(chunks: Sequence[RetrievedChunk]) -> bool:
+    """被引片段中是否存在「权威且现行有效」的依据（FR-KB-10 / T-KB-12）
+
+    非权威（参考资料）以及非现行有效（尚未生效 / 已被新版替代 / 已废止）的内容
+    可以检索、可以在引用列表中展示，但不能作为答案的唯一依据；只有存在至少一条
+    权威且有效的依据，答案才可以输出。
+    """
+    return any(
+        is_authoritative(chunk.authority) and is_in_force(chunk.validity) for chunk in chunks
+    )

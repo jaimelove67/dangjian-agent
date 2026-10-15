@@ -20,8 +20,13 @@ from typing import Optional, Protocol, Sequence
 from app.chains.rewrite import LLMCall, rewrite_question
 from app.chains.session import QATurn, SessionStore
 from app.core.config import settings
-from app.rag.verifier import CitationVerifier, RetrievedChunk, VerificationResult
-from app.schemas.qa import DEFAULT_DISCLAIMER, REFUSAL_ANSWER, QAResponse
+from app.rag.verifier import (
+    CitationVerifier,
+    RetrievedChunk,
+    VerificationResult,
+    has_authoritative_basis,
+)
+from app.schemas.qa import DEFAULT_DISCLAIMER, REFUSAL_ANSWER, Citation, QAResponse
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +161,19 @@ class QAChain:
         )
 
         # 阶段 6：统一响应组装
-        unsupported = not verification.valid or not verification.citations
+        # 依据权威性判定（FR-KB-10 / T-KB-12）：被引来源全部为非权威（参考资料）或
+        # 非现行有效（尚未生效 / 已被替代 / 已废止）时，不能作为唯一依据输出。
+        cited_chunks = self._cited_chunks(verification.citations, chunks)
+        sole_weak_basis = bool(cited_chunks) and not has_authoritative_basis(cited_chunks)
+        unsupported = not verification.valid or not verification.citations or sole_weak_basis
         warnings = list(verification.warnings)
-        if unsupported:
+        if sole_weak_basis:
+            warnings.append("被引来源均非权威或已失效，不能作为依据，已拒答，请核对权威原文")
+            logger.info(
+                "qa_sole_weak_basis_refused",
+                extra={"tenant_id": tenant_id, "citation_count": len(verification.citations)},
+            )
+        elif unsupported:
             warnings.append("生成内容未通过引用核验，已拒答")
         response = QAResponse(
             answer=REFUSAL_ANSWER if unsupported else verification.answer,
@@ -171,6 +186,19 @@ class QAChain:
         return response
 
     # ---------------------------------------------------------------
+    @staticmethod
+    def _cited_chunks(
+        citations: Sequence[Citation], chunks: Sequence[RetrievedChunk]
+    ) -> list[RetrievedChunk]:
+        """取回被引用到的片段（优先按片段主键匹配，退化为按引用编号匹配）"""
+        cited_ids = {c.chunk_id for c in citations if c.chunk_id}
+        if cited_ids:
+            matched = [c for c in chunks if c.chunk_id in cited_ids]
+            if matched:
+                return matched
+        indices = {c.index for c in citations}
+        return [c for c in chunks if c.index in indices]
+
     def _is_no_evidence(self, chunks: Sequence[RetrievedChunk]) -> bool:
         """无依据判定：无片段，或全部带分数且最高分低于阈值"""
         if not chunks:
