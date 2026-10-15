@@ -31,7 +31,7 @@ NOTIFICATION_ROUTES={"member_stage_transition": ["inapp"]}
 
 单渠道投递失败最多重试 `NOTIFICATION_MAX_ATTEMPTS` 次（默认 3），退避基数为 `NOTIFICATION_BACKOFF_SECONDS`（默认 2 秒，设 0 表示不等待）。同一 `(租户, 去重键, 渠道)` 只投递一次：补偿扫描与重复请求命中台账去重，不重复外发、也不重复写审计；重试用尽后保留失败分类（如 `delivery_failed:TimeoutError`），不记录渠道异常原文、凭据或正文。
 
-治理页「运行审计」展示渠道清单（含“未配置（不投递）”状态）、事件路由与投递台账；具备 `config.manage` 的角色可“发起渠道自检”，确认动作与投递结果都进审计。接口为 `GET /api/v1/admin/notification-channels`、`GET /api/v1/admin/notification-deliveries` 与 `POST /api/v1/admin/notifications/dispatch`（后者需 `config.manage`）。企业微信、邮件等外部渠道尚未实现：凭据与主机补齐后按同一渠道协议登记即可接入，未配置的渠道不参与投递。
+治理页「运行审计」展示渠道清单（含“未配置（不投递）”状态）、事件路由与投递台账；具备 `config.manage` 的角色可“发起渠道自检”，确认动作与投递结果都进审计。接口为 `GET /api/v1/admin/notification-channels`、`GET /api/v1/admin/notification-deliveries` 与 `POST /api/v1/admin/notifications/dispatch`（后者需 `config.manage`）。企业微信、邮件等外部渠道尚未实现：凭据与主机补齐后按同一渠道协议登记即可接入，未配置的渠道不参与投递。注意：目前只有“发起渠道自检”与显式调用会经 `dispatch()` 投递，党员发展、考核等业务流仍各写自己的站内提醒台账、尚未接线；接线前需先确定“站内提醒与投递台账不重复生成”的口径。
 
 ## 本人档案与私有材料
 
