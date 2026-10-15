@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import * as api from '@/api/governance'
-import type { Approval, AuditRecord, GovernanceConfig, JobRecord, Operations, OrgRecord, ReviewRecord, TenantRecord, UserRecord } from '@/api/governance'
+import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, ReviewRecord, TenantRecord, UserRecord } from '@/api/governance'
 import { ApiError } from '@/api/http'
 import { PERM, ROLE_LABELS, type UserRole } from '@/api/types'
 import ActionDialog from '@/components/ActionDialog.vue'
@@ -16,6 +16,9 @@ const tenants = ref<TenantRecord[]>([]), organizations = ref<OrgRecord[]>([]), u
 const selectedTenant = ref(session.state.user?.tenant_id ?? '')
 const config = ref<GovernanceConfig | null>(null), operations = ref<Operations | null>(null)
 const reviews = ref<ReviewRecord[]>([]), jobs = ref<JobRecord[]>([]), logs = ref<AuditRecord[]>([])
+// 通知渠道与投递台账：渠道是否就绪、事件路由、每次投递的渠道/状态/尝试次数。
+const channels = ref<NotificationChannel[]>([]), deliveries = ref<NotificationDelivery[]>([])
+const channelRoutes = ref<Record<string, string[]>>({})
 const reviewHasMore = ref(false)
 const reviewPage = ref(1), auditPage = ref(1), auditTotal = ref(0)
 const detail = ref<ReviewRecord | null>(null), identitySearch = ref('')
@@ -49,6 +52,11 @@ const kindText: Record<string,string> = {score:'辅助评分', vote:'选优汇�
   study_activity:'中心组学习纪要', study_plan:'中心组学习计划', assessment_report:'考核评价',
   assessment_plan:'年度工作建议', member_reminders:'发展党员提醒', assessment_reminders:'考核提醒',
   embedding:'文档向量化'}
+// 投递状态与事件名：运维要能一眼看懂“哪条提醒、走哪个渠道、发出去没有”。
+const deliveryText: Record<string,string> = {pending:'待投递', sent:'已投递', failed:'投递失败'}
+const eventText: Record<string,string> = {member_reminder:'发展党员提醒', assessment_reminder:'考核进度提醒',
+  member_stage_transition:'党员阶段流转', meeting_archived:'组织生活归档', assessment_completed:'年度考核完成',
+  channel_self_test:'渠道自检'}
 const approvalText: Record<string,string> = {registration:'真实组织登记', organization_approval:'组织部门评审',
   it_approval:'信息化部门评审', secrecy_approval:'保密部门评审', pilot_scope:'批准的试点范围'}
 const approvals = ['registration','organization_approval','it_approval','secrecy_approval'] as const
@@ -74,6 +82,29 @@ async function loadIdentity(): Promise<void> {
   const [orgs, accounts] = await Promise.all([api.listOrgs(selectedTenant.value), api.listUsers(selectedTenant.value)])
   organizations.value = orgs.items; users.value = accounts.items
 }
+async function loadNotifications(): Promise<void> {
+  const [registered, ledger] = await Promise.all([
+    api.listNotificationChannels(), api.listNotificationDeliveries({limit:20})])
+  channels.value = registered.items; channelRoutes.value = registered.routes
+  deliveries.value = ledger.items
+}
+function routedEvents(name: string): string {
+  return Object.entries(channelRoutes.value).filter(([,names]) => names.includes(name))
+    .map(([event]) => eventText[event] ?? event).join('、')
+}
+async function selfTest(): Promise<void> {
+  busy.value = true; error.value = ''; notice.value = ''
+  try {
+    // 每次自检都是一次新的投递事实，因此用新去重键，不被上一次去重命中。
+    const result = await api.dispatchNotification({event:'channel_self_test', subject:'渠道投递自检',
+      body:'由“运行审计”页发起的一次投递自检，不含真实人员信息。', dedup_key:uuid()})
+    notice.value = '自检结果：' + (result.results.length
+      ? result.results.map(row => row.channel + ' ' + (deliveryText[row.status] ?? row.status)
+        + (row.error ? '（' + row.error + '）' : '')).join('；')
+      : '当前没有配置任何通知渠道，未投递任何消息。')
+    await loadNotifications()
+  } catch (err) { fail(err) } finally { busy.value = false }
+}
 async function loadTab(): Promise<void> {
   loading.value = true; error.value = ''
   try {
@@ -91,7 +122,7 @@ async function loadTab(): Promise<void> {
     if (tab.value === 'operations') {
       const params: Record<string, string|number> = {page:auditPage.value}
       for (const [key,value] of Object.entries(auditFilters)) if (value) params[key] = value
-      const [stats, audit] = await Promise.all([api.getOperations(), api.listAudit(params)])
+      const [stats, audit] = await Promise.all([api.getOperations(), api.listAudit(params), loadNotifications()])
       operations.value = stats; logs.value = audit.items; auditTotal.value = audit.total
     }
   } catch (err) { fail(err) } finally { loading.value = false }
@@ -268,6 +299,16 @@ function formatDate(value: string | null): string {
         <div v-if="logs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>用户编号</th><th>动作 / 对象</th><th>结果</th><th>请求编号</th></tr></thead><tbody>
           <tr v-for="row in logs" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td class="governance__id">{{ row.user_id }}</td><td>{{ row.action }} / {{ row.resource_type }}<small>{{ row.resource_id }}</small></td><td>{{ statusText[row.result] ?? row.result }}</td><td class="governance__id">{{ row.request_id }}</td></tr></tbody></table></div>
         <p v-else class="wb-empty">没有符合条件的审计记录。</p><div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="auditPage===1" @click="auditPage--; loadTab()">上一页</button><span>第 {{ auditPage }} 页 · 共 {{ auditTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="auditPage*40>=auditTotal" @click="auditPage++; loadTab()">下一页</button></div>
+        <section class="wb-section wb-stack"><div class="wb-toolbar"><div><h2>通知渠道与投递台账</h2>
+          <p class="wb-note">事件→渠道全部可配置；未配置凭据的渠道不参与投递，投递失败会留在台账并进入审计。系统不替组织自动外发。</p></div>
+          <button v-if="session.can(PERM.CONFIG_MANAGE)" class="btn btn--quiet" type="button" :disabled="busy" @click="selfTest">{{ busy ? '投递中…' : '发起渠道自检' }}</button></div>
+          <div v-if="channels.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>渠道</th><th>用途</th><th>凭据</th><th>已配置路由</th></tr></thead><tbody>
+            <tr v-for="row in channels" :key="row.name"><td>{{ row.name }}</td><td>{{ row.description }}</td><td>{{ row.configured ? '已就绪' : '未配置（不投递）' }}</td><td>{{ routedEvents(row.name) || '未路由' }}</td></tr></tbody></table></div>
+          <p v-else class="wb-note">尚无已登记渠道。</p>
+          <div v-if="deliveries.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>事件</th><th>渠道</th><th>状态</th><th>尝试</th><th>说明</th></tr></thead><tbody>
+            <tr v-for="row in deliveries" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td>{{ eventText[row.event] ?? row.event }}</td><td>{{ row.channel }}</td><td>{{ deliveryText[row.status] ?? row.status }}</td><td>{{ row.attempts }}</td><td>{{ row.last_error ?? '—' }}</td></tr></tbody></table></div>
+          <p v-else class="wb-empty">暂无投递记录。配置路由或发起自检后在此留痕。</p>
+        </section>
       </section>
     </WorkspaceTabs>
     <ActionDialog :open="Boolean(dialog)" :title="({organization:'维护组织',user:'维护用户',tenant:'登记或维护租户',submit:'提交人工审核',decision:'审核材料与结论',job:'创建任务',archive:'电子记录效力确认'} as Record<string,string>)[dialog] ?? '管理'" :busy="busy" wide @close="dialog=''">

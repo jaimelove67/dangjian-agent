@@ -33,6 +33,8 @@ const EXPECTED = [
     username: 'admin',
     role: 'system_admin',
     managesKnowledge: true,
+    opsQuery: true,
+    confirmDispatch: true,
     allow: ['/ask', '/knowledge', '/members', '/meeting', '/assessment', '/study', '/governance', '/accounts', '/system'],
     deny: ['/my-archive', '/my-materials'],
   },
@@ -40,6 +42,8 @@ const EXPECTED = [
     username: 'test-reviewer',
     role: 'school_admin',
     managesKnowledge: true,
+    opsQuery: true,
+    confirmDispatch: true,
     allow: ['/ask', '/knowledge', '/members', '/meeting', '/assessment', '/study', '/governance'],
     deny: ['/accounts', '/system', '/my-archive', '/my-materials'],
   },
@@ -214,6 +218,7 @@ async function checkRole(browser, spec) {
 
     await checkKnowledgeTools(page, spec)
     await checkGovernanceIdentity(page, spec)
+    await checkNotificationOps(page, spec)
   } finally {
     await context.close()
   }
@@ -283,6 +288,48 @@ async function checkGovernanceIdentity(page, spec) {
     }
   } else if (createUser || registerTenant) {
     fail(`${spec.username}: 非平台系统管理员却出现「新增用户/登记租户」入口（点击必然 403）`)
+  }
+}
+
+/**
+ * 「运行审计」页必须能看见通知渠道与投递台账。
+ *
+ * 渠道抽象层只放在后端，运维就没有地方确认“配了哪些渠道、哪个渠道还没凭据、
+ * 最近一次投递为什么失败”。这里断言具备 ops.query 的角色能看到出厂登记的站内渠道，
+ * 不具备的角色连标签都不该出现——运行审计不是普通业务页。
+ */
+async function checkNotificationOps(page, spec) {
+  if (!spec.allow.includes('/governance')) return
+  await page.goto(`${BASE}/governance`, { waitUntil: 'domcontentloaded' })
+  await settle(page)
+  const opsTab = page.getByRole('tab', { name: '运行审计' })
+  if (!spec.opsQuery) {
+    if (await opsTab.count()) {
+      fail(`${spec.username}: 不具备 ops.query 却出现「运行审计」标签`)
+    } else {
+      notes.push(`${spec.username}: 无「运行审计」标签（不具备 ops.query），跳过通知渠道检查`)
+    }
+    return
+  }
+  if (!(await opsTab.count())) {
+    fail(`${spec.username}: 具备 ops.query 却看不到「运行审计」标签`)
+    return
+  }
+  await opsTab.first().click()
+  await page.waitForTimeout(2500)
+  if (!(await page.getByRole('heading', { name: '通知渠道与投递台账' }).count())) {
+    fail(`${spec.username}: 运行审计页缺少「通知渠道与投递台账」区块`)
+    return
+  }
+  if (!(await page.getByRole('cell', { name: 'inapp', exact: true }).count())) {
+    fail(`${spec.username}: 通知渠道表未列出出厂登记的站内渠道 inapp`)
+  }
+  const selfTest = await page.getByRole('button', { name: /发起渠道自检|投递中/ }).count()
+  if (spec.confirmDispatch && !selfTest) {
+    fail(`${spec.username}: 具备 config.manage 却看不到「发起渠道自检」按钮`)
+  }
+  if (!spec.confirmDispatch && selfTest) {
+    fail(`${spec.username}: 不具备 config.manage 却能看到「发起渠道自检」按钮`)
   }
 }
 

@@ -51,6 +51,21 @@ export interface Operations {
   alerts: { action: string; result: string; count: number; window_hours: number }[]
   audit_spool_pending: number
 }
+export interface NotificationChannel {
+  name: string; description: string; configured: boolean
+}
+export interface NotificationChannels {
+  items: NotificationChannel[]; events: string[]; routes: Record<string, string[]>
+  max_attempts: number
+}
+export interface NotificationDelivery {
+  id: string; event: string; channel: string; recipient_id: string | null; subject: string
+  status: string; attempts: number; last_error: string | null
+  delivered_at: string | null; created_at: string | null
+}
+export interface NotificationDispatch {
+  results: { channel: string; status: string; attempts: number; skipped: boolean; error: string | null }[]
+}
 const target = (tenant_id?: string) => tenant_id ? { tenant_id } : {}
 export const listTenants = () => http.get<never, {items: TenantRecord[]}>('/admin/tenants')
 export const listOrgs = (tenant_id?: string) =>
@@ -86,3 +101,10 @@ export const listAudit = (params: Record<string, string | number>) =>
   http.get<never, {items: AuditRecord[]; total: number}>('/admin/audit-logs', {params})
 export const saveArchivePolicy = (body: {enabled: boolean; expected_revision: number; evidence: string}) =>
   http.patch('/admin/electronic-archive', body)
+export const listNotificationChannels = () =>
+  http.get<never, NotificationChannels>('/admin/notification-channels')
+export const listNotificationDeliveries = (params: Record<string, string | number> = {}) =>
+  http.get<never, {items: NotificationDelivery[]; statuses: string[]}>('/admin/notification-deliveries', {params})
+export const dispatchNotification = (body: {
+  event: string; subject: string; body: string; dedup_key?: string; channels?: string[]
+}) => http.post<never, NotificationDispatch>('/admin/notifications/dispatch', body)
