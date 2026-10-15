@@ -47,6 +47,20 @@ Linux/macOS 使用 `DASHSCOPE_API_KEY= QWEN_API_KEY= python -m pytest tests/unit
 
 自动化回归应在测试进程中将 `DASHSCOPE_API_KEY` 和兼容变量 `QWEN_API_KEY` 覆盖为空，保持本地 `.env` 不变。检查失败数和跳过数；缺少依赖或数据库导致的跳过不能计为验收通过。
 
+### 排障：Windows 临时目录不可写会吞掉整批用例
+
+如果 `pytest` 在收集后立刻抛出一批 `ERROR at setup`，且错误是
+`PermissionError: [WinError 5] 拒绝访问。: '...\Temp\pytest-of-<用户名>'`，
+那是 pytest 临时根目录的 ACL 损坏，与本项目代码无关，且在没有管理员权限时无法修复
+（`takeown` / `icacls` 同样会被拒绝）。用 `--basetemp` 指向一个可写目录即可绕开：
+
+```powershell
+python -m pytest --basetemp="$env:TEMP\pytest-bt"
+```
+
+这一错误发生在 setup 阶段，会把用例直接吞成 ERROR，并顺势掩盖同一批文件里真实的断言失败。
+先绕开它、再解读结果，否则"31 个错误"之类的数字并不能说明代码有问题。
+
 ## 生成测试产物
 
 ```bash
