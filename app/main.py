@@ -24,6 +24,7 @@ from app.api.v1 import (
     member,
     member_self,
     member_full,
+    notifications,
     qa,
     study,
     user,
@@ -219,6 +220,7 @@ app.include_router(user.router, prefix="/api/v1", tags=["兼容用户接口"])
 app.include_router(admin.router, prefix="/api/v1", tags=["管理"])
 app.include_router(governance.router, prefix="/api/v1", tags=["安全与运维"])
 app.include_router(study.router, prefix="/api/v1", tags=["中心组学习"])
+app.include_router(notifications.router, prefix="/api/v1", tags=["通知渠道"])
 
 
 # 全局异常处理

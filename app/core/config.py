@@ -135,6 +135,17 @@ class Settings(BaseSettings):
     MEMBER_REMINDER_SCAN_SECONDS: int = Field(
         default=3600, ge=60, le=86400, description="党员发展提醒扫描周期（秒）"
     )
+    # ==================== 对外通知渠道 ====================
+    # 事件→渠道的路由。默认空：不配置渠道就不外发任何消息（系统不替组织决定是否外发）。
+    NOTIFICATION_ROUTES: dict[str, list[str]] = Field(
+        default_factory=dict, description="事件→通知渠道路由（JSON 对象）"
+    )
+    NOTIFICATION_MAX_ATTEMPTS: int = Field(
+        default=3, ge=1, le=10, description="单渠道投递最大尝试次数"
+    )
+    NOTIFICATION_BACKOFF_SECONDS: float = Field(
+        default=2.0, ge=0, le=60, description="通知重试退避基数（秒），0 表示不等待"
+    )
 
     @model_validator(mode="after")
     def production_security(self) -> "Settings":
