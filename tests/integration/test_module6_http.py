@@ -1,6 +1,7 @@
 """Native governance HTTP acceptance with signed tokens, live identities and isolated data."""
 
 import base64
+import json
 import os
 import uuid
 from datetime import date
@@ -11,8 +12,10 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy import select
 
+from app.api.v1.health import _readiness_details
 from app.core.cache import redis_manager
 from app.core.config import settings
+from app.core.encryption import filesystem_path
 from app.core.security import create_access_token
 from app.core.tenant import bypass_tenant_filter
 from app.db.session import get_db
@@ -347,7 +350,11 @@ async def test_production_readiness_keeps_unconfirmed_school_and_models_unready(
     monkeypatch.setenv("FILE_ENCRYPTION_ACTIVE_KEY", "acceptance")
     response = await http_case["http"].get("/api/v1/health/ready")
     assert response.status_code == 503, response.text
-    checks = response.json()["checks"]
+    # 公开探针只暴露整体状态；依赖明细只对平台管理员开放（/admin/health/ready）。
+    # 这里同时断言"不泄露明细"，再用同一实现核对未就绪的具体原因。
+    assert response.json() == {"status": "not_ready"}
+    details = json.loads((await _readiness_details()).body)
+    checks = details["checks"]
     for dependency in ("database", "redis", "schema", "encryption", "audit_storage", "jwt_secret"):
         assert checks[dependency] == "healthy"
     assert checks["school_admission"] == "configuration_required"
@@ -416,10 +423,10 @@ async def test_encrypted_original_versions_survive_update_and_reject_foreign_dow
     assert missing.status_code == 404
     encrypted_files = list((tmp_path / "originals").rglob("*.bin"))
     assert len(encrypted_files) == 2
-    assert all(
-        initial not in item.read_bytes() and revised not in item.read_bytes()
-        for item in encrypted_files
-    )
+    # 存储根 + 内容寻址文件名可能超过 Windows MAX_PATH，读取沿用应用的路径口径。
+    for item in encrypted_files:
+        stored = filesystem_path(item).read_bytes()
+        assert initial not in stored and revised not in stored
 
 
 async def test_platform_scope_school_registration_and_process_metrics_require_real_platform(
