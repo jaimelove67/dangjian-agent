@@ -79,6 +79,16 @@ async function page(width=1440, readonly=false) {
     else if (path==='/admin/operations') data={jobs:{queued:1},reviews:{pending:1},model_usage:[],
       alerts:[{action:'query',result:'denied',count:5,window_hours:24}],audit_spool_pending:0}
     else if (['/audit','/admin/audit','/admin/audit-logs'].includes(path)) data={items:[],total:0}
+    else if (path==='/admin/notification-channels') data={items:[
+      {name:'inapp',description:'站内：投递记录即用户可见提醒，不外发',configured:true}],
+      events:['channel_self_test'],routes:{channel_self_test:['inapp']},max_attempts:3}
+    else if (path==='/admin/notification-deliveries') data={items:[
+      {id:'delivery',event:'channel_self_test',channel:'inapp',recipient_id:null,
+        subject:'渠道投递自检',status:'sent',attempts:1,last_error:null,
+        delivered_at:'2026-10-11T08:00:00',created_at:'2026-10-11T08:00:00'}],
+      statuses:['pending','sent','failed']}
+    else if (path==='/admin/notifications/dispatch') data={results:[
+      {channel:'inapp',status:'sent',attempts:1,skipped:false,error:null}]}
     else throw new Error('未覆盖的界面请求 '+method+' '+path)
     await route.fulfill({status:200,contentType:'application/json',
       body:JSON.stringify({code:0,message:'success',data,trace_id:'fixture-trace'})})
@@ -134,6 +144,18 @@ try {
   await tab.getByLabel('用户编号',{exact:true}).fill('fixture-user-id')
   await tab.getByRole('button',{name:'查询审计记录',exact:true}).click()
   checks.push('运行告警与审计筛选可操作')
+  // 通知渠道与投递台账属于运行审计工作区：渠道就绪状态与投递事实都要可见。
+  assert.ok(await tab.getByRole('heading',{name:'通知渠道与投递台账',exact:true}).count())
+  // inapp 既是已登记渠道，也出现在投递台账的「渠道」列，因此这里只断言存在。
+  assert.ok(await tab.getByRole('cell',{name:'inapp',exact:true}).count()>=1)
+  assert.equal(await tab.getByRole('cell',{name:'已就绪',exact:true}).count(),1)
+  assert.equal(await tab.getByRole('cell',{name:'已投递',exact:true}).count(),1)
+  await tab.getByRole('button',{name:'发起渠道自检',exact:true}).click()
+  await tab.getByText('自检结果：',{exact:false}).first().waitFor()
+  assert.equal(mutations.at(-1).path,'/admin/notifications/dispatch')
+  assert.ok(mutations.at(-1).body.dedup_key)
+  assert.equal(mutations.at(-1).body.event,'channel_self_test')
+  checks.push('通知渠道自检走服务端投递并携带去重键')
   await tab.screenshot({path:resolve(OUT,'governance-audit-desktop.png'),fullPage:true})
   await ctx.close()
   for (const width of [768,390]) {
