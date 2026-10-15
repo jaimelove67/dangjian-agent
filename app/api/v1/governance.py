@@ -31,7 +31,6 @@ from app.schemas.governance import (
     ReviewSubmit,
     TenantCreate,
     TenantUpdate,
-    UserCreate,
     UserUpdate,
 )
 from app.services.governance_service import GovernanceUpdate, read_governance, save_governance
@@ -150,6 +149,9 @@ async def update_organization(
     return await changed(db, request, user, row, "update", "organization")
 
 
+# 开户（POST /admin/users）由平台系统管理员专用接口承担（app/api/v1/admin.py）。
+# 治理侧刻意不注册同方法+同路径：重复注册会按 include_router 顺序静默遮蔽其中一方，
+# 这里只保留学校管理员（IDENTITY_MANAGE）可用的读取与维护。
 @router.get("/admin/users")
 async def users(
     request: Request,
@@ -161,22 +163,6 @@ async def users(
         request,
         {"items": [public_record(row) for row in await IdentityService(db, user).users(tenant_id)]},
     )
-
-
-@router.post("/admin/users")
-async def create_user(
-    body: UserCreate,
-    request: Request,
-    tenant_id: str | None = Query(None, max_length=36),
-    user: User = Depends(identity_admin),
-    db: AsyncSession = Depends(get_db),
-) -> APIResponse[dict[str, Any]]:
-    try:
-        row = await IdentityService(db, user).save_user(tenant_id, body.model_dump())
-        return await changed(db, request, user, row, "create", "user")
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(409, "用户名已登记，请使用其他用户名") from None
 
 
 @router.patch("/admin/users/{record_id}")

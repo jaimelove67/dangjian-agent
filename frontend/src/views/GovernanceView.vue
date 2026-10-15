@@ -27,6 +27,9 @@ const form = reactive({name: '', username: '', password: '', role: 'member' as U
 const configReason = ref(''), allowedHosts = ref(''), localHosts = ref('')
 const auditFilters = reactive({user_id: '', resource_id: '', action: '', result: '', start_at: '', end_at: ''})
 const canManage = computed(() => session.can(PERM.IDENTITY_MANAGE))
+// 开户（POST /admin/users）与登记租户在服务端仅限平台系统管理员；学校管理员仍可
+// 维护组织与既有账号。按钮按同一口径隐藏，避免点出必然 403 的入口。
+const isPlatformAdmin = computed(() => session.state.user?.role === 'system_admin')
 const tabs = computed(() => [
   ...(canManage.value ? [{key:'identity', label:'组织与账号'}] : []),
   {key:'reviews', label:'人工审核'},
@@ -183,7 +186,7 @@ function formatDate(value: string | null): string {
       <section v-else-if="tab === 'identity'" class="wb-stack">
         <div class="wb-toolbar"><label class="wb-field"><span>管理租户</span><select class="select" v-model="selectedTenant">
           <option v-for="row in tenants" :key="row.id" :value="row.id">{{ row.name }}{{ row.is_active ? '' : '（已停用）' }}</option>
-        </select></label><div class="wb-actions"><button class="btn btn--primary" type="button" @click="open('tenant')">登记租户</button>
+        </select></label><div class="wb-actions"><button v-if="isPlatformAdmin" class="btn btn--primary" type="button" @click="open('tenant')">登记租户</button>
           <button v-if="tenants.find(row=>row.id===selectedTenant)" class="btn btn--quiet" type="button" @click="open('tenant', tenants.find(row=>row.id===selectedTenant))">维护租户</button></div></div>
         <p class="wb-note">新租户默认待配置。组织登记须使用学校认可的名称和层级；停用先处理下级组织。</p>
         <label class="wb-field"><span>查找组织或账号</span><input class="input" v-model="identitySearch" type="search" placeholder="名称、账号或角色" /></label>
@@ -194,7 +197,7 @@ function formatDate(value: string | null): string {
               <td><button class="btn btn--quiet" type="button" :aria-label="'维护组织 '+row.name" @click="open('organization',row)">维护</button></td></tr>
           </tbody></table></div><p v-else class="wb-empty">组织尚未登记，请补充学校确认的组织资料。</p>
         </section>
-        <section class="wb-section wb-stack"><div class="wb-toolbar"><h2>用户与角色</h2><button type="button" class="btn btn--primary" @click="open('user')">新增用户</button></div>
+        <section class="wb-section wb-stack"><div class="wb-toolbar"><h2>用户与角色</h2><button v-if="isPlatformAdmin" type="button" class="btn btn--primary" @click="open('user')">新增用户</button></div>
           <div v-if="visibleUsers.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>用户</th><th>账号</th><th>角色</th><th>所属组织</th><th>状态</th><th>维护</th></tr></thead><tbody>
             <tr v-for="row in visibleUsers" :key="row.id"><td>{{ row.name }}</td><td>{{ row.username }}</td><td>{{ ROLE_LABELS[row.role] }}</td><td>{{ orgLabel(row.org_unit_id) }}</td>
               <td>{{ row.is_active ? '有效' : '已停用' }}</td><td><button class="btn btn--quiet" type="button" :aria-label="'维护用户 '+row.name" @click="open('user',row)">维护</button></td></tr>
