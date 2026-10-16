@@ -503,10 +503,16 @@ async def replace_knowledge_content(
         raise HTTPException(status_code=404, detail="文档不存在") from None
     except DocumentConflictError:
         raise HTTPException(status_code=409, detail="文件已被更新，请刷新后再试") from None
-    except UnsupportedFormatError:
-        raise HTTPException(status_code=415, detail="不支持的文件格式") from None
-    except ParseError:
-        raise HTTPException(status_code=422, detail="文档解析失败或不含可解析文本") from None
+    except UnsupportedFormatError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail={"code": ErrorCode.BUSINESS_ERROR, "message": str(exc)},
+        ) from None
+    except ParseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": ErrorCode.BUSINESS_ERROR, "message": f"文档解析失败: {str(exc)}"},
+        ) from None
     except MetadataValidationError:
         raise HTTPException(
             status_code=422, detail="更新内容与原文档分级不符，请按保密要求分类归档"

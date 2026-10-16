@@ -28,7 +28,7 @@ from app.core.tenant import get_tenant_id
 from app.llm.base import DataLevel
 from app.models.knowledge import EmbeddingChunk, KnowledgeDoc
 from app.rag.exceptions import ParseError
-from app.rag.loader import ParserRegistry, default_registry
+from app.rag.loader import ParserRegistry, default_registry, empty_text_reason
 from app.rag.privacy import content_level
 from app.rag.splitter import ChapterArticleSplitter
 from app.rules.document_metadata import MetadataValidationError, validate_document_metadata
@@ -227,7 +227,7 @@ async def create_document(
             [f"文件内容需要至少标注为 {detected_level.value}，不能按低级别入库"]
         )
     if content is not None and validation.embedding_allowed and not parsed_text.strip():
-        raise ParseError("文档不包含可解析文本")
+        raise ParseError(empty_text_reason(parsed))
     # 3. 落库文档
     level = str(metadata["level"])
     visibility = str(metadata["visibility"])
@@ -357,7 +357,7 @@ async def replace_document_content(
         raise DocumentConflictError("文件已被更新，请刷新后再试")
     parsed = default_registry.get(file_name).parse(content, file_name=file_name)
     if not parsed.text.strip():
-        raise ParseError("文档不包含可解析文本")
+        raise ParseError(empty_text_reason(parsed))
     declared_level = DataLevel(document.security_level)
     if content_level(parsed.text, minimum=declared_level) != declared_level:
         raise MetadataValidationError(["更新内容与原文档分级不符，请按保密要求分类归档"])

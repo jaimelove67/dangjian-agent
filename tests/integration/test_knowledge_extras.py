@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import io
 import json
 import os
 import tempfile
@@ -487,3 +488,113 @@ async def test_supply_maintenance_requires_manage_permission(kb_url):
                 "/api/v1/knowledge-docs/M1-SUPPLY-001/maintenance", json={"note": "越权"}
             )
         ).status_code == 403
+
+
+# ---------------------------------------------------------------- T-WF01-04 解析失败兜底
+
+
+def scanned_pdf_bytes(pages: int = 3) -> bytes:
+    """有页面但没有文字层的 PDF：扫描件 / 图片型 PDF 的字节特征。"""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=595, height=842)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+async def upload_bytes(client, doc_id, file_name, content, content_type, **overrides):
+    data = {
+        "doc_id": doc_id,
+        "file_name": file_name,
+        "title": "解析兜底测试文档",
+        "issuer": "合成单位",
+        "level": "school",
+        "visibility": "school",
+        "effective_date": "2026-01-01",
+        "tags": "测试,兜底",
+        "security_level": "public",
+        "status": "effective",
+    }
+    data.update(overrides)
+    return await client.post(
+        "/api/v1/knowledge-docs",
+        data=data,
+        files={"file": (file_name, content, content_type)},
+    )
+
+
+@pytest.mark.asyncio
+async def test_scanned_pdf_rejected_with_actionable_guidance(kb_url):
+    """扫描件不能只回一句"没有可解析文本"：要说清页数、原因和三条出路。"""
+    async with client_for(kb_url, actor()) as (client, _):
+        response = await upload_bytes(
+            client, "M1-SCAN-001", "scan.pdf", scanned_pdf_bytes(3), "application/pdf"
+        )
+        assert response.status_code == 422, response.text
+        message = response.json()["message"]
+        assert "3 页" in message and "文字层" in message and "OCR" in message
+        assert "另存为 .docx 或 .txt" in message
+        # 解析失败不落库：用户改好文件即可原样重提，不需要先清理残留
+        assert (await client.get("/api/v1/knowledge-docs/M1-SCAN-001")).status_code == 404
+
+        # 旧版 Word 与图片：认得出是什么，并给出下一步，而不是"格式不支持"就结束
+        legacy = await upload_bytes(
+            client,
+            "M1-SCAN-002",
+            "notice.doc",
+            b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+            "application/msword",
+        )
+        assert legacy.status_code == 415, legacy.text
+        assert "另存为 .docx" in legacy.json()["message"]
+
+        image = await upload_bytes(
+            client, "M1-SCAN-003", "stamp.png", b"\x89PNG\r\n\x1a\n\x00\x00", "image/png"
+        )
+        assert image.status_code == 415, image.text
+        assert "图片" in image.json()["message"] and "OCR" in image.json()["message"]
+
+        table = await upload_bytes(
+            client,
+            "M1-SCAN-004",
+            "roster.xlsx",
+            b"PK\x03\x04\x00\x00",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        assert table.status_code == 415, table.text
+        assert "不能作为制度正文入库" in table.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_replace_content_keeps_reason_and_accepts_fixed_file(kb_url):
+    """替换正文是扫描件唯一的人工补救入口，不能把失败原因吞掉。"""
+    async with client_for(kb_url, actor()) as (client, _):
+        created = await upload_document(client, doc_id="M1-REPLACE-001")
+        assert created.status_code == 200, created.text
+        revision = created.json()["data"]["document"]["content_revision"]
+
+        failed = await client.put(
+            "/api/v1/knowledge-docs/M1-REPLACE-001/content",
+            data={"expected_revision": str(revision)},
+            files={"file": ("scan.pdf", scanned_pdf_bytes(2), "application/pdf")},
+        )
+        assert failed.status_code == 422, failed.text
+        message = failed.json()["message"]
+        assert "2 页" in message and "文字层" in message
+
+        fixed = await client.put(
+            "/api/v1/knowledge-docs/M1-REPLACE-001/content",
+            data={"expected_revision": str(revision)},
+            files={
+                "file": (
+                    "fixed.txt",
+                    "第一条 补录后的可复制正文，用于替换扫描件。\n".encode(),
+                    "text/plain",
+                )
+            },
+        )
+        assert fixed.status_code == 200, fixed.text
+        assert fixed.json()["data"]["chunk_count"] >= 1

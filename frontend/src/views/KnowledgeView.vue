@@ -481,13 +481,22 @@ async function submitUpload(): Promise<void> {
       <div class="upload__body">
         <div class="upload__file">
           <label class="dropzone">
-            <input class="u-sr" type="file" accept=".pdf,.docx,.txt,.md" @change="onFileChange" />
+            <input
+              class="u-sr"
+              type="file"
+              accept=".pdf,.docx,.doc,.wps,.txt,.md,.png,.jpg,.jpeg,.webp,.tif,.tiff,.xls,.xlsx"
+              @change="onFileChange"
+            />
             <AppIcon name="upload" :size="20" />
             <span class="dropzone__title">
               {{ upload.file ? upload.file.name : '选择文件' }}
             </span>
             <span class="dropzone__hint">
               支持 PDF、Word、TXT、Markdown，单个文件不超过 10 MB
+            </span>
+            <span class="dropzone__hint is-warn">
+              扫描件（图片型 PDF）与照片没有文字层，系统读不出正文；请上传带文字层的
+              PDF，或把正文另存为 .docx / .txt 后上传
             </span>
           </label>
           <p
@@ -958,14 +967,23 @@ async function submitUpload(): Promise<void> {
 
       <footer v-if="canManage" class="detail__foot">
         <p class="u-meta">状态变更会直接影响该文件是否被问答环节检索到。</p>
+        <p class="u-meta">
+          更新内容同样必须是可复制的文字：扫描件请先导出带文字层的 PDF，或把正文另存为
+          .docx / .txt 后上传（替换失败时会说明原因与出路）。
+        </p>
         <label class="field">
           <span>更新文件内容（当前版本 {{ selected.content_revision ?? 1 }}）</span>
-          <input :key="selected.id + ':' + selected.content_revision" type="file" accept=".txt,.md,.pdf,.docx" @change="chooseReplacement" />
+          <input
+            :key="selected.id + ':' + selected.content_revision"
+            type="file"
+            accept=".txt,.md,.pdf,.docx,.doc,.wps,.png,.jpg,.jpeg,.webp,.tif,.tiff"
+            @change="chooseReplacement"
+          />
         </label>
         <button class="btn btn--ghost" type="button" :disabled="!replacement || replacementBusy" @click="replaceContent">
           {{ replacementBusy ? '保存中' : '保存新版本' }}
         </button>
-        <p v-if="replacementMessage" role="status">{{ replacementMessage }}</p>
+        <p v-if="replacementMessage" class="replacement__msg" role="status">{{ replacementMessage }}</p>
       </footer>
     </aside>
 
@@ -1156,11 +1174,27 @@ async function submitUpload(): Promise<void> {
 
 .upload__msg {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
+  /* T-WF01-04：解析失败的提示带 ①②③ 分步说明，必须按行显示，不能挤成一段 */
+  white-space: pre-line;
+}
+
+.upload__msg svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* 替换正文的失败提示同样带分步说明（T-WF01-04） */
+.replacement__msg {
+  white-space: pre-line;
+}
+
+.dropzone__hint.is-warn {
+  color: var(--warn-ink);
 }
 
 .upload__msg.is-bad {

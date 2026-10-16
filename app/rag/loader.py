@@ -22,6 +22,22 @@ from app.rag.exceptions import ParseError, UnsupportedFormatError
 
 logger = logging.getLogger(__name__)
 
+# 无法直接抽取正文的常见格式（T-WF01-04）
+# 系统要能认出它们是什么，并告诉用户该怎么改，而不是丢一句"格式不支持"。
+IMAGE_EXTENSIONS: tuple[str, ...] = (
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".gif",
+    ".tif",
+    ".tiff",
+    ".webp",
+    ".heic",
+)
+LEGACY_WORD_EXTENSIONS: tuple[str, ...] = (".doc", ".wps", ".rtf")
+TABLE_EXTENSIONS: tuple[str, ...] = (".xls", ".xlsx", ".csv", ".et", ".ppt", ".pptx", ".dps")
+
 
 @dataclass
 class ParsedDocument:
@@ -102,6 +118,55 @@ class DocxParser(DocumentParser):
         return ParsedDocument(text=text, file_name=file_name)
 
 
+def empty_text_reason(parsed: ParsedDocument) -> str:
+    """解析结果没有正文时的分因说明（T-WF01-04：解析失败要有明确提示与可重试的出路）。
+
+    扫描件 PDF、损坏文件与空模板的处置方式完全不同，不能用同一句话打发用户：
+    扫描件要说明"文件读到了但没有文字层"，并给出把文字转出来的具体路径。
+    """
+    ext = Path(parsed.file_name).suffix.lower() or "(无扩展名)"
+    if ext == ".pdf":
+        if parsed.page_count:
+            return (
+                f"该 PDF 有 {parsed.page_count} 页，但没有文字层，属于扫描件或图片型 PDF。"
+                "系统只能读取 PDF 里的文字层，无法识别图片中的文字，因此不能把它切成检索片段。"
+                "请任选一种方式后再上传：\n"
+                "① 用扫描仪或 WPS/Adobe 的「文字识别（OCR）」重新导出一份带文字层的 PDF；\n"
+                "② 把正文另存为 .docx 或 .txt（可复制文本）后上传；\n"
+                "③ 原件确实识别不了时，请把正文要点录入一份 .docx 作为正文版本，原件作附件留存。"
+            )
+        return "该 PDF 没有可读取的页面，文件可能已损坏或只含目录结构，请重新导出后再上传。"
+    return (
+        f"{ext} 文件里没有可提取的文本（可能只有图片、或是空白模板）。"
+        "请把正文转成可复制的文本后上传：带文字层的 PDF、.docx 或 .txt。"
+    )
+
+
+def unsupported_reason(ext: str, *, supported: list[str]) -> str:
+    """不支持的格式要说清"这是什么、为什么不行、该怎么办"（T-WF01-04）。"""
+    normalized = ext or "(无扩展名)"
+    supported_text = " / ".join(supported)
+    if ext in IMAGE_EXTENSIONS:
+        return (
+            f"图片文件（{normalized}）无法直接抽取正文：系统暂不支持图片文字识别（OCR）。"
+            "请把图片里的文字转成可复制的文本后再上传：\n"
+            "① 用手机或扫描软件的「提取文字」功能导出 .docx / .txt；\n"
+            "② 在 WPS/Word 里插入图片后用「图片转文字」；\n"
+            "③ 也可由管理员在知识库中新建正文并录入要点，原件作附件留存。"
+        )
+    if ext in LEGACY_WORD_EXTENSIONS:
+        return (
+            f"这是旧版 Word/WPS 格式（{normalized}），系统只能读取 .docx。"
+            "请在 Word/WPS 中「另存为 .docx」后重新上传，内容与格式不会丢失。"
+        )
+    if ext in TABLE_EXTENSIONS:
+        return (
+            f"表格与演示文件（{normalized}）不能作为制度正文入库："
+            f"系统只从 {supported_text} 抽取正文。若是制度附件，请转成 PDF 或 .docx 后上传。"
+        )
+    return f"不支持的文件格式: {normalized}；当前支持 {supported_text}。"
+
+
 class ParserRegistry:
     """解析器注册表（按扩展名路由）"""
 
@@ -118,7 +183,9 @@ class ParserRegistry:
         ext = Path(file_name).suffix.lower()
         parser = self._by_extension.get(ext)
         if parser is None:
-            raise UnsupportedFormatError(f"不支持的文件格式: {ext or '(无扩展名)'}")
+            raise UnsupportedFormatError(
+                unsupported_reason(ext, supported=sorted(self._by_extension))
+            )
         return parser
 
     def parse(self, data: bytes, *, file_name: str) -> ParsedDocument:
