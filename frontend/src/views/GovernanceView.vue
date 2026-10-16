@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import * as api from '@/api/governance'
-import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, ReviewRecord, TenantRecord, UserRecord } from '@/api/governance'
+import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, ReviewRecord, RunLogRecord, TenantRecord, UserRecord } from '@/api/governance'
 import { ApiError } from '@/api/http'
 import * as qaApi from '@/api/qa'
 import { DOC_AUTHORITY_LABELS, DOC_AUTHORITY_ORDER, PERM, ROLE_LABELS, type QARecord, type UserRole } from '@/api/types'
@@ -33,6 +33,14 @@ const configReason = ref(''), allowedHosts = ref(''), localHosts = ref('')
 const auditFilters = reactive({user_id: '', resource_id: '', action: '', resource_type: '',
   data_level: '', result: '', tenant_id: '', start_at: '', end_at: ''})
 const auditScope = ref('')
+// 运行日志（T-SYS-06E）：任务执行与定时扫描的经过，从审计轨迹读取——不新起一张表
+const runLogs = ref<RunLogRecord[]>([]), runLogPage = ref(1), runLogTotal = ref(0), runLogScope = ref('')
+const runFilters = reactive({event: '', kind: '', result: '', start_at: '', end_at: ''})
+// 事件名由后端给出（列表用 event_text）；筛选项与任务类型的中文标签按同一套口径列出
+const runEventText: Record<string,string> = {job_enqueue:'任务入队', job_attempt_failed:'执行失败',
+  job_completed:'执行完成', member_scheduled_scan:'党员提醒扫描',
+  assessment_scheduled_scan:'考核提醒扫描', assessment_reminders_scan:'考核提醒同步'}
+const runKindKeys = ['member_reminders', 'assessment_reminders', 'embedding']
 // 问答记录集中查看（T-SYS-06）：本人档案口径之外，学校级按提问人/级别/结果/依据筛选并可导出
 const records = ref<QARecord[]>([]), recordPage = ref(1), recordTotal = ref(0), recordScope = ref('')
 const recordFilters = reactive({user_id: '', keyword: '', data_level: '', result: '', evidence: '', start_at: '', end_at: '', include_deleted: false})
@@ -185,6 +193,25 @@ async function exportAudit(): Promise<void> {
     notice.value = '已导出当前筛选范围（' + (auditScope.value || '未筛选') + '）的审计对账包，导出动作已写入审计。'
   } catch (err) { fail(err) } finally { busy.value = false }
 }
+/** 运行日志（T-SYS-06E）：与审计查询同一套时间口径（界面按北京时间填，发送带 +08:00） */
+function runParams(): Record<string, string | number> {
+  const params: Record<string, string | number> = {}
+  if (runFilters.event) params.event = runFilters.event
+  if (runFilters.kind) params.kind = runFilters.kind
+  if (runFilters.result) params.result = runFilters.result
+  if (runFilters.start_at) params.start_at = beijingIso(runFilters.start_at)
+  if (runFilters.end_at) params.end_at = beijingIso(runFilters.end_at)
+  return params
+}
+function resetRunFilters(): void {
+  Object.assign(runFilters, {event:'', kind:'', result:'', start_at:'', end_at:''})
+  runLogPage.value = 1
+  void loadRunLogs()
+}
+async function loadRunLogs(): Promise<void> {
+  const page = await api.listRunLogs({...runParams(), page: runLogPage.value})
+  runLogs.value = page.items; runLogTotal.value = page.total; runLogScope.value = page.scope_note
+}
 async function loadRecords(): Promise<void> {
   const page = await qaApi.listQaRecords({...recordParams(), page: recordPage.value})
   records.value = page.items; recordTotal.value = page.total; recordScope.value = page.scope_note
@@ -218,6 +245,8 @@ async function loadTab(): Promise<void> {
       const [stats, audit] = await Promise.all([api.getOperations(), api.listAudit(params), loadNotifications()])
       operations.value = stats; logs.value = audit.items; auditTotal.value = audit.total
       auditScope.value = audit.scope_note ?? ''
+      // 运行日志与审计查询同一页展示：排障时"谁点了什么"和"任务跑成什么样"要能对上时间
+      await loadRunLogs()
     }
   } catch (err) { fail(err) } finally { loading.value = false }
 }
@@ -429,6 +458,22 @@ function formatDate(value: string | null): string {
         <div v-if="logs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>用户编号</th><th>动作 / 对象</th><th>结果</th><th>请求编号</th></tr></thead><tbody>
           <tr v-for="row in logs" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td class="governance__id">{{ row.user_id }}</td><td>{{ row.action }} / {{ row.resource_type }}<small>{{ row.resource_id }}</small></td><td>{{ statusText[row.result] ?? row.result }}</td><td class="governance__id">{{ row.request_id }}</td></tr></tbody></table></div>
         <p v-else class="wb-empty">没有符合条件的审计记录。</p><div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="auditPage===1" @click="auditPage--; loadTab()">上一页</button><span>第 {{ auditPage }} 页 · 共 {{ auditTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="auditPage*40>=auditTotal" @click="auditPage++; loadTab()">下一页</button></div>
+        <section class="wb-section wb-stack"><h2>运行日志</h2>
+          <p class="wb-note">任务执行与定时扫描的经过：每次入队、每次尝试失败（第几次 / 错误类型 / 耗时）、每次完成（处理条数 / 耗时）以及三处定时扫描的结果。失败只记错误类型与状态，不记供应商错误正文；任务类型以任务台账为准，按类型筛时不显示定时扫描（扫描不属于某一条任务，用事件筛可单独看）。</p>
+          <div class="wb-grid">
+            <label class="wb-field"><span>事件</span><select class="select" v-model="runFilters.event"><option value="">全部事件</option><option v-for="(label, key) in runEventText" :key="key" :value="key">{{ label }}</option></select></label>
+            <label class="wb-field"><span>任务类型</span><select class="select" v-model="runFilters.kind"><option value="">全部类型</option><option v-for="key in runKindKeys" :key="key" :value="key">{{ kindText[key] }}</option></select></label>
+            <label class="wb-field"><span>结果</span><select class="select" v-model="runFilters.result"><option value="">全部结果</option><option value="success">成功</option><option value="denied">拒绝</option><option value="failed">失败</option></select></label>
+            <label class="wb-field"><span>开始时间（北京时间）</span><input class="input" v-model="runFilters.start_at" type="datetime-local" /></label>
+            <label class="wb-field"><span>结束时间（北京时间）</span><input class="input" v-model="runFilters.end_at" type="datetime-local" /></label>
+          </div>
+          <div class="wb-actions"><button class="btn btn--primary" type="button" :disabled="loading" @click="runLogPage=1; loadRunLogs()">查询运行日志</button><button class="btn btn--quiet" type="button" @click="resetRunFilters">清空条件</button></div>
+          <p v-if="runLogScope" class="wb-note">当前口径：{{ runLogScope }}。列表最新在前；耗时能区分"秒挂"和"跑到超时"。</p>
+          <div v-if="runLogs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>事件</th><th>任务类型</th><th>结果</th><th>第几次</th><th>耗时</th><th>处理条数</th><th>失败原因</th><th>任务编号</th></tr></thead><tbody>
+            <tr v-for="row in runLogs" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td>{{ row.event_text }}</td><td>{{ row.kind ? (kindText[row.kind] ?? row.kind) : '—' }}</td><td>{{ statusText[row.result] ?? row.result }}</td><td>{{ row.attempt ?? '—' }}</td><td>{{ row.duration_ms === null ? '—' : row.duration_ms + ' 毫秒' }}</td><td>{{ row.processed ?? row.reminder_count ?? '—' }}</td><td>{{ row.error_code ?? '—' }}</td><td class="governance__id">{{ row.resource_id ?? '—' }}</td></tr></tbody></table></div>
+          <p v-else class="wb-empty">没有符合条件的运行记录。任务入队、执行与定时扫描都会在此留痕。</p>
+          <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="runLogPage===1" @click="runLogPage--; loadRunLogs()">上一页</button><span>第 {{ runLogPage }} 页 · 共 {{ runLogTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="runLogPage*40>=runLogTotal" @click="runLogPage++; loadRunLogs()">下一页</button></div>
+        </section>
         <section class="wb-section wb-stack"><div class="wb-toolbar"><div><h2>通知渠道与投递台账</h2>
           <p class="wb-note">事件→渠道全部可配置；未配置凭据的渠道不参与投递，投递失败会留在台账并进入审计。系统不替组织自动外发。</p></div>
           <button v-if="session.can(PERM.CONFIG_MANAGE)" class="btn btn--quiet" type="button" :disabled="busy" @click="selfTest">{{ busy ? '投递中…' : '发起渠道自检' }}</button></div>

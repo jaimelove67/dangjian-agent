@@ -205,6 +205,19 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 
 未覆盖：导出件无数字签名与水印（复制件的二次传播不可控）；审计表只留操作摘要（`old_value` / `new_value` 为 sha256 与字节数），导出不含被操作对象原文；未做 5000 条以上大表的性能验收（超限直接 413 并提示分批）。
 
+## 工作流运行日志回归（T-SYS-06E）
+
+2026-10-16，新增 `GET /admin/run-logs`（权限 `admin.ops`，与「运行审计」标签同一枚）与前端「运行审计 → 运行日志」。运行日志**不新建表**：任务队列的入队 / 每次尝试失败 / 完成，以及三处定时扫描本来就已经写进审计，这里按事件把它们读成可筛选的运行日志（`app/services/run_log_service.py`：纯查询构造 + 行映射，租户边界与权限判定留在接口层），并给 `job_completed` / `job_attempt_failed` 的审计补上实测耗时 `duration_ms`。
+
+- `tests/unit/test_run_logs.py`：15 项通过。事件集合只含运行事件（普通请求审计不在内）、事件 / 结果 / 时间窗 WHERE 子句、任务类型走任务表子查询（不引入 JSON 运算符）、口径话术与北京时间换算、行映射（入队摘要行按任务表补类型、失败行带第几次与错误类型、扫描行带条数、未知事件回落、不可信字段类型不进数字）。
+- `tests/integration/test_module6_http.py`：新增 1 项通过（一次性 PostgreSQL 库 + `alembic upgrade head`）。覆盖支部角色 403、入队 → 完成 → 失败三条事件的关键字段（任务类型、处理条数、耗时、第几次、错误类型、状态）、事件 / 结果 / 时间窗筛选、未知事件与未知任务类型 422、起止时间反向 422、跨租户不可见。
+- `tests/integration/test_module6_governance.py`：扩展既有队列用例，钉住耗时语义——真正执行后的失败必须有实测耗时；**领取时发现租约已耗尽、事实上没有执行**的尝试（`error_code=lease_exhausted`）不写耗时；并把 `asyncio.wait_for` 超时（`TimeoutError`）分支走通：落失败审计（带实测耗时）、任务转 `retry`、`run_once()` 正常返回（调度循环存活）。
+- `node frontend/scripts/check-roles-ui.mjs`（7 个角色）通过：具备 `admin.ops` 的角色在「运行审计」能看到「运行日志」区块、查询入口、任务类型筛选与失败口径说明；不具备的角色连「运行审计」标签都不出现。
+- `node frontend/scripts/verify-module6.mjs --serve`：14 项通过（原 13 项 + 运行日志 1 项）。`/admin/run-logs` 纳入界面契约（一条完成 + 一条失败），并断言时间筛选按 `+08:00` 发出、界面显示「139 毫秒」与 `HTTPException`、分页显示「第 1 页 · 共 2 条」。
+- 开发库端到端手工核对：`GET /api/v1/admin/run-logs` 返回 699 条（613 条任务完成 + 86 条考核提醒同步），口径说明为「租户 TEST_TENANT」；`test-member` / 支部书记访问 403、未知事件 422；实跑一条正常任务与一条必然失败，审计行分别为 `{"kind":"member_reminders","processed":0,"duration_ms":139}` 与 `{"kind":"embedding","attempt":1,"status":"failed","error_code":"HTTPException","duration_ms":16}`，界面按事件筛「执行失败」后只剩这一行（第 1 次 / 16 毫秒 / HTTPException）。
+
+未覆盖：运行日志是审计的读模型，能回溯多久由学校配置的审计保留天数决定，不另存更长历史；`assessment_reminders_scan`（手动补扫，走 `audit_operation`）只记"跑过 / 结果"，不记生成条数（该端点 `new_value` 走统一摘要口径，条数只在接口响应里）；失败不记供应商错误正文；不提供导出；未做真实 120 秒超时的长跑验证（超时分支由单测注入 `TimeoutError` 覆盖，不是真等满 120 秒）。
+
 ## 本地扩展证据与主分支区分
 
 文档分支所引用的 `admin-workspace-isolated.xml`（179项、0失败/错误/跳过）与 `admin-workspace-backend.xml`（205项、30项准备错误）属于未合入的本地管理员工作台扩展，不能套用到本次主分支合并结果；各范围有重复用例，不累加为通过总数。原先开户43项及相关91项记录保留其原始范围。

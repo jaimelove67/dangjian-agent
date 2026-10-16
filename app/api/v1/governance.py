@@ -1,7 +1,8 @@
 """模块 6 管理接口：身份、配置、人工审核、任务及运行证据。"""
 
+from dataclasses import asdict
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -15,6 +16,7 @@ from app.core.config import tenant_config
 from app.core.request_audit import spool_root
 from app.core.security import Permission
 from app.core.tenant import bypass_tenant_filter
+from app.core.timeutil import as_utc_naive
 from app.db.session import get_db
 from app.deps import get_current_user, require_permissions
 from app.models.audit import AuditLog
@@ -37,6 +39,13 @@ from app.services.governance_service import GovernanceUpdate, read_governance, s
 from app.services.identity_service import IdentityService, is_platform_admin, public_record
 from app.services.job_service import enqueue
 from app.services.review_service import ReviewService
+from app.services.run_log_service import (
+    RUN_EVENTS,
+    RUN_KINDS,
+    RunLogFilters,
+    count_run_logs,
+    fetch_run_logs,
+)
 
 router = APIRouter()
 identity_admin = require_permissions(Permission.IDENTITY_MANAGE)
@@ -396,6 +405,59 @@ async def jobs(
         .all()
     )
     return response(request, {"items": [job_view(row) for row in rows], "page": page})
+
+
+@router.get("/admin/run-logs")
+async def run_logs(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(40, ge=1, le=100),
+    event: Optional[str] = Query(
+        None, description="按事件筛选（任务入队 / 执行完成 / 执行失败 / 定时扫描）"
+    ),
+    kind: Optional[str] = Query(None, description="按任务类型筛选（以任务表为准）"),
+    result: Optional[str] = Query(
+        None, pattern="^(success|failed|denied)$", description="按结果筛选"
+    ),
+    start_at: Optional[datetime] = Query(
+        None, description="起始时间（含；北京时间输入，如 2026-10-16T09:00:00+08:00）"
+    ),
+    end_at: Optional[datetime] = Query(None, description="结束时间（含；北京时间输入）"),
+    user: User = Depends(ops_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict[str, Any]]:
+    """工作流运行日志（T-SYS-06E）：任务生命周期与定时扫描，从审计轨迹派生。
+
+    与「任务台账」的分工：台账是**我提交的任务现在什么状态**（按提交人可见），运行日志是
+    **这个租户最近实际跑了什么、失败在哪一步**（`admin.ops`，租户内可见）。
+    """
+    if event and event not in RUN_EVENTS:
+        raise HTTPException(422, "未知的运行事件")
+    if kind and kind not in RUN_KINDS:
+        raise HTTPException(422, "未知的任务类型")
+    start, end = as_utc_naive(start_at), as_utc_naive(end_at)
+    if start and end and start > end:
+        raise HTTPException(422, "开始时间不能晚于结束时间")
+    filters = RunLogFilters(
+        tenant_id=str(user.tenant_id),
+        event=event,
+        kind=kind,
+        result=result,
+        start_at=start,
+        end_at=end,
+    )
+    total = await count_run_logs(db, filters)
+    rows = await fetch_run_logs(db, filters, offset=(page - 1) * page_size, limit=page_size)
+    return response(
+        request,
+        {
+            "items": [asdict(row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "scope_note": filters.scope_note(),
+        },
+    )
 
 
 @router.get("/admin/operations")

@@ -346,6 +346,19 @@ async function checkOperationsTab(page, spec) {
   if (!(await page.getByText('当前口径：').count())) {
     fail(`${spec.username}: 审计查询未渲染可核对的口径说明（列表未查到或接口报错）`)
   }
+  // 运行日志（T-SYS-06E）：任务执行与定时扫描的经过要能查，不能只有"任务现在什么状态"
+  if (!(await page.getByRole('heading', { name: '运行日志' }).count())) {
+    fail(`${spec.username}: 运行审计页缺少「运行日志」区块`)
+  }
+  if (!(await page.getByRole('button', { name: '查询运行日志' }).count())) {
+    fail(`${spec.username}: 运行日志缺少查询入口`)
+  }
+  if (!(await page.getByText('任务类型', { exact: true }).count())) {
+    fail(`${spec.username}: 运行日志缺少任务类型筛选`)
+  }
+  if (!(await page.getByText(/失败只记错误类型与状态/).count())) {
+    fail(`${spec.username}: 运行日志未说明失败记录口径（不记供应商错误正文）`)
+  }
   // 跨租户检索入口只对平台系统管理员出现：其他角色显示了就是必然 403 的假入口
   const tenantField = await page.getByText('租户编号（跨租户）', { exact: true }).count()
   if (spec.role === 'system_admin' && !tenantField) {

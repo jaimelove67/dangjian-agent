@@ -374,6 +374,8 @@ async def test_job_dedup_expired_lease_revocation_and_bounded_retries(native, mo
                 .all()
             )
             assert len(denied) == 1 and denied[0].user_id == row.actor_id and denied[0].request_id
+            # 这一条是"真正执行后因账号被禁用而拒绝"，实测耗时必须有
+            assert isinstance(denied[0].new_value["duration_ms"], int)
             author = await db.get(User, row.actor_id)
             author.is_active = True
             await db.commit()
@@ -404,9 +406,79 @@ async def test_job_dedup_expired_lease_revocation_and_bounded_retries(native, mo
                 )
                 assert len(failures) == attempt
                 assert len({event.request_id for event in failures}) == attempt
+                # 真正执行的失败必须带实测耗时：排障要能区分"秒挂"和"跑到超时"
+                assert isinstance(failures[-1].new_value["duration_ms"], int)
                 row.available_at = datetime.utcnow() - timedelta(seconds=1)
                 await db.commit()
     assert not await job_service.run_once()
+    # 领取时发现租约已耗尽、事实上没有执行的尝试：记失败但不写耗时（界面显示"—"，不编造）
+    with bypass_tenant_filter():
+        async with maker() as db:
+            stalled = DurableJob(
+                tenant_id=str(school.id),
+                actor_id=str(author.id),
+                kind="member_reminders",
+                dedup_key="lease-exhausted",
+                payload={"document_ids": []},
+                status="running",
+                attempts=3,
+                max_attempts=3,
+                available_at=datetime.utcnow() - timedelta(minutes=1),
+                lease_until=datetime.utcnow() - timedelta(seconds=1),
+                lease_token="stalled-lease-token",
+            )
+            db.add(stalled)
+            await db.commit()
+    assert not await job_service.run_once()
+    with bypass_tenant_filter():
+        async with maker() as db:
+            row = await db.get(DurableJob, stalled.id)
+            assert row.status == "failed" and row.error_code == "lease_exhausted"
+            skipped = (
+                (
+                    await db.execute(
+                        select(AuditLog).where(
+                            AuditLog.resource_id == row.id,
+                            AuditLog.action == "job_attempt_failed",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(skipped) == 1 and skipped[0].result == "failed"
+            assert skipped[0].new_value["duration_ms"] is None
+    # 超时是运行日志最需要单独认出来的失败：`asyncio.wait_for` 超时抛 TimeoutError，
+    # 必须落失败审计（带实测耗时）并让调度循环存活，而不是把整个 worker 打挂。
+    with bypass_tenant_filter():
+        async with maker() as db:
+            with tenant_context(school.id, author.id):
+                slow = await job_service.enqueue(
+                    db, author, JobCreate(kind="member_reminders", dedup_key="timeout-failure")
+                )
+                await db.commit()
+    monkeypatch.setattr(job_service, "execute", AsyncMock(side_effect=TimeoutError))
+    assert await job_service.run_once()
+    with bypass_tenant_filter():
+        async with maker() as db:
+            row = await db.get(DurableJob, slow.id)
+            assert row.status == "retry" and row.attempts == 1
+            timed_out = (
+                (
+                    await db.execute(
+                        select(AuditLog).where(
+                            AuditLog.resource_id == row.id,
+                            AuditLog.action == "job_attempt_failed",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(timed_out) == 1
+            assert timed_out[0].result == "failed"
+            assert timed_out[0].new_value["error_code"] == "TimeoutError"
+            assert isinstance(timed_out[0].new_value["duration_ms"], int)
 
 
 async def test_school_governance_version_conflict_and_pending_model_policy(native):

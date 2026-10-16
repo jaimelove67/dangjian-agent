@@ -26,7 +26,7 @@ from app.core.tenant import bypass_tenant_filter
 from app.db.session import get_db
 from app.main import app
 from app.models.audit import AuditLog
-from app.models.governance import ModelUsage
+from app.models.governance import DurableJob, ModelUsage
 from app.models.meeting import MeetingRecord
 from app.models.member import MemberCultivation, MemberProfile
 from app.models.qa_session import QASession
@@ -426,6 +426,93 @@ async def test_jobs_are_actor_private_and_operations_use_only_school_durable_evi
                 .all()
             )
     assert len(completed) == 1
+
+
+async def test_run_logs_show_attempts_failures_and_scan_results(http_case):
+    """T-SYS-06E：运行日志要回答"这个租户最近跑了什么、失败在哪一步"（admin.ops，租户内可见）。"""
+    c = http_case
+    # 支部书记没有 admin.ops：运行日志不对其开放（本人任务状态在「任务台账」另有口径）
+    await call(c, c["author"], "GET", "/admin/run-logs", status=403)
+    job_body = {"kind": "member_reminders", "dedup_key": "run-log-ok"}
+    job = await call(c, c["author"], "POST", "/admin/jobs", job_body)
+    # 一个必然失败的任务：文档向量化要 knowledge.manage，支部书记没有 → 403 直接判定失败
+    async with c["maker"]() as db:
+        with bypass_tenant_filter():
+            failing = DurableJob(
+                tenant_id=c["school"].id,
+                actor_id=c["author"].id,
+                kind="embedding",
+                dedup_key="run-log-fail",
+                payload={"document_ids": [uuid.uuid4().hex]},
+                status="queued",
+                attempts=0,
+                max_attempts=3,
+                available_at=datetime(2020, 1, 1),
+            )
+            db.add(failing)
+            await db.commit()
+            failing_id = str(failing.id)
+    assert await job_service.run_once()
+    assert await job_service.run_once()
+    page = await call(c, c["admin"], "GET", "/admin/run-logs")
+    assert page["scope_note"] == "租户 " + c["school"].id
+    ids = {row["resource_id"] for row in page["items"]}
+    assert {job["id"], failing_id} <= ids
+    completed = next(row for row in page["items"] if row["event"] == "job_completed")
+    assert completed["resource_id"] == job["id"]
+    assert completed["event_text"] == "执行完成" and completed["result"] == "success"
+    assert completed["kind"] == "member_reminders" and completed["processed"] == 0
+    # 耗时是排障的关键：能区分"秒挂"和"跑到超时"
+    assert isinstance(completed["duration_ms"], int) and completed["duration_ms"] >= 0
+    failed = next(row for row in page["items"] if row["event"] == "job_attempt_failed")
+    assert failed["resource_id"] == failing_id
+    assert failed["event_text"] == "执行失败" and failed["result"] == "denied"
+    assert failed["kind"] == "embedding" and failed["status"] == "failed"
+    assert failed["attempt"] == 1 and failed["error_code"] == "HTTPException"
+    assert isinstance(failed["duration_ms"], int)
+    # 入队也在日志里；任务类型以任务表为准（入队审计本身是摘要口径，拿不到明文类型）
+    enqueued = next(row for row in page["items"] if row["event"] == "job_enqueue")
+    assert enqueued["resource_id"] == job["id"] and enqueued["kind"] == "member_reminders"
+    # 事件 / 结果 / 时间窗筛选；未知取值给可执行错误而不是空结果
+    only_failed = await call(
+        c, c["admin"], "GET", "/admin/run-logs", params={"event": "job_attempt_failed"}
+    )
+    assert [row["resource_id"] for row in only_failed["items"]] == [failing_id]
+    assert only_failed["scope_note"].endswith("事件 执行失败")
+    # 任务类型按任务表口径筛：只出这类任务的事件（定时扫描不属于某一条任务，故不出现）
+    by_kind = await call(c, c["admin"], "GET", "/admin/run-logs", params={"kind": "embedding"})
+    assert [row["resource_id"] for row in by_kind["items"]] == [failing_id]
+    assert "任务类型 embedding" in by_kind["scope_note"]
+    assert (
+        await call(
+            c,
+            c["admin"],
+            "GET",
+            "/admin/run-logs",
+            params={"event": "job_attempt_failed", "result": "success"},
+        )
+    )["total"] == 0
+    for bad in ({"event": "不存在的事件"}, {"kind": "unknown"}):
+        await call(c, c["admin"], "GET", "/admin/run-logs", params=bad, status=422)
+    wide = await call(
+        c, c["admin"], "GET", "/admin/run-logs", params={"start_at": "2000-01-01T00:00:00+08:00"}
+    )
+    assert wide["total"] == page["total"]
+    assert (
+        await call(
+            c, c["admin"], "GET", "/admin/run-logs", params={"end_at": "2000-01-01T00:00:00+08:00"}
+        )
+    )["total"] == 0
+    await call(
+        c,
+        c["admin"],
+        "GET",
+        "/admin/run-logs",
+        params={"start_at": "2027-01-01T00:00:00+08:00", "end_at": "2020-01-01T00:00:00+08:00"},
+        status=422,
+    )
+    # 跨租户不可见：外校管理员看不到本校的运行日志
+    assert (await call(c, c["other_admin"], "GET", "/admin/run-logs"))["total"] == 0
 
 
 async def test_production_readiness_keeps_unconfirmed_school_and_models_unready(

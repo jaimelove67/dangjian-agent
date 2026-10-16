@@ -42,7 +42,7 @@ const review = {id:'review', source_kind:'score', source_id:'profile', source_ve
   status:'pending', effective_status:'pending', stale:false, submitted_by:'other', reviewed_by:null,
   reviewed_at:null, opinion:null, created_at:'2026-10-11T08:00:00',
   snapshot:{weighted_score:null, notice:'界面验收材料，不作为组织认定依据。'}}
-const mutations = [], checks = [], errors = []
+const mutations = [], queries = [], checks = [], errors = []
 let browser
 try {
   browser = await chromium.launch({channel:process.env.MODULE6_BROWSER_CHANNEL || undefined})
@@ -60,6 +60,7 @@ async function page(width=1440, readonly=false) {
     assert.equal(req.headers().authorization,'Bearer fixture-token')
     assert.ok(!url.searchParams.has('access_token'))
     if (method!=='GET') mutations.push({path,method,body})
+    else queries.push({path,params:Object.fromEntries(url.searchParams)})
     let data
     if (path==='/auth/me') data={id:'viewer',username:'ui-fixture',name:'界面验收账号',
       role:'school_admin',tenant_id:'school',org_unit_id:'root'}
@@ -81,6 +82,16 @@ async function page(width=1440, readonly=false) {
     else if (path==='/admin/operations') data={jobs:{queued:1},reviews:{pending:1},model_usage:[],
       alerts:[{action:'query',result:'denied',count:5,window_hours:24}],audit_spool_pending:0}
     else if (['/audit','/admin/audit','/admin/audit-logs'].includes(path)) data={items:[],total:0}
+    // 运行日志（T-SYS-06E）：一条正常完成（耗时 / 处理条数）与一条尝试失败（第几次 / 错误类型 / 耗时）
+    else if (path==='/admin/run-logs') data={items:[
+      {id:'run-log-1',created_at:'2026-10-16T01:10:00',event:'job_completed',event_text:'执行完成',
+        result:'success',kind:'member_reminders',status:null,attempt:null,duration_ms:139,
+        error_code:null,processed:2,reminder_count:null,resource_id:'job',request_id:'fixture-trace'},
+      {id:'run-log-2',created_at:'2026-10-16T01:08:00',event:'job_attempt_failed',
+        event_text:'执行失败',result:'denied',kind:'embedding',status:'failed',attempt:1,
+        duration_ms:16,error_code:'HTTPException',processed:null,reminder_count:null,
+        resource_id:'job-2',request_id:'fixture-trace-2'}],
+      total:2,page:1,page_size:40,scope_note:'租户 界面验收样例租户'}
     else if (path==='/admin/notification-channels') data={items:[
       {name:'inapp',description:'站内：投递记录即用户可见提醒，不外发',configured:true}],
       events:['channel_self_test'],routes:{channel_self_test:['inapp']},max_attempts:3}
@@ -178,6 +189,21 @@ try {
   await tab.getByLabel('用户编号',{exact:true}).fill('fixture-user-id')
   await tab.getByRole('button',{name:'查询审计记录',exact:true}).click()
   checks.push('运行告警与审计筛选可操作')
+  // 运行日志（T-SYS-06E）：任务"跑成什么样"必须可见——每次尝试的耗时、第几次、失败原因；
+  // 时间筛选与审计查询统一按北京时间发出，避免差 8 小时。
+  await tab.getByRole('heading',{name:'运行日志',exact:true}).waitFor()
+  await tab.getByText('当前口径：租户 界面验收样例租户',{exact:false}).waitFor()
+  await tab.getByLabel('开始时间（北京时间）',{exact:true}).last().fill('2026-10-16T09:00')
+  const runLogRequest=tab.waitForResponse(r=>r.url().includes('/admin/run-logs'))
+  await tab.getByRole('button',{name:'查询运行日志',exact:true}).click()
+  await runLogRequest
+  const runLogQuery=queries.filter(q=>q.path==='/admin/run-logs').at(-1)
+  assert.equal(runLogQuery.params.start_at,'2026-10-16T09:00:00+08:00')
+  assert.equal(await tab.getByRole('cell',{name:'139 毫秒',exact:true}).count(),1)
+  assert.equal(await tab.getByRole('cell',{name:'HTTPException',exact:true}).count(),1)
+  assert.equal(await tab.getByRole('cell',{name:'文档向量化',exact:true}).count(),1)
+  assert.equal(await tab.getByText('第 1 页 · 共 2 条',{exact:true}).count(),1)
+  checks.push('运行日志可见每次尝试的耗时与失败原因，时间筛选按北京时间发出')
   // 通知渠道与投递台账属于运行审计工作区：渠道就绪状态与投递事实都要可见。
   assert.ok(await tab.getByRole('heading',{name:'通知渠道与投递台账',exact:true}).count())
   // inapp 既是已登记渠道，也出现在投递台账的「渠道」列，因此这里只断言存在。

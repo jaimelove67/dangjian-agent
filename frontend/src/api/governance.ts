@@ -53,6 +53,13 @@ export interface Operations {
   alerts: { action: string; result: string; count: number; window_hours: number }[]
   audit_spool_pending: number
 }
+// 运行日志（T-SYS-06E）：任务生命周期与定时扫描的对账视图
+export interface RunLogRecord {
+  id: string; created_at: string; event: string; event_text: string; result: string
+  kind: string | null; status: string | null; attempt: number | null; duration_ms: number | null
+  error_code: string | null; processed: number | null; reminder_count: number | null
+  resource_id: string | null; request_id: string | null
+}
 export interface NotificationChannel {
   name: string; description: string; configured: boolean
 }
@@ -101,6 +108,8 @@ export const queueJob = (body: {kind: string; dedup_key: string; document_ids: s
   http.post<never, JobRecord>('/admin/jobs', body)
 export const listAudit = (params: Record<string, string | number>) =>
   http.get<never, {items: AuditRecord[]; total: number; scope_note: string}>('/admin/audit-logs', {params})
+export const listRunLogs = (params: Record<string, string | number> = {}) =>
+  http.get<never, {items: RunLogRecord[]; total: number; scope_note: string}>('/admin/run-logs', {params})
 export const exportAudit = (params: Record<string, string | number>): Promise<Blob> =>
   http.get('/admin/audit-logs/export', {params, responseType: 'blob'})
 export const saveArchivePolicy = (body: {enabled: boolean; expected_revision: number; evidence: string}) =>

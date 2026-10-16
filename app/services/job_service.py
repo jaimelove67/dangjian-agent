@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta
 
@@ -93,8 +94,19 @@ async def enqueue(db: AsyncSession, user: User, body: JobCreate) -> DurableJob:
     return row
 
 
-async def audit_failed_attempt(db: AsyncSession, job: DurableJob, token: str, result: str) -> None:
-    """每次尝试保留追加审计，与任务状态同事务提交；不保存供应商错误正文。"""
+async def audit_failed_attempt(
+    db: AsyncSession,
+    job: DurableJob,
+    token: str,
+    result: str,
+    *,
+    duration_ms: int | None = None,
+) -> None:
+    """每次尝试保留追加审计，与任务状态同事务提交；不保存供应商错误正文。
+
+    ``duration_ms`` 是这次尝试实际跑了多久：运行日志要能回答"这次失败是秒挂还是跑到超时"。
+    没真正执行的情况（领取时发现租约已耗尽）不写数字，留给界面显示"—"，不编造耗时。
+    """
     await write_audit(
         db,
         tenant_id=str(job.tenant_id),
@@ -111,6 +123,7 @@ async def audit_failed_attempt(db: AsyncSession, job: DurableJob, token: str, re
             "attempt": job.attempts,
             "status": job.status,
             "error_code": job.error_code,
+            "duration_ms": duration_ms,
         },
     )
 
@@ -171,6 +184,7 @@ async def claim() -> tuple[str, str, str] | None:
 
 
 async def execute(tenant_id: str, record_id: str, token: str) -> None:
+    started = time.monotonic()
     with tenant_context(tenant_id):
         async with async_session_maker() as db:
             job = (
@@ -272,7 +286,11 @@ async def execute(tenant_id: str, record_id: str, token: str) -> None:
                 request_id=uuid.uuid4().hex,
                 result="success",
                 data_level="internal",
-                new_value={"kind": job.kind, "processed": count},
+                new_value={
+                    "kind": job.kind,
+                    "processed": count,
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                },
             )
             await db.commit()
 
@@ -282,6 +300,7 @@ async def run_once() -> bool:
     if not claimed:
         return False
     tenant_id, record_id, token = claimed
+    started = time.monotonic()
     try:
         await asyncio.wait_for(
             execute(tenant_id, record_id, token), timeout=settings.JOB_TIMEOUT_SECONDS
@@ -289,6 +308,7 @@ async def run_once() -> bool:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
         with bypass_tenant_filter():
             async with async_session_maker() as db:
                 row = (
@@ -319,7 +339,9 @@ async def run_once() -> bool:
                     if row.status == "failed":
                         row.finished_at = datetime.utcnow()
                     denied = isinstance(exc, HTTPException) and exc.status_code in {401, 403, 404}
-                    await audit_failed_attempt(db, row, token, "denied" if denied else "failed")
+                    await audit_failed_attempt(
+                        db, row, token, "denied" if denied else "failed", duration_ms=duration_ms
+                    )
                     await db.commit()
         logger.warning("durable_job_attempt_failed")
     return True
