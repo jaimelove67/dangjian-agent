@@ -5,6 +5,7 @@
 ``meeting.manage`` + ``meeting.archive``。建议与生成内容只作草稿，不代组织结论。
 """
 
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -431,4 +432,20 @@ async def stats(
         service,
         await service.stats(year, org_unit_id),
         "read_stats",
+    )
+
+
+@router.get("/meeting/frequency", response_model=APIResponse[dict])
+async def frequency(
+    request: Request,
+    as_of: date | None = Query(None, description="按哪一天判断当前周期，缺省为今天"),
+    org_unit_id: str | None = Query(None, max_length=36),
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """三会一课周期频次与本周期提醒；完成认定只认已召开且人工审核通过的记录。"""
+    return await respond(
+        request,
+        service,
+        await service.frequency(org_unit_id, as_of or date.today()),
+        "read_frequency",
     )

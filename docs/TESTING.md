@@ -231,6 +231,20 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 
 未覆盖：留痕上线前的问答记录没有版本指纹（`versions` 为空、界面与导出显示「未留痕」），不按当前配置倒推；工作流契约版本只有现行值，其历史变更在代码与发布记录里，数据库无痕；提示词变更历史最多回溯最近 200 次配置提交；知识库留痕按审计保留天数自然过期，不另存更长历史；只改元数据 / 状态 / 权限的动作不算版本变更；未做真实多租户并发的留痕压力验证。
 
+## 三会一课频次合规回归（T-ORG-10）
+
+2026-10-16，把频次口径单源到 `config/business_rules.yaml` 的 `activity_requirements`（`period` + `per_period`，年度次数由周期推导），按《中国共产党支部工作条例（试行）》校准为支部党员大会每季度 1 次、党支部委员会会议每月 1 次、党小组会每月 1 次、党课每季度 1 次（`other` 为 `period: none` 不出提醒）；新增纯计算服务 `app/services/activity_frequency.py` 与 `GET /meeting/frequency`（参数 `as_of`、`org_unit_id`），前端「组织生活 → 年度统计」新增「三会一课频次合规」区块。
+
+- `tests/unit/test_activity_frequency.py`：37 项通过（无需数据库）。覆盖频次表与年度次数推导（季度→4 / 月→12 / `none`→不出提醒）、`config/business_rules.yaml` 缺失或损坏时回落内置口径、周期窗口（季度 1–4、月 1–12，含闰年 2 月与 12 月跨年边界）、三种状态（已达标 / 已召开未过审 / 期内还差）、按活动类型与组织取数（防串型：支委会不能顶支部大会）、提醒文案、已结束周期缺口聚合（一条支部 × 类型、含 `missed_periods` 与自述文案）、无支部、任意日期参数化。
+- `tests/integration/test_meeting_workflow.py`：新增 2 项通过（一次性 PostgreSQL 库 + `alembic upgrade head`）。`test_declared_frequency_matches_the_regulation` 钉住口径本身（`by_type` 的 `required` 为 4/12/12/4、`period_text` 与 `basis`）；`test_frequency_reminder_counts_only_approved_and_scopes_to_branches` 用 `as_of=2026-05-10` + 专用支部（`branch-c`）做隔离，钉住"已召开未过审 → 过审后计入本周期""**审核通过不消除上一季度缺口**（跨周期不抵扣）""只统计已审核""非支部 422、越权支部 403、只读角色 403"。
+- `node frontend/scripts/verify-modules123.mjs`：20 组接口契约与界面检查通过。新增 `/meeting/frequency` 契约（一条"已召开未审核"提醒 + 一条上季度缺口）并断言界面出现「三会一课频次合规」「本周期需处理（1）」「纪要尚未通过人工审核」「已召开待审核」「每季度至少 1 次」「每月至少 1 次」，且缺口在「已结束周期缺口（1）」分区内单列。
+- `python scripts/validate_modules123_ui_contracts.py tmp/modules123-ui/contract-requests.json`：23 个请求体经后端输入模型校验通过。
+- `node frontend/scripts/check-roles-ui.mjs`（7 个角色）通过：可访问组织生活的角色在「年度统计」必须能看到频次合规区块、本周期结论、周期要求与「完成认定以人工审核通过为准」的口径；`/meeting/frequency` 不得出现 4xx。
+- 开发库端到端手工核对：`test-reviewer` 调 `GET /api/v1/meeting/frequency` 返回 1 个支部 × 4 类（支部大会 / 支委会 / 党小组会 / 党课），`period_text` 与 `annual_required`（4 / 12 / 12 / 4）与法定口径一致，4 条本周期提醒都带最晚日期与「召开并完成纪要审核」，已结束周期缺口按「本年度已结束 N 个周期中 M 个未达标（逐个列出周期）」聚合成 4 条（支部大会 / 党课各 3 个季度，支委会 / 党小组会各 9 个月）；`as_of=2026-05-10` 复现历史时点；越权组织 403「无权查询该组织」、`test-member` 403「权限不足：缺少 meeting.query」；`GET /meeting/stats?year=2026` 的 `by_type` 同步为 4 / 12 / 12 / 4 并带 `period_text` / `basis`（`other` 为「不设固定频次」）。
+- 顺带修掉的既有问题（都在共享件里，非本任务引入）：`frontend/src/components/PageHeader.vue` 的 `.page-head__actions` 未换行，390px 下把页面撑出横向滚动（`members-mobile` 检查可复现，已加 `flex-wrap: wrap`）；`verify-modules123.mjs` 的「空数据状态」断言停留在旧文案（`KnowledgeView` 已区分无筛选的「授权范围内暂无可读文件」与有筛选的「没有匹配的文件」），该脚本不在质量门禁内所以长期失败，现按两条分支分别断言。
+
+未覆盖：系统没有党小组模型，党小组会提示恒给（`basis` 标明「未划分党小组的支部不适用」，可在配置里设 `period: none` 关闭）；不做自动认定完成（完成认定仍以人工审核通过为准）；只做页面提醒，不生成待办任务、不发通知；`as_of` 只读、不回填历史缺口、不产生数据；未做超 200 个支部的分页查看（截断时显式提示）。
+
 ## 本地扩展证据与主分支区分
 
 文档分支所引用的 `admin-workspace-isolated.xml`（179项、0失败/错误/跳过）与 `admin-workspace-backend.xml`（205项、30项准备错误）属于未合入的本地管理员工作台扩展，不能套用到本次主分支合并结果；各范围有重复用例，不累加为通过总数。原先开户43项及相关91项记录保留其原始范围。

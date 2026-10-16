@@ -98,11 +98,74 @@ export interface MeetingRatio { value: number | null; numerator: number; denomin
 export interface MeetingStats {
   year: number
   counts: Record<string, number>
-  by_type: Record<string, { label: string; required: number; performed: number; total_registered: number }>
+  by_type: Record<
+    string,
+    {
+      label: string
+      required: number
+      performed: number
+      total_registered: number
+      period: 'month' | 'quarter' | 'none'
+      period_text: string
+      basis: string
+    }
+  >
   attendance_rate: MeetingRatio
   minutes_completeness: MeetingRatio
   evidence: { activity_id: string; activity_type: string; revision: number; held_on: string; participants: (Participant & { source_id: string })[]; sources: MeetingSource[] }[]
   missing: string[]
+  calculation_rule: string
+}
+
+/** 本周期状态：已达标 / 已召开但纪要未过审 / 期内还差次数 */
+export type FrequencyState = 'met' | 'awaiting_review' | 'open'
+
+export interface MeetingFrequencyRow {
+  org_unit_id: string
+  org_unit_name: string
+  activity_type: ActivityType
+  activity_type_label: string
+  period: 'month' | 'quarter' | 'none'
+  period_label: string
+  period_start: string
+  period_end: string
+  required: number
+  performed: number
+  awaiting_review: number
+  scheduled: number
+  missing: number
+  days_left: number
+  annual_required: number
+  period_text: string
+  basis: string
+  state: FrequencyState
+  reminder: string
+}
+
+export interface MeetingFrequencyGap {
+  org_unit_id: string
+  org_unit_name: string
+  activity_type: ActivityType
+  activity_type_label: string
+  period: 'month' | 'quarter' | 'none'
+  required: number
+  missed_periods: string[]
+  missing_total: number
+  awaiting_total: number
+  text: string
+}
+
+export interface MeetingFrequency {
+  as_of: string
+  year: number
+  org_unit_id: string | null
+  branch_count: number
+  rows: MeetingFrequencyRow[]
+  reminders: MeetingFrequencyRow[]
+  gaps: MeetingFrequencyGap[]
+  missing: string[]
+  truncated: boolean
+  notice: string
   calculation_rule: string
 }
 export interface MeetingRevision {
@@ -132,6 +195,7 @@ export const meetingApi = {
   revisions(id: string): Promise<{ items: MeetingRevision[] }> { return http.get(`/meeting/records/${encodeURIComponent(id)}/revisions`) },
   history(params: object): Promise<MeetingPage<MeetingRecord>> { return http.get('/meeting/history', { params }) },
   stats(params: object): Promise<MeetingStats> { return http.get('/meeting/stats', { params }) },
+  frequency(params: object): Promise<MeetingFrequency> { return http.get('/meeting/frequency', { params }) },
   export(id: string): Promise<{ record: MeetingRecord; revisions: MeetingRevision[] }> {
     return http.get(`/meeting/records/${encodeURIComponent(id)}/export`)
   },

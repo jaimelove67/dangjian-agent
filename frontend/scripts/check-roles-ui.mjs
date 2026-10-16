@@ -222,6 +222,7 @@ async function checkRole(browser, spec) {
     await checkGovernanceIdentity(page, spec)
     await checkOperationsTab(page, spec)
     await checkQaRecordsAccess(page, spec)
+    await checkMeetingFrequency(page, spec)
   } finally {
     await context.close()
   }
@@ -435,6 +436,54 @@ async function checkQaRecordsAccess(page, spec) {
   }
   if (await page.locator('.wb-error').count()) {
     fail(`${spec.username}: 问答记录页出现错误态`)
+  }
+}
+
+/**
+ * 「年度统计」必须挂载三会一课频次合规提醒。
+ *
+ * T-ORG-10 的落点是"按制度频次生成提醒"：接口有了、页面没有，支部书记还是得靠脑子记
+ * 本季度党课讲没讲。这里同时钉住三件事：周期要求（不是只有年度数字）、"已召开没审"
+ * 与"没开"的区分、以及缺口独立成区（否则上季度没达标会被当成再补一次就行）。
+ */
+async function checkMeetingFrequency(page, spec) {
+  if (!spec.allow.includes('/meeting')) return
+  const apiErrors = []
+  const listener = (response) => {
+    const path = new URL(response.url()).pathname
+    if (response.status() >= 400 && path.endsWith('/meeting/frequency')) {
+      apiErrors.push(`${response.status()} ${path}`)
+    }
+  }
+  page.on('response', listener)
+  try {
+    await page.goto(`${BASE}/meeting`, { waitUntil: 'domcontentloaded' })
+    await settle(page)
+    const statsTab = page.getByRole('tab', { name: '年度统计' })
+    if (!(await statsTab.count())) {
+      notes.push(`${spec.username}: 组织生活页没有「年度统计」标签，跳过频次提醒检查`)
+      return
+    }
+    await statsTab.first().click()
+    await page.waitForTimeout(1500)
+    const panel = page.locator('.meeting-frequency')
+    if (!(await panel.count())) {
+      fail(`${spec.username}: 年度统计未挂载「三会一课频次合规」提醒（提醒只在接口里，用户看不到）`)
+      return
+    }
+    const text = await panel.innerText()
+    if (!/本周期各支部三会一课均已达标|本周期需处理|没有可提示的支部/.test(text)) {
+      fail(`${spec.username}: 频次提醒区块没有给出本周期结论`)
+    }
+    if (!/至少 1 次|不设固定频次/.test(text)) {
+      fail(`${spec.username}: 频次提醒区块没有显示周期要求（只剩年度数字）`)
+    }
+    if (!/人工审核通过/.test(text)) {
+      fail(`${spec.username}: 频次提醒缺少"完成认定以人工审核通过为准"的口径`)
+    }
+    if (apiErrors.length) fail(`${spec.username}: 频次接口报错 ${[...new Set(apiErrors)].join(', ')}`)
+  } finally {
+    page.off('response', listener)
   }
 }
 

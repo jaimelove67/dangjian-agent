@@ -125,23 +125,31 @@ assessment_indicators:
       formula: 有记录会议数 / 总会议数 * 100
       target: 100
 
-# 组织生活（三会一课）年度规定频次与应办事项提示（模块3）
+# 组织生活（三会一课）周期频次与应办事项提示（模块3）
+# 频次按**周期**（month / quarter）表达，年度要求由周期派生：同一件事只写一份，
+# 不出现"每月 1 次"与"每年 12 次"两处并存而互相矛盾的口径。
+# 依据《中国共产党支部工作条例（试行）》：支部党员大会、党课一般每季度至少 1 次；
+# 党支部委员会会议、党小组会一般每月 1 次。学校如需加严，改这里即可。
 # 仅作为工作台提示与考核参照，不由模型自行认定"完成"；
 # 完成认定以人工审核通过的会议记录为准。
 activity_requirements:
   branch_member_meeting:      # 支部大会
-    annual_required: 4
-    reminders:
-      - 支部大会每季度至少召开 1 次（以支部记录为准）
+    period: quarter
+    per_period: 1
+    basis: 支部党员大会一般每季度召开 1 次
   branch_committee_meeting:   # 支委会
-    annual_required: 4
-    reminders:
-      - 支委会每季度至少召开 1 次
+    period: month
+    per_period: 1
+    basis: 党支部委员会会议一般每月召开 1 次
   party_group_meeting:        # 党小组会
-    annual_required: 6
-    reminders:
-      - 党小组会每半年至少召开 1 次，年度要求以支部安排为准
+    period: month
+    per_period: 1
+    basis: 党小组会一般每月召开 1 次（未划分党小组的支部不适用）
   party_lecture:              # 党课
-    annual_required: 2
-    reminders:
-      - 党课每年至少 1-2 次，其中支部书记至少讲 1 次
+    period: quarter
+    per_period: 1
+    basis: 党支部一般每季度至少组织 1 次党课
+  other:                      # 其他组织生活
+    period: none
+    per_period: 0
+    basis: 其他组织生活不设固定频次

@@ -58,6 +58,7 @@ def life_url(storage_url):
                     ("department-b", "life-a", "department", "school-a"),
                     ("branch-a", "life-a", "branch", "department-a"),
                     ("branch-b", "life-a", "branch", "department-b"),
+                    ("branch-c", "life-a", "branch", "department-a"),
                     ("school-b", "life-b", "school", None),
                 ]:
                     db.add(
@@ -560,3 +561,169 @@ async def test_records_filter_by_type_year_and_status(life_url):
         assert (
             await client.get("/api/v1/meeting/records?execution_status=whatever")
         ).status_code == 422
+
+
+async def held_activity(client, *, org, activity_type, held_on):
+    """登记一条"已召开但尚未提交审核"的活动，供频次用例使用。"""
+    record = await ok(
+        client,
+        "POST",
+        "/meeting/records",
+        {
+            "org_unit_id": org,
+            "activity_type": activity_type,
+            "title": f"{held_on} 合成{activity_type}",
+            "scheduled_on": held_on,
+            "host": "合成主持人",
+            "reason": "合成一次组织生活",
+        },
+    )
+    return await ok(
+        client,
+        "PATCH",
+        f"/meeting/records/{record['id']}",
+        {
+            "expected_revision": record["revision"],
+            "reason": "登记实际召开情况",
+            "held_on": held_on,
+            "participants": [{"participant_id": "p1", "name": "合成人员甲", "attended": True}],
+            "transcript": TRANSCRIPT,
+        },
+    )
+
+
+async def submit_activity(client, record):
+    """提取纪要并提交审核；审核必须由另一位人员完成，不能自审。"""
+    record = await ok(
+        client,
+        "POST",
+        f"/meeting/records/{record['id']}/generate-minutes",
+        {"expected_revision": record["revision"], "reason": "逐项提取原文"},
+    )
+    return await ok(
+        client,
+        "POST",
+        f"/meeting/records/{record['id']}/submit",
+        {"expected_revision": record["revision"], "reason": "提交人工审核"},
+    )
+
+
+async def review_activity(client, record, decision="approved"):
+    return await ok(
+        client,
+        "POST",
+        f"/meeting/records/{record['id']}/review",
+        {
+            "expected_revision": record["revision"],
+            "reason": "核对原文与参学后通过",
+            "decision": decision,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_declared_frequency_matches_the_regulation(life_url):
+    """规定频次按周期口径给出：支委会/党小组会每月 1 次、支部大会/党课每季度 1 次。"""
+    async with client_for(life_url, actor()) as (client, _):
+        stats = await ok(client, "GET", f"/meeting/stats?year={date.today().year}")
+        by_type = stats["by_type"]
+        assert by_type["branch_member_meeting"]["required"] == 4
+        assert by_type["branch_committee_meeting"]["required"] == 12
+        assert by_type["party_group_meeting"]["required"] == 12
+        assert by_type["party_lecture"]["required"] == 4
+        assert by_type["branch_committee_meeting"]["period_text"] == "每月至少 1 次"
+        assert by_type["party_lecture"]["period_text"] == "每季度至少 1 次"
+        assert by_type["other"]["required"] == 0
+        assert "每季度" in by_type["party_lecture"]["basis"]
+
+
+@pytest.mark.asyncio
+async def test_frequency_reminder_counts_only_approved_and_scopes_to_branches(life_url):
+    # 单独的支部（branch-c）与 2026-05-10 的回顾口径：频次用例不受本模块其他用例的记录干扰
+    as_of = date(2026, 5, 10)
+    async with client_for(life_url, actor()) as (client, _):
+        member_meeting = await held_activity(
+            client, org="branch-c", activity_type="branch_member_meeting", held_on="2026-05-06"
+        )
+        await held_activity(
+            client, org="branch-c", activity_type="branch_committee_meeting", held_on="2026-05-08"
+        )
+        assert member_meeting["review_status"] == "draft"
+        before = await ok(client, "GET", "/meeting/frequency", params={"as_of": as_of.isoformat()})
+        rows = {(row["activity_type"], row["org_unit_id"]): row for row in before["rows"]}
+        # 已召开但纪要没审 ≠ 完成：状态是"待审核"，不是"已达标"也不是"没开"
+        assert rows[("branch_member_meeting", "branch-c")]["state"] == "awaiting_review"
+        assert rows[("branch_committee_meeting", "branch-c")]["state"] == "awaiting_review"
+        assert rows[("branch_committee_meeting", "branch-c")]["performed"] == 0
+        # 三会一课是支部制度：学校 / 院系节点不进入频次表，也不产生"未达标"噪声
+        assert {row["org_unit_id"] for row in before["rows"]} == {"branch-a", "branch-c"}
+        assert "other" not in {row["activity_type"] for row in before["rows"]}
+        assert before["branch_count"] == 2
+        # 已结束周期形成缺口：Q1 支部大会 / 党课，1—4 月支委会 / 党小组会
+        gaps = {gap["activity_type"]: gap for gap in before["gaps"] if gap["org_unit_id"] == "branch-c"}
+        assert set(gaps) == {
+            "branch_member_meeting",
+            "branch_committee_meeting",
+            "party_group_meeting",
+            "party_lecture",
+        }
+        assert gaps["branch_member_meeting"]["missed_periods"] == ["2026 年第 1 季度"]
+        assert gaps["party_lecture"]["missed_periods"] == ["2026 年第 1 季度"]
+        assert gaps["branch_committee_meeting"]["missed_periods"] == [
+            "2026 年 1 月",
+            "2026 年 2 月",
+            "2026 年 3 月",
+            "2026 年 4 月",
+        ]
+        assert gaps["branch_committee_meeting"]["awaiting_total"] == 0
+        assert "已结束 4 个周期中 4 个未达标" in gaps["branch_committee_meeting"]["text"]
+
+    # 支部大会审核通过后，本周期立刻从"待审核"变成"已达标"（登记人与审核人不同）
+    async with client_for(life_url, actor()) as (client, _):
+        member_meeting = await submit_activity(client, member_meeting)
+    async with client_for(life_url, actor("life-reviewer")) as (client, _):
+        await review_activity(client, member_meeting)
+    async with client_for(life_url, actor()) as (client, _):
+        after = await ok(client, "GET", "/meeting/frequency", params={"as_of": as_of.isoformat()})
+        rows = {(row["activity_type"], row["org_unit_id"]): row for row in after["rows"]}
+        row = rows[("branch_member_meeting", "branch-c")]
+        assert row["state"] == "met" and row["performed"] == 1 and row["missing"] == 0
+        assert row["period_label"] == "2026 年第 2 季度" and row["required"] == 1
+        assert row["annual_required"] == 4 and "已达要求" in row["reminder"]
+        # 审核通过只解决本周期：Q1 的缺口不会因为 5 月补开一次就消失
+        member_gap = next(
+            gap
+            for gap in after["gaps"]
+            if gap["org_unit_id"] == "branch-c" and gap["activity_type"] == "branch_member_meeting"
+        )
+        assert member_gap["missed_periods"] == ["2026 年第 1 季度"]
+        assert member_gap["missing_total"] == 1
+        # 支委会仍停在"已召开待审核"，且提醒指向去完成审核而不是重开一次
+        awaiting = rows[("branch_committee_meeting", "branch-c")]
+        assert awaiting["state"] == "awaiting_review" and awaiting["awaiting_review"] == 1
+        assert "完成审核后即计入本周期" in awaiting["reminder"]
+        pending = {
+            row["activity_type"] for row in after["reminders"] if row["org_unit_id"] == "branch-c"
+        }
+        # branch-c 本周期只有支部大会达标，其余三类都在提醒里
+        assert pending == {
+            "branch_committee_meeting",
+            "party_group_meeting",
+            "party_lecture",
+        }
+        # 未开的活动给出最晚期限与已安排次数
+        lecture = rows[("party_lecture", "branch-c")]
+        assert lecture["state"] == "open" and lecture["missing"] == 1
+        assert "最晚 2026-06-30 前召开" in lecture["reminder"]
+        assert "人工审核通过" in after["notice"] and "人工审核通过" in after["calculation_rule"]
+        # 组织范围：本部门以外的支部不可查；非支部组织直接说明按支部计算
+        assert (
+            await client.get("/api/v1/meeting/frequency?org_unit_id=branch-b")
+        ).status_code == 403
+        response = await client.get("/api/v1/meeting/frequency?org_unit_id=department-a")
+        assert response.status_code == 422
+        assert "按支部计算" in response.json()["message"]
+
+    # 无查询权限的角色看不到频次
+    async with client_for(life_url, actor(role=UserRole.MEMBER, org="branch-a")) as (client, _):
+        assert (await client.get("/api/v1/meeting/frequency")).status_code == 403

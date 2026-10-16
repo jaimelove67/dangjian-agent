@@ -6,13 +6,11 @@
 """
 
 from datetime import date
-from pathlib import Path
 from typing import Any
 
-import yaml
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask
@@ -25,6 +23,13 @@ from app.schemas.meeting import (
     TaskCreate,
     TaskHandle,
     TaskUpdate,
+)
+from app.services.activity_frequency import (
+    FREQUENCY_NOTICE,
+    FREQUENCY_RULE,
+    RecordFact,
+    build_frequency,
+    load_requirements,
 )
 from app.services.archive_service import require_archive_policy
 from app.services.meeting_service import (
@@ -40,7 +45,8 @@ from app.services.study_materials import recommend_sources, selected_sources, vi
 from app.utils.snapshot import record_snapshot as row_data
 
 ORGANIZATION_LIFE_NOTICE = "供支部委员会研究确定，不作为正式纪要"
-RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "business_rules.yaml"
+# 频次提醒一次最多看多少个支部；超出时明确提示按组织筛选，不静默截断
+MAX_FREQUENCY_BRANCHES = 200
 
 ACTIVITY_TYPES: dict[str, str] = {
     "branch_member_meeting": "支部大会",
@@ -49,30 +55,6 @@ ACTIVITY_TYPES: dict[str, str] = {
     "party_lecture": "党课",
     "other": "其他组织生活",
 }
-
-
-def load_activity_requirements() -> dict[str, dict[str, Any]]:
-    """年度规定频次仅作提示，不由模型认定完成；配置缺失时按内置默认。"""
-    default: dict[str, dict[str, Any]] = {
-        "branch_member_meeting": {"annual_required": 4, "reminders": []},
-        "branch_committee_meeting": {"annual_required": 4, "reminders": []},
-        "party_group_meeting": {"annual_required": 6, "reminders": []},
-        "party_lecture": {"annual_required": 2, "reminders": []},
-        "other": {"annual_required": 0, "reminders": ["其他组织生活不设固定年度频次"]},
-    }
-    try:
-        data = yaml.safe_load(RULES_PATH.read_text(encoding="utf-8")) or {}
-    except OSError:
-        return default
-    configured = data.get("activity_requirements") or {}
-    result: dict[str, dict[str, Any]] = {}
-    for key, value in default.items():
-        entry = configured.get(key) or {}
-        result[key] = {
-            "annual_required": int(entry.get("annual_required", value["annual_required"])),
-            "reminders": list(entry.get("reminders") or value["reminders"]),
-        }
-    return result
 
 
 def _execution_status(record: MeetingRecord) -> str:
@@ -867,7 +849,9 @@ class ActivityService:
         for record in records:
             counts[_execution_status(record)] = counts.get(_execution_status(record), 0) + 1
         by_type: dict[str, dict[str, Any]] = {}
+        requirements = load_requirements()
         for key in ACTIVITY_TYPES:
+            requirement = requirements[key]
             held_reviewed = [
                 record
                 for record in formal
@@ -875,9 +859,12 @@ class ActivityService:
             ]
             by_type[key] = {
                 "label": ACTIVITY_TYPES[key],
-                "required": load_activity_requirements()[key]["annual_required"],
+                "required": requirement.annual_required,
                 "performed": len(held_reviewed),
                 "total_registered": sum(1 for record in records if record.activity_type == key),
+                "period": requirement.period,
+                "period_text": requirement.period_text,
+                "basis": requirement.basis,
             }
         if not formal:
             missing.append("经审核组织生活记录、参学及纪要统计待补")
@@ -895,4 +882,90 @@ class ActivityService:
                 "org-life-1：年度按实际召开日期；次数、参学与纪要仅统计人工审核通过记录；"
                 "年度规定频次仅作提示，不由模型或系统自动认定完成"
             ),
+        }
+
+    # ==================== 周期频次与提醒 ====================
+
+    async def _frequency_records(self, org_ids: list[str], year: int) -> list[RecordFact]:
+        """一次取回年度内的记录事实，频次计算不再逐条查库。"""
+        if not org_ids:
+            return []
+        start, end = date(year, 1, 1), date(year, 12, 31)
+        rows = (
+            await self.db.execute(
+                select(
+                    MeetingRecord.org_unit_id,
+                    MeetingRecord.activity_type,
+                    MeetingRecord.scheduled_on,
+                    MeetingRecord.held_on,
+                    MeetingRecord.review_status,
+                ).where(
+                    MeetingRecord.tenant_id == self.tenant_id,
+                    MeetingRecord.is_deleted.is_(False),
+                    MeetingRecord.org_unit_id.in_(org_ids),
+                    MeetingRecord.activity_type.in_(list(ACTIVITY_TYPES)),
+                    or_(
+                        and_(MeetingRecord.held_on >= start, MeetingRecord.held_on <= end),
+                        and_(
+                            MeetingRecord.held_on.is_(None),
+                            MeetingRecord.scheduled_on >= start,
+                            MeetingRecord.scheduled_on <= end,
+                        ),
+                    ),
+                )
+            )
+        ).all()
+        return [
+            RecordFact(
+                org_unit_id=str(row.org_unit_id),
+                activity_type=str(row.activity_type),
+                scheduled_on=row.scheduled_on,
+                held_on=row.held_on,
+                review_status=str(row.review_status),
+            )
+            for row in rows
+        ]
+
+    async def frequency(self, org_unit_id: str | None, as_of: date) -> dict[str, Any]:
+        """按支部给出三会一课周期频次、本周期提醒与本年度缺口。
+
+        三会一课是**支部**制度，因此只对可见支部计算：把学校 / 院系节点也列成
+        "党课未达标"是纯噪声。完成认定沿用组织生活口径（已召开且人工审核通过）。
+        """
+        branches = [org for org in self.orgs if org.org_type == "branch"]
+        if org_unit_id:
+            if org_unit_id not in self.org_ids:
+                raise HTTPException(403, "无权查询该组织")
+            branches = [org for org in branches if str(org.id) == org_unit_id]
+            if not branches:
+                raise HTTPException(422, "三会一课频次按支部计算，请选择支部组织")
+        truncated = len(branches) > MAX_FREQUENCY_BRANCHES
+        branches = branches[:MAX_FREQUENCY_BRANCHES]
+        records = await self._frequency_records([str(org.id) for org in branches], as_of.year)
+        built = build_frequency(
+            load_requirements(),
+            records,
+            [(str(org.id), org.name) for org in branches],
+            as_of,
+        )
+        missing: list[str] = []
+        if not branches:
+            missing.append("当前账号没有可见支部，三会一课频次无从提示")
+        if truncated:
+            missing.append(
+                f"可访问支部超过 {MAX_FREQUENCY_BRANCHES} 个，仅提示前 "
+                f"{MAX_FREQUENCY_BRANCHES} 个，请按组织筛选查看"
+            )
+        return {
+            "as_of": as_of.isoformat(),
+            "year": as_of.year,
+            "org_unit_id": org_unit_id,
+            "branch_count": len(branches),
+            "rows": built["rows"],
+            "reminders": built["reminders"],
+            "gaps": built["gaps"],
+            "missing": missing,
+            "truncated": truncated,
+            "notice": FREQUENCY_NOTICE,
+            "calculation_rule": FREQUENCY_RULE,
         }

@@ -62,6 +62,8 @@ withDefaults(
   align-items: center;
   gap: var(--space-2);
   flex: none;
+  /* 手机端按钮较多时必须换行：不换行会把整页撑出横向滚动，末尾按钮滑出屏幕 */
+  flex-wrap: wrap;
 }
 
 @media (max-width: 720px) {

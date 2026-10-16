@@ -8,6 +8,7 @@ import {
   REVIEW_LABELS,
   meetingApi,
   type ActivityType,
+  type MeetingFrequency,
   type MeetingRecord,
   type MeetingRevision,
   type MeetingStats,
@@ -21,6 +22,7 @@ import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
+import MeetingFrequencyPanel from './MeetingFrequencyPanel.vue'
 import ParticipantEditor from './ParticipantEditor.vue'
 import SourcePicker from './SourcePicker.vue'
 import { session } from '@/stores/session'
@@ -31,6 +33,7 @@ const records = ref<MeetingRecord[]>([])
 const total = ref(0)
 const current = ref<MeetingRecord | null>(null)
 const stats = ref<MeetingStats | null>(null)
+const frequency = ref<MeetingFrequency | null>(null)
 const loading = ref(true)
 const detailLoading = ref(false)
 const statsLoading = ref(false)
@@ -39,6 +42,7 @@ const pageError = ref<unknown>(null)
 const orgError = ref<unknown>(null)
 const actionError = ref<unknown>(null)
 const statsError = ref<unknown>(null)
+const frequencyError = ref<unknown>(null)
 const message = ref('')
 const workspace = ref('records')
 const detailTab = ref('details')
@@ -151,6 +155,7 @@ const pendingRecord = ref('')
 let listSequence = 0
 let detailSequence = 0
 let statsSequence = 0
+let frequencySequence = 0
 let historySequence = 0
 let alive = true
 
@@ -242,10 +247,29 @@ async function loadStats(): Promise<void> {
     if (sequence === statsSequence && alive) statsLoading.value = false
   }
 }
+async function loadFrequency(): Promise<void> {
+  // 频次按支部的当前周期计算，与年度统计同一个筛选，但不受「年度」输入影响
+  const sequence = ++frequencySequence
+  frequencyError.value = null
+  // 三会一课是支部制度：选了院系/学校节点时按该范围内全部支部给结论，
+  // 而不是拿非支部组织去问后端换回一个 422
+  const chosen = orgs.value.find((org) => org.id === filters.org_unit_id)
+  const orgUnitId =
+    chosen && chosen.org_type !== 'branch' ? undefined : filters.org_unit_id || undefined
+  try {
+    const result = await meetingApi.frequency({ org_unit_id: orgUnitId })
+    if (sequence === frequencySequence && alive) frequency.value = result
+  } catch (err) {
+    if (sequence === frequencySequence && alive) frequencyError.value = err
+  }
+}
 function reload(): void {
   filters.page = 1
   void loadRecords()
-  if (workspace.value === 'stats') void loadStats()
+  if (workspace.value === 'stats') {
+    void loadStats()
+    void loadFrequency()
+  }
 }
 function changeWorkspace(value: string): void {
   workspace.value = value
@@ -513,6 +537,7 @@ onBeforeUnmount(() => {
   listSequence += 1
   detailSequence += 1
   statsSequence += 1
+  frequencySequence += 1
   historySequence += 1
 })
 </script>
@@ -643,7 +668,8 @@ onBeforeUnmount(() => {
               <thead>
                 <tr>
                   <th>活动类型</th>
-                  <th>规定频次提示</th>
+                  <th>周期要求</th>
+                  <th>年度要求</th>
                   <th>已审核次数</th>
                   <th>实际登记</th>
                 </tr>
@@ -651,6 +677,7 @@ onBeforeUnmount(() => {
               <tbody>
                 <tr v-for="(item, key) in stats.by_type" :key="key">
                   <td>{{ item.label }}</td>
+                  <td>{{ item.period_text }}</td>
                   <td>{{ item.required }}</td>
                   <td>{{ item.performed }}</td>
                   <td>{{ item.total_registered }}</td>
@@ -680,6 +707,8 @@ onBeforeUnmount(() => {
             </article>
           </details>
         </section>
+        <ErrorState v-if="frequencyError" :error="frequencyError" />
+        <MeetingFrequencyPanel v-else :frequency="frequency" />
       </template>
       <template v-else>
         <LoadingBlock v-if="loading" variant="table" :rows="4" />

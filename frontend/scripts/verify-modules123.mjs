@@ -109,6 +109,56 @@ const meeting = {
   notice: '生成内容仅为草稿，须人工核对。',
   execution_status: 'planned',
 }
+// 三会一课频次：一条"已召开但纪要没审"的党课 + 上一季度缺口，用来钉住提醒与缺口分区
+const frequencyRow = {
+  org_unit_id: org.id,
+  org_unit_name: org.name,
+  activity_type: 'party_lecture',
+  activity_type_label: '党课',
+  period: 'quarter',
+  period_label: '2026 年第 2 季度',
+  period_start: '2026-04-01',
+  period_end: '2026-06-30',
+  required: 1,
+  performed: 0,
+  awaiting_review: 2,
+  scheduled: 0,
+  missing: 1,
+  days_left: 51,
+  annual_required: 4,
+  period_text: '每季度至少 1 次',
+  basis: '党支部一般每季度至少组织 1 次党课',
+  state: 'awaiting_review',
+  reminder:
+    '2026 年第 2 季度党课已召开 2 次，但纪要尚未通过人工审核；完成审核后即计入本周期，请先完成纪要审核（退回的需修订后重新提交）',
+}
+const frequency = {
+  as_of: '2026-05-10',
+  year,
+  org_unit_id: null,
+  branch_count: 1,
+  rows: [frequencyRow],
+  reminders: [frequencyRow],
+  gaps: [
+    {
+      org_unit_id: org.id,
+      org_unit_name: org.name,
+      activity_type: 'party_lecture',
+      activity_type_label: '党课',
+      period: 'quarter',
+      required: 1,
+      missed_periods: ['2026 年第 1 季度'],
+      missing_total: 1,
+      awaiting_total: 0,
+      text: `${org.name}党课：本年度已结束 1 个周期中 1 个未达标（2026 年第 1 季度），累计缺口 1 次；跨周期不抵扣，不因后续补开而消除，请在台账中说明原因`,
+    },
+  ],
+  missing: [],
+  truncated: false,
+  notice: '频次为制度提示，完成认定以人工审核通过的会议记录为准，系统不自动认定完成',
+  calculation_rule:
+    'org-life-frequency-1：按《中国共产党支部工作条例（试行）》的周期口径（支部党员大会、党课每季度至少 1 次；党支部委员会会议、党小组会每月至少 1 次）；只统计已召开且人工审核通过的记录',
+}
 
 function fixture() {
   return {
@@ -501,6 +551,18 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
               performed: data.records.filter((record) => record.review_status === 'approved')
                 .length,
               total_registered: data.records.length,
+              period: 'quarter',
+              period_text: '每季度至少 1 次',
+              basis: '支部党员大会一般每季度召开 1 次',
+            },
+            branch_committee_meeting: {
+              label: '支委会',
+              required: 12,
+              performed: 0,
+              total_registered: 0,
+              period: 'month',
+              period_text: '每月至少 1 次',
+              basis: '党支部委员会会议一般每月召开 1 次',
             },
           },
           attendance_rate: { value: 0.5, numerator: 1, denominator: 2, status: 'known' },
@@ -510,6 +572,8 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
           calculation_rule: '仅统计已审核记录；统计结果须人工确认。',
         }),
       )
+    if (path === '/meeting/frequency')
+      return route.fulfill(ok(structuredClone(frequency)))
     if (path.startsWith('/meeting/tasks/')) {
       const task = data.records
         .flatMap((record) => record.tasks)
@@ -644,6 +708,46 @@ async function screenshot(page, name) {
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth + 1,
   )
+  if (overflow) {
+    const diagnosis = await page.evaluate(() => {
+      const limit = window.innerWidth + 1
+      const path = (element) => {
+        const parts = []
+        let node = element
+        for (let depth = 0; node && depth < 5; depth += 1) {
+          const id = node.id ? `#${node.id}` : ''
+          const cls = node.className && typeof node.className === 'string'
+            ? `.${node.className.trim().split(/\s+/).slice(0, 3).join('.')}`
+            : ''
+          parts.unshift(`${node.tagName.toLowerCase()}${id}${cls}`)
+          if (node.tagName.toLowerCase() === 'main' || node.tagName.toLowerCase() === 'body') break
+          node = node.parentElement
+        }
+        return parts.join(' > ')
+      }
+      const wide = []
+      const spilling = []
+      for (const element of document.querySelectorAll('body *')) {
+        const rect = element.getBoundingClientRect()
+        if (rect.right > limit || rect.width > limit) {
+          wide.push(`${Math.round(rect.right)} ${Math.round(rect.width)} ${path(element)}`)
+        }
+        if (element.scrollWidth > element.clientWidth + 1 && element.clientWidth > 0) {
+          spilling.push(
+            `${element.scrollWidth}/${element.clientWidth} ${path(element)}`,
+          )
+        }
+      }
+      return {
+        docScroll: document.documentElement.scrollWidth,
+        bodyScroll: document.body.scrollWidth,
+        inner: window.innerWidth,
+        wide: wide.sort((a, b) => Number(b.split(' ')[0]) - Number(a.split(' ')[0])).slice(0, 12),
+        spilling: spilling.slice(0, 12),
+      }
+    })
+    console.log(`[overflow] ${name}`, JSON.stringify(diagnosis, null, 1))
+  }
   assert.equal(overflow, false, `${name} 页面不得横向溢出`)
 }
 async function recordAction(page, button) {
@@ -863,6 +967,18 @@ try {
     await tab(reviewer.page, '年度统计')
     await visible(reviewer.page, '50.0%')
     checks.push('比例单位与缺少统计依据状态')
+    // 三会一课频次：周期要求、已召开未审核的提醒、已结束周期的缺口分区展示
+    await visible(reviewer.page, '每季度至少 1 次')
+    await visible(reviewer.page, '三会一课频次合规')
+    await visible(reviewer.page, '本周期需处理（1）')
+    await visible(reviewer.page, '纪要尚未通过人工审核')
+    await visible(reviewer.page, '已召开待审核')
+    // 缺口列按真实待审次数显示（mock 里 2 次待审），不是笼统的"差 1 次"
+    await visible(reviewer.page, '待审核 2 次')
+    await reviewer.page.locator('.meeting-frequency summary', { hasText: '已结束周期缺口（1）' }).click()
+    await visible(reviewer.page, '跨周期不抵扣')
+    assert.equal(await reviewer.page.locator('.meeting-frequency__gaps li').count(), 1)
+    checks.push('三会一课周期频次、提醒与缺口分区')
     await reviewer.ctx.close()
 
     const read = await context(1440, true)
@@ -895,7 +1011,14 @@ try {
     checks.push('受限活动与受限任务的空正文展示')
     const empty = await context(1440, false, 'viewer-a', { ...state, empty: true })
     await empty.page.goto(`${BASE}/knowledge`, { waitUntil: 'networkidle' })
+    // 范围本身没有文件：空状态必须说明"授权范围内暂无可读文件"，而不是白屏或含糊的"没有匹配"
+    await visible(empty.page, '授权范围内暂无可读文件')
+    // 有筛选条件时才是"没有匹配的文件"，并给出清除筛选的出路
+    await empty.page
+      .getByPlaceholder('按标题、发文机关、文号或标签搜索')
+      .fill('不存在的关键词')
     await visible(empty.page, '没有匹配的文件')
+    await visible(empty.page, '清除筛选')
     await empty.ctx.close()
     checks.push('空数据状态')
     const unavailable = await context(1440, false, 'viewer-a', { ...state, failList: true })
