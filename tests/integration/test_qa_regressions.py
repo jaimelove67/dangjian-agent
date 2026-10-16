@@ -123,6 +123,19 @@ def test_public_hint_cannot_send_personal_question_to_cloud(qa_client):
         "/api/v1/qa", json={"question": "合成手机号 13900000000", "data_level": "public"}
     )
     assert response.status_code == 403
+    # 硬拦截必须给出可执行出路，而不是只回“无法处理”（T-WF02-13 / WF-04 契约）
+    assert "本地模型" in response.json()["message"]
+    retrieve.assert_not_awaited()
+    generate.assert_not_awaited()
+
+
+def test_declared_classified_is_refused_with_manual_path(qa_client):
+    client, retrieve, generate = qa_client
+    response = client.post(
+        "/api/v1/qa", json={"question": "合成普通问题", "data_level": "classified"}
+    )
+    assert response.status_code == 403
+    assert "线下人工" in response.json()["message"]
     retrieve.assert_not_awaited()
     generate.assert_not_awaited()
 

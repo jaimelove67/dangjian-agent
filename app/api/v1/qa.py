@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.audit import audit_operation
 from app.chains.session import SessionStore
+from app.chains.workflow_interfaces import sensitive_check
 from app.core.cache import CacheService, redis_manager
 from app.core.config import settings, tenant_config
 from app.core.security import Permission
@@ -22,10 +23,10 @@ from app.deps import get_current_tenant, require_permissions
 from app.llm.base import DataLevel
 from app.models.qa_session import QASession
 from app.models.user import User
-from app.rag.privacy import content_level, require_cloud_eligible
 from app.rag.rag_service import RAGService
 from app.rag.retrieval.access import knowledge_filters
 from app.schemas.common import APIResponse
+from app.schemas.wf import SensitiveCheckRequest
 from app.services.qa_session_service import create_session, list_sessions, soft_delete_session
 
 router = APIRouter()
@@ -156,11 +157,29 @@ async def ask_question(
 ) -> APIResponse[QuestionResponse]:
     """知识问答"""
 
-    if body.data_level == DataLevel.CLASSIFIED:
-        raise HTTPException(status_code=403, detail="涉密数据禁止进行 AI 处理")
     # 账号角色仅决定资料访问上限，不能把管理员的普通问题都判为敏感。
-    data_level = content_level(body.question, body.data_level)
-    require_cloud_eligible(data_level)
+    # WF-04 标准入口（T-WF02-13）：给出判定级别、命中原因与可执行出路，这里只负责拒绝方式。
+    decision = sensitive_check(
+        SensitiveCheckRequest(
+            text=body.question,
+            declared_level=body.data_level.value if body.data_level else None,
+        )
+    )
+    logger.info(
+        "qa_sensitive_decision",
+        extra={
+            "tenant_id": tenant_id,
+            "workflow": decision.workflow,
+            "workflow_version": decision.version,
+            "level": decision.level,
+            "cloud_allowed": decision.cloud_allowed,
+            "reasons": decision.reasons,
+        },
+    )
+    if not decision.cloud_allowed:
+        # 出处写进 detail：只报“无法处理”等于让用户无从下手（可执行出路见 WF-04 契约）
+        raise HTTPException(status_code=403, detail=decision.guidance)
+    data_level = DataLevel(decision.level)
 
     top_k = body.top_k or tenant_config.get(tenant_id, "retrieval_top_k")
     context_top_k = min(tenant_config.get(tenant_id, "rerank_top_k"), top_k)

@@ -6,10 +6,12 @@
 2. 检索     混合召回 + 强制过滤（``Retriever``，由检索链路实现）
 3. 重排判定 重排并判定是否有依据（阈值可配；无依据直接拒答）
 4. 生成     依据片段生成回答（``Generator``，由模型接入实现）
-5. 引用核验 核验引用编号 / 条款真实性 / 时效（``CitationVerifier``）
+5. 引用核验 核验引用编号 / 条款真实性 / 时效（经 WF-03 标准入口，见 T-WF02-13）
 6. 输出     组装统一响应（回答 + 引用 + 风险 + 免责声明）
 
 检索与生成以协议（Protocol）注入，便于开发者B接入真实实现，也便于单测替换。
+引用核验与敏感检查（WF-03 / WF-04）经 ``app/chains/workflow_interfaces.py`` 的标准
+入口调用，实现可替换而契约不变，便于后续拆分独立工作流。
 """
 
 from __future__ import annotations
@@ -19,14 +21,11 @@ from typing import Optional, Protocol, Sequence
 
 from app.chains.rewrite import LLMCall, rewrite_question
 from app.chains.session import QATurn, SessionStore
+from app.chains.workflow_interfaces import citation_check, to_citation_input
 from app.core.config import settings
-from app.rag.verifier import (
-    CitationVerifier,
-    RetrievedChunk,
-    VerificationResult,
-    has_authoritative_basis,
-)
+from app.rag.verifier import CitationVerifier, RetrievedChunk, has_authoritative_basis
 from app.schemas.qa import DEFAULT_DISCLAIMER, REFUSAL_ANSWER, Citation, QAResponse
+from app.schemas.wf import CitationCheckRequest
 
 logger = logging.getLogger(__name__)
 
@@ -148,12 +147,20 @@ class QAChain:
             )
             raise
 
-        # 阶段 5：引用核验
-        verification: VerificationResult = self.verifier.verify(draft, chunks)
+        # 阶段 5：引用核验（WF-03 标准入口，T-WF02-13）
+        verification = citation_check(
+            CitationCheckRequest(
+                answer=draft,
+                citations=[to_citation_input(chunk) for chunk in chunks],
+            ),
+            verifier=self.verifier,
+        )
         logger.info(
             "qa_stage_verify",
             extra={
                 "tenant_id": tenant_id,
+                "workflow": verification.workflow,
+                "workflow_version": verification.version,
                 "citation_count": len(verification.citations),
                 "warning_count": len(verification.warnings),
                 "is_valid": verification.valid,
