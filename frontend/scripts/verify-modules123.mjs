@@ -160,6 +160,237 @@ const frequency = {
     'org-life-frequency-1：按《中国共产党支部工作条例（试行）》的周期口径（支部党员大会、党课每季度至少 1 次；党支部委员会会议、党小组会每月至少 1 次）；只统计已召开且人工审核通过的记录',
 }
 
+// 民主评议党员：一条已通过（优秀）、一条基本合格（须研究处置）、一条待审核、一条未发起。
+// 待审核那条的提交人写成另一个人，界面上才可能出现"审核"按钮（提交人不能自审）。
+const memberReviewRows = [
+  {
+    profile_id: 'review-profile-1',
+    member_name: '陈见微',
+    stage: 'member',
+    stage_label: '正式党员',
+    org_unit_id: org.id,
+    org_name: org.name,
+    in_roster: true,
+    review_id: 'review-1',
+    revision: 3,
+    review_status: 'approved',
+    submitted_by: 'viewer-a',
+    grade: 'outstanding',
+    grade_label: '优秀',
+    basis: '民主测评情况与日常表现',
+    rectification: '',
+    procedure: {
+      self_assessment: '本人对照党员标准自评：按时参加组织生活。',
+      peer_review: '其他党员认为该同志履职认真。',
+      test: { eligible: 10, attended: 9, outstanding: 7, qualified: 2, basic: 0, unqualified: 0 },
+      branch_opinion: '支委会同意评定为优秀。',
+    },
+  },
+  {
+    profile_id: 'review-profile-2',
+    member_name: '李知行',
+    stage: 'probationary',
+    stage_label: '预备党员',
+    org_unit_id: org.id,
+    org_name: org.name,
+    in_roster: true,
+    review_id: 'review-2',
+    revision: 3,
+    review_status: 'approved',
+    submitted_by: 'viewer-a',
+    grade: 'basic',
+    grade_label: '基本合格',
+    basis: '理论学习与实际表现',
+    rectification: '限期改正理论学习不系统的问题。',
+    procedure: {
+      self_assessment: '本人自评：理论学习不够系统。',
+      peer_review: '',
+      test: null,
+      branch_opinion: '支委会同意评定为基本合格。',
+    },
+  },
+  {
+    profile_id: 'review-profile-3',
+    member_name: '赵向知',
+    stage: 'member',
+    stage_label: '正式党员',
+    org_unit_id: org.id,
+    org_name: org.name,
+    in_roster: true,
+    review_id: 'review-3',
+    revision: 2,
+    review_status: 'pending',
+    submitted_by: 'viewer-a',
+    grade: 'qualified',
+    grade_label: '合格',
+    basis: '民主测评情况与日常表现',
+    rectification: '',
+    procedure: {
+      self_assessment: '本人对照党员标准自评：能完成组织交办的任务。',
+      peer_review: '',
+      test: null,
+      branch_opinion: '支委会同意评定为合格。',
+    },
+  },
+  {
+    profile_id: 'review-profile-4',
+    member_name: '王砚清',
+    stage: 'member',
+    stage_label: '正式党员',
+    org_unit_id: org.id,
+    org_name: org.name,
+    in_roster: true,
+    review_id: null,
+    revision: 0,
+    review_status: 'not_started',
+    submitted_by: null,
+    grade: '',
+    grade_label: '',
+    basis: '',
+    rectification: '',
+    procedure: {},
+  },
+  {
+    profile_id: 'review-profile-5',
+    member_name: '周慕白',
+    stage: 'probationary',
+    stage_label: '预备党员',
+    org_unit_id: org.id,
+    org_name: org.name,
+    in_roster: true,
+    review_id: null,
+    revision: 0,
+    review_status: 'not_started',
+    submitted_by: null,
+    grade: '',
+    grade_label: '',
+    basis: '',
+    rectification: '',
+    procedure: {},
+  },
+]
+const gradeOptions = [
+  { key: 'outstanding', label: '优秀' },
+  { key: 'qualified', label: '合格' },
+  { key: 'basic', label: '基本合格' },
+  { key: 'unqualified', label: '不合格' },
+]
+
+function reviewMissing(row) {
+  const procedure = row.procedure || {}
+  const missing = []
+  if (!String(procedure.self_assessment || '').trim()) missing.push('个人自评待录')
+  if (!String(procedure.branch_opinion || '').trim()) missing.push('支部评定意见待录')
+  if (!row.grade) missing.push('评定等次待定')
+  if (!String(row.basis || '').trim()) missing.push('评定依据待填')
+  return missing
+}
+
+function reviewAdvisories(row) {
+  const procedure = row.procedure || {}
+  const advisories = []
+  if (!String(procedure.peer_review || '').trim()) advisories.push('未登记党员互评意见')
+  if (!procedure.test) advisories.push('未登记民主测评票数')
+  return advisories
+}
+
+function reviewTarget(row, viewer, canReview = true) {
+  return {
+    ...structuredClone(row),
+    missing: reviewMissing(row),
+    advisories: reviewAdvisories(row),
+    can_review: canReview && row.review_status === 'pending' && row.submitted_by !== viewer,
+  }
+}
+
+function reviewWorkspace(data, viewer, canReview = true) {
+  const targets = data.memberReviews.map((row) => reviewTarget(row, viewer, canReview))
+  const progress = {
+    target_total: targets.length,
+    launched: 0,
+    not_started: 0,
+    draft: 0,
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+  }
+  const grades = { outstanding: 0, qualified: 0, basic: 0, unqualified: 0 }
+  const attention = []
+  for (const row of targets) {
+    if (row.review_status === 'not_started') progress.not_started += 1
+    else {
+      progress.launched += 1
+      progress[row.review_status] += 1
+    }
+    if (row.review_status === 'approved') {
+      if (grades[row.grade] !== undefined) grades[row.grade] += 1
+      if (row.grade === 'basic' || row.grade === 'unqualified') {
+        attention.push({
+          review_id: row.review_id,
+          member_name: row.member_name,
+          org_name: row.org_name,
+          grade: row.grade,
+          grade_label: row.grade_label,
+          rectification: row.rectification,
+        })
+      }
+    }
+  }
+  const outstanding = grades.outstanding
+  return {
+    year,
+    org_unit_id: org.id,
+    org_name: org.name,
+    targets,
+    target_total: targets.length,
+    progress,
+    grades,
+    grade_options: gradeOptions,
+    outstanding,
+    outstanding_ratio: targets.length ? Math.round((outstanding * 1000) / targets.length) / 10 : 0,
+    attention,
+    advisory_count: targets.filter((row) => row.advisories.length).length,
+    truncated: false,
+    missing: [],
+    notices: {
+      outstanding_notice: '优秀等次比例上限按学校党委组织部门的规定执行，系统不自动截断或排名',
+      unqualified_notice:
+        '拟评定不合格的，组织处置须按党章党规由党组织研究决定，系统不自动生成处置意见',
+      feedback_notice: '评定意见应向本人反馈；本人只能在"本人档案"查看自己的评议结果',
+    },
+    notice: '评议程序与等次由组织人员记录、审核人确认；系统不按票数自动排名或定等次',
+    boundary: '等次与组织处置属于组织结论，须人工形成；系统只记录、送审与留痕',
+  }
+}
+
+function applyReviewPayload(row, body) {
+  const procedure = body.procedure || {}
+  row.procedure = {
+    self_assessment: procedure.self_assessment || '',
+    peer_review: procedure.peer_review || '',
+    test: procedure.test ?? null,
+    branch_opinion: procedure.branch_opinion || '',
+  }
+  row.grade = body.grade || ''
+  row.grade_label = (gradeOptions.find((item) => item.key === body.grade) || {}).label || ''
+  row.basis = body.basis || ''
+  row.rectification = body.rectification || ''
+}
+
+function reviewDetail(row, viewer, canReview = true) {
+  return {
+    ...reviewTarget(row, viewer, canReview),
+    id: row.review_id,
+    year,
+    reviewed_by: null,
+    reviewed_at: null,
+    review_comment: '',
+    revisions: [],
+    notice: '',
+    boundary: '',
+  }
+}
+
 function fixture() {
   return {
     doc: structuredClone(doc),
@@ -191,6 +422,7 @@ function fixture() {
     ],
     votes: [],
     records: [structuredClone(meeting)],
+    memberReviews: structuredClone(memberReviewRows),
     revisions: [],
     allowArchive: false,
     restricted: false,
@@ -574,6 +806,64 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
       )
     if (path === '/meeting/frequency')
       return route.fulfill(ok(structuredClone(frequency)))
+    if (path === '/meeting/member-reviews/workspace')
+      return route.fulfill(ok(reviewWorkspace(data, viewer, !readonly)))
+    if (path === '/meeting/member-reviews/launch' && method === 'POST') {
+      const created = data.memberReviews.filter((row) => !row.review_id)
+      created.forEach((row, index) => {
+        row.review_id = `review-new-${index}`
+        row.revision = 1
+        row.review_status = 'draft'
+      })
+      return route.fulfill(
+        ok({
+          year: body.year,
+          org_unit_id: body.org_unit_id,
+          org_name: org.name,
+          created: created.length,
+          skipped: data.memberReviews.length - created.length,
+          target_total: data.memberReviews.length,
+          items: created.map((row) => reviewTarget(row, viewer, !readonly)),
+          notice: '已为在册党员建立本年度评议草稿；已有记录不会被覆盖',
+        }),
+      )
+    }
+    if (path === '/meeting/member-reviews' && method === 'POST') {
+      const row = data.memberReviews.find((item) => item.profile_id === body.profile_id)
+      assert.ok(row, '评议对象必须在本支部在册名册内')
+      assert.equal(body.year, year)
+      row.review_id = row.review_id || 'review-created'
+      row.revision = 1
+      row.review_status = 'draft'
+      applyReviewPayload(row, body)
+      return route.fulfill(ok({ id: row.review_id, year, revision: row.revision }))
+    }
+    if (path.startsWith('/meeting/member-reviews/')) {
+      const parts = path.split('/')
+      const row = data.memberReviews.find((item) => item.review_id === parts[3])
+      if (!row) return route.fulfill(failed(404, '评议记录不存在'))
+      if (parts[4] === 'submit') {
+        row.review_status = 'pending'
+        row.submitted_by = viewer
+        row.revision += 1
+        return route.fulfill(ok(reviewTarget(row, viewer, !readonly)))
+      }
+      if (parts[4] === 'review') {
+        // 提交人不能自审：界面上能不能点\"审核\"由后端逐行给的 can_review 决定
+        assert.notEqual(row.submitted_by, viewer, '提交人不能审核自己的版本')
+        row.review_status = body.decision === 'approved' ? 'approved' : 'rejected'
+        row.reviewed_by = viewer
+        row.review_comment = body.reason
+        return route.fulfill(ok(reviewTarget(row, viewer, !readonly)))
+      }
+      if (method === 'PATCH') {
+        applyReviewPayload(row, body)
+        row.revision += 1
+        row.review_status = 'draft'
+        return route.fulfill(ok(reviewTarget(row, viewer, !readonly)))
+      }
+      return route.fulfill(ok(reviewDetail(row, viewer, !readonly)))
+    }
     if (path.startsWith('/meeting/tasks/')) {
       const task = data.records
         .flatMap((record) => record.tasks)
@@ -967,9 +1257,9 @@ try {
     await tab(reviewer.page, '年度统计')
     await visible(reviewer.page, '50.0%')
     checks.push('比例单位与缺少统计依据状态')
-    // 三会一课频次：周期要求、已召开未审核的提醒、已结束周期的缺口分区展示
+    // 组织生活频次：周期要求、已召开未审核的提醒、已结束周期的缺口分区展示
     await visible(reviewer.page, '每季度至少 1 次')
-    await visible(reviewer.page, '三会一课频次合规')
+    await visible(reviewer.page, '组织生活频次合规')
     await visible(reviewer.page, '本周期需处理（1）')
     await visible(reviewer.page, '纪要尚未通过人工审核')
     await visible(reviewer.page, '已召开待审核')
@@ -979,6 +1269,91 @@ try {
     await visible(reviewer.page, '跨周期不抵扣')
     assert.equal(await reviewer.page.locator('.meeting-frequency__gaps li').count(), 1)
     checks.push('三会一课周期频次、提醒与缺口分区')
+
+    // 民主评议党员：年度工作区、等次分布与低等次提示、录入→发起→送审→他人审核→修订
+    await tab(reviewer.page, '民主评议党员')
+    await visible(reviewer.page, `${year} 年度民主评议党员`)
+    await visible(reviewer.page, '应评议党员')
+    await visible(reviewer.page, '未发起 2')
+    await visible(reviewer.page, '优秀 1 人，占应评议 20%')
+    // 缺项（阻断送审）与提示（不阻断）在界面上必须分开显示
+    await visible(reviewer.page, '个人自评待录')
+    await visible(reviewer.page, '未登记民主测评票数')
+    assert.equal(await reviewer.page.locator('.review__grade').count(), 4)
+    await visible(reviewer.page, '需按党章党规研究处置（1）')
+    await visible(reviewer.page, '限期改正理论学习不系统的问题。')
+    checks.push('民主评议工作区、等次分布与低等次提示')
+
+    // 名册里还没有记录的党员：直接录入评议（新建），再走发起补齐其余草稿
+    await reviewer.page
+      .getByRole('row').filter({ hasText: '周慕白' })
+      .getByRole('button', { name: '录入评议', exact: true })
+      .click()
+    const reviewCreateDialog = reviewer.page
+      .getByRole('dialog')
+      .filter({ has: reviewer.page.getByLabel('个人自评') })
+    await visible(reviewer.page, '录入周慕白 的民主评议')
+    await reviewCreateDialog.getByLabel('个人自评').fill('本人对照党员标准自评：能按时参加组织生活。')
+    await reviewCreateDialog.getByLabel('操作理由').fill('补录民主评议草稿')
+    await reviewCreateDialog.getByRole('button', { name: '保存草稿', exact: true }).click()
+    await visible(reviewer.page, '周慕白 的评议草稿已保存。')
+    checks.push('未发起党员的评议录入与草稿保存')
+
+    await click(reviewer.page, '按年度发起')
+    const launchDialog = reviewer.page
+      .getByRole('dialog')
+      .filter({ has: reviewer.page.getByLabel('发起理由') })
+    await launchDialog.getByLabel('发起理由').fill('按年度发起民主评议')
+    await launchDialog.getByRole('button', { name: '确认发起', exact: true }).click()
+    await visible(reviewer.page, '已发起：新建 1 条草稿，跳过 4 条已有记录（共 5 名在册党员）')
+    checks.push('按年度发起只补未录入的党员，不覆盖已有记录')
+
+    // 只有提交人不是本人、且记录处于待审核时才出现"审核"入口
+    assert.equal(await reviewer.page.getByRole('button', { name: '审核', exact: true }).count(), 1)
+    await reviewer.page
+      .getByRole('row').filter({ hasText: '王砚清' })
+      .getByRole('button', { name: '录入/修订', exact: true })
+      .click()
+    const recordDialog = reviewer.page
+      .getByRole('dialog')
+      .filter({ has: reviewer.page.getByLabel('支部评定意见') })
+    await visible(reviewer.page, '送审前还需补齐')
+    await recordDialog.getByLabel('个人自评').fill('本人对照党员标准自评：能按时参加组织生活。')
+    await recordDialog.getByLabel('支部评定意见').fill('支委会同意评定为合格。')
+    await recordDialog.getByLabel('评定等次').selectOption('qualified')
+    await recordDialog.getByLabel('评定依据').fill('民主测评情况与日常表现')
+    await recordDialog.getByLabel('操作理由').fill('录入民主评议结果')
+    await recordDialog.getByRole('button', { name: '保存并送审', exact: true }).click()
+    await visible(reviewer.page, '王砚清 的评议已送审，需由另一位有权限的人员审核后生效')
+    assert.equal(await reviewer.page.getByRole('button', { name: '审核', exact: true }).count(), 1)
+    checks.push('评议录入、送审与提交人不能自审')
+
+    await reviewer.page
+      .getByRole('row').filter({ hasText: '赵向知' })
+      .getByRole('button', { name: '审核', exact: true })
+      .click()
+    const decisionDialog = reviewer.page
+      .getByRole('dialog')
+      .filter({ has: reviewer.page.getByLabel('审核结论') })
+    await decisionDialog.getByLabel('审核意见与依据').fill('材料齐全，同意评定为合格。')
+    await decisionDialog.getByRole('button', { name: '确认审核', exact: true }).click()
+    await visible(reviewer.page, '已通过人工审核并生效')
+    checks.push('评议人工审核与生效提示')
+
+    // 已生效的评议再修订会回到草稿并要求重新送审
+    await reviewer.page
+      .getByRole('row').filter({ hasText: '陈见微' })
+      .getByRole('button', { name: '录入/修订', exact: true })
+      .click()
+    const reviseDialog = reviewer.page
+      .getByRole('dialog')
+      .filter({ has: reviewer.page.getByLabel('对本人提出的整改要求') })
+    await visible(reviewer.page, '该评议已通过审核并生效')
+    await reviseDialog.getByLabel('对本人提出的整改要求').fill('继续加强理论学习。')
+    await reviseDialog.getByLabel('操作理由').fill('补充整改要求')
+    await reviseDialog.getByRole('button', { name: '保存草稿', exact: true }).click()
+    await visible(reviewer.page, '陈见微 的评议草稿已保存。')
+    checks.push('已生效评议的修订回到草稿')
     await reviewer.ctx.close()
 
     const read = await context(1440, true)
@@ -996,6 +1371,26 @@ try {
     await read.page.goto(`${BASE}/meeting`, { waitUntil: 'networkidle' })
     assert.equal(
       await read.page.getByRole('button', { name: '登记活动计划', exact: true }).count(),
+      0,
+    )
+    // 只看得到的账号：民主评议结果可以查看，但不出现发起、录入或审核入口
+    await tab(read.page, '民主评议党员')
+    await visible(read.page, `${year} 年度民主评议党员`)
+    assert.equal(
+      await read.page.getByRole('button', { name: '按年度发起', exact: true }).count(),
+      0,
+    )
+    assert.equal(
+      await read.page.getByRole('button', { name: '录入/修订', exact: true }).count(),
+      0,
+    )
+    assert.equal(await read.page.getByRole('button', { name: '审核', exact: true }).count(), 0)
+    await read.page
+      .getByRole('row').filter({ hasText: '赵向知' })
+      .getByRole('button', { name: '查看', exact: true })
+      .click()
+    assert.equal(
+      await read.page.getByRole('button', { name: '保存并送审', exact: true }).count(),
       0,
     )
     await read.ctx.close()

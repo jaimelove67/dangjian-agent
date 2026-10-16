@@ -33,9 +33,11 @@ from app.services.activity_frequency import (
 )
 from app.services.archive_service import require_archive_policy
 from app.services.meeting_service import (
+    ORG_LIFE_ACTIVITY_TYPE,
     apply_review,
     extract_minutes,
     minutes_missing,
+    minutes_sections,
     reset_review,
     utc_now,
     validate_minutes,
@@ -53,6 +55,7 @@ ACTIVITY_TYPES: dict[str, str] = {
     "branch_committee_meeting": "支委会",
     "party_group_meeting": "党小组会",
     "party_lecture": "党课",
+    "organizational_life_meeting": "组织生活会",
     "other": "其他组织生活",
 }
 
@@ -334,20 +337,39 @@ class ActivityService:
             or "政策依据待补；资料不足时不生成政策表述。"
         )
         people = "、".join(person["name"] for person in record.participants) or "参会人员待补"
-        agenda = (
-            f"会议议程（草稿）：\n一、{record.title}\n二、政策依据材料：\n{materials}\n"
-            f"三、讨论安排：请围绕上述依据酝酿意见\n四、参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
-        )
-        notice = (
-            f"会议通知（草稿）：\n会议名称：{record.title}\n"
-            f"计划时间：{record.scheduled_on.isoformat()}\n主持人：{record.host or '待补'}\n"
-            f"参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
-        )
+        if record.activity_type == ORG_LIFE_ACTIVITY_TYPE:
+            # 组织生活会的流程是"会前谈心谈话、会上批评与自我批评、会后整改"，
+            # 与三会一课"学材料—讨论—落实要求"不同，草稿不能互相套用。
+            agenda = (
+                f"会议议程（草稿）：\n一、会议主题：{record.title}\n"
+                f"二、会前准备：组织学习上级要求与本次主题，开展谈心谈话、听取党员和群众意见\n"
+                f"三、会上安排：通报上次整改落实情况，查摆问题，开展批评和自我批评，明确整改方向\n"
+                f"四、政策依据与学习材料：\n{materials}\n"
+                f"五、参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
+            )
+            notice = (
+                f"会议通知（草稿）：\n会议名称：{record.title}\n"
+                f"计划时间：{record.scheduled_on.isoformat()}\n主持人：{record.host or '待补'}\n"
+                f"参会范围：{people}\n会前要求：请参会党员围绕主题查摆问题、"
+                f"准备批评与自我批评发言；支部组织谈心谈话并听取意见\n{ORGANIZATION_LIFE_NOTICE}"
+            )
+            template_version = "org-life-meeting-1"
+        else:
+            agenda = (
+                f"会议议程（草稿）：\n一、{record.title}\n二、政策依据材料：\n{materials}\n"
+                f"三、讨论安排：请围绕上述依据酝酿意见\n四、参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
+            )
+            notice = (
+                f"会议通知（草稿）：\n会议名称：{record.title}\n"
+                f"计划时间：{record.scheduled_on.isoformat()}\n主持人：{record.host or '待补'}\n"
+                f"参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
+            )
+            template_version = "org-life-1"
         context = dict(record.context or {})
         context.update(
             agenda=agenda,
             notice=notice,
-            agenda_template_version="org-life-1",
+            agenda_template_version=template_version,
         )
         record.context = context
         reset_review(record)
@@ -365,7 +387,7 @@ class ActivityService:
         if not record.transcript:
             raise HTTPException(422, "原始会议文本待补")
         await self.require_visible_content(record)
-        record.minutes = extract_minutes(record.transcript)
+        record.minutes = extract_minutes(record.transcript, minutes_sections(record.activity_type))
         reset_review(record)
         await self.save_revision(record, "meeting", "generate_minutes", body.reason)
         return record

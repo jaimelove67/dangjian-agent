@@ -20,9 +20,12 @@ from app.schemas.governance import ReviewDecision, ReviewSubmit
 from app.schemas.meeting import ReviewRequest as MeetingDecision
 from app.schemas.meeting import RevisionRequest
 from app.schemas.member_ext import ScoringRequest
+from app.schemas.member_review import ReviewDecision as MemberReviewDecision
+from app.schemas.member_review import ReviewSubmit as MemberReviewSubmit
 from app.schemas.study import ReviewRequest as StudyDecision
 from app.services.activity_service import ActivityService
 from app.services.assessment_service import AssessmentService, row_view
+from app.services.member_review_service import MemberReviewService
 from app.services.member_service import MemberDevelopment
 from app.services.study_service import StudyService
 
@@ -30,6 +33,7 @@ PERMISSIONS = {
     "score": Permission.SCORING,
     "vote": Permission.SCORING,
     "meeting": Permission.MEETING_REVIEW,
+    "member_review": Permission.MEETING_REVIEW,
     "study_activity": Permission.STUDY_REVIEW,
     "study_plan": Permission.STUDY_REVIEW,
     "assessment_report": Permission.ASSESSMENT_REVIEW,
@@ -87,6 +91,10 @@ class ReviewService:
             service = await ActivityService(self.db, self.user).initialize()
             row = await service.record(body.source_id, lock=lock)
             await service.require_visible_content(row)
+            return await service._snapshot(row), service, row
+        if body.source_kind == "member_review":
+            service = await MemberReviewService(self.db, self.user).initialize()
+            row = await service.review_row(body.source_id, lock=lock)
             return await service._snapshot(row), service, row
         if body.source_kind in {"study_activity", "study_plan"}:
             service = await StudyService(self.db, self.user).initialize()
@@ -163,17 +171,27 @@ class ReviewService:
     async def submit(self, body: ReviewSubmit) -> HumanReview:
         snapshot, service, source = await self.source(body, lock=True)
         # 重要纪要/学习计划复用原业务送审校验，不能从统一入口跳过资料核验。
-        if source is not None and body.source_kind in {"meeting", "study_activity", "study_plan"}:
+        if source is not None and body.source_kind in {
+            "meeting",
+            "study_activity",
+            "study_plan",
+            "member_review",
+        }:
             if source.review_status in {"draft", "rejected"}:
-                revision = RevisionRequest(
-                    expected_revision=source.revision, reason="提交统一人工审核"
-                )
-                if body.source_kind == "meeting":
-                    await service.submit(source.id, revision)
-                elif body.source_kind == "study_activity":
-                    await service.submit_activity(source.id, revision)
+                reason = "提交统一人工审核"
+                if body.source_kind == "member_review":
+                    await service.submit(
+                        source.id,
+                        MemberReviewSubmit(expected_revision=source.revision, reason=reason),
+                    )
                 else:
-                    await service.submit_plan(source.id, revision)
+                    revision = RevisionRequest(expected_revision=source.revision, reason=reason)
+                    if body.source_kind == "meeting":
+                        await service.submit(source.id, revision)
+                    elif body.source_kind == "study_activity":
+                        await service.submit_activity(source.id, revision)
+                    else:
+                        await service.submit_plan(source.id, revision)
                 snapshot, _, _ = await self.source(body, lock=True)
             elif source.review_status != "pending":
                 raise HTTPException(409, "当前对象须先修订为待审核版本")
@@ -283,6 +301,15 @@ class ReviewService:
                     expected_revision=source.revision,
                     reason=body.opinion,
                     decision="approved" if body.decision == "approved" else "rejected",
+                ),
+            )
+        elif params.source_kind == "member_review":
+            await service.review(
+                source.id,
+                MemberReviewDecision(
+                    expected_revision=source.revision,
+                    decision="approved" if body.decision == "approved" else "rejected",
+                    reason=body.opinion,
                 ),
             )
         elif params.source_kind in {"study_activity", "study_plan"}:

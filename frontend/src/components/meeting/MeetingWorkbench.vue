@@ -7,6 +7,7 @@ import {
   EXECUTION_LABELS,
   REVIEW_LABELS,
   meetingApi,
+  minutesSectionsFor,
   type ActivityType,
   type MeetingFrequency,
   type MeetingRecord,
@@ -23,6 +24,7 @@ import LoadingBlock from '@/components/LoadingBlock.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
 import MeetingFrequencyPanel from './MeetingFrequencyPanel.vue'
+import MemberReviewPanel from './MemberReviewPanel.vue'
 import ParticipantEditor from './ParticipantEditor.vue'
 import SourcePicker from './SourcePicker.vue'
 import { session } from '@/stores/session'
@@ -71,6 +73,7 @@ const workspaces = [
   { key: 'tasks', label: '任务台账' },
   { key: 'history', label: '历史归档' },
   { key: 'stats', label: '年度统计' },
+  { key: 'member-reviews', label: '民主评议党员' },
 ]
 const detailTabs = [
   { key: 'details', label: '活动资料' },
@@ -79,11 +82,10 @@ const detailTabs = [
   { key: 'history', label: '版本与归档' },
 ]
 const taskLabels = { pending: '待人工确认', active: '落实中', done: '已完成', cancelled: '已取消' }
-const minuteSections = [
-  { key: 'learning_points', label: '学习要点' },
-  { key: 'consensus', label: '讨论共识' },
-  { key: 'requirements', label: '工作要求' },
-] as const
+// 组织生活会的纪要栏目与三会一课不同：按当前活动类型选栏目，不把"批评意见"塞进"讨论共识"。
+const minuteSections = computed(() => minutesSectionsFor(current.value?.activity_type))
+const reviewYear = computed(() => Number(filters.year || new Date().getFullYear()))
+const memberPanel = ref<InstanceType<typeof MemberReviewPanel> | null>(null)
 const revisionLabels: Record<string, string> = {
   create: '登记',
   revise: '修订',
@@ -197,6 +199,15 @@ async function loadOrgs(): Promise<void> {
   }
 }
 async function loadRecords(): Promise<void> {
+  if (workspace.value === 'member-reviews') {
+    // 民主评议党员有自己的年度/组织筛选与分页口径，不借用活动列表的接口
+    records.value = []
+    tasks.value = []
+    total.value = 0
+    pageError.value = null
+    loading.value = false
+    return
+  }
   const sequence = ++listSequence
   loading.value = true
   pageError.value = null
@@ -269,6 +280,9 @@ function reload(): void {
   if (workspace.value === 'stats') {
     void loadStats()
     void loadFrequency()
+  }
+  if (workspace.value === 'member-reviews') {
+    void memberPanel.value?.reload()
   }
 }
 function changeWorkspace(value: string): void {
@@ -545,8 +559,8 @@ onBeforeUnmount(() => {
 <template>
   <div class="meeting wb-stack">
     <PageHeader
-      title="组织生活（三会一课）"
-      description="从活动安排到参会、纪要、任务和归档。生成内容保留原文依据，组织结论由人工形成。"
+      title="组织生活"
+      description="三会一课与组织生活会从活动安排到参会、纪要、任务和归档；民主评议党员按年度记录程序与等次。生成内容保留原文依据，组织结论由人工形成。"
     >
       <template #actions
         ><button
@@ -578,7 +592,11 @@ onBeforeUnmount(() => {
             type="number"
             min="2000"
             max="2100"
-            :placeholder="workspace === 'stats' ? String(new Date().getFullYear()) : '全部年度'"
+            :placeholder="
+              workspace === 'stats' || workspace === 'member-reviews'
+                ? String(new Date().getFullYear())
+                : '全部年度'
+            "
         /></label>
         <label class="wb-field"
           ><span>所属组织</span
@@ -621,7 +639,16 @@ onBeforeUnmount(() => {
         </button></ErrorState
       >
       <ErrorState v-if="orgError" :error="orgError" />
-      <template v-if="workspace === 'stats'">
+      <template v-if="workspace === 'member-reviews'">
+        <MemberReviewPanel
+          ref="memberPanel"
+          :year="reviewYear"
+          :org-unit-id="filters.org_unit_id"
+          :orgs="orgs"
+          :can-manage="canManage"
+        />
+      </template>
+      <template v-else-if="workspace === 'stats'">
         <LoadingBlock v-if="statsLoading" variant="table" :rows="3" /><ErrorState
           v-else-if="statsError"
           :error="statsError"
@@ -1034,7 +1061,9 @@ onBeforeUnmount(() => {
                 rows="8"
                 maxlength="200000"
                 :disabled="!canEdit || busy"
-                placeholder="填写实际会议文本。学习要点、讨论共识、工作要求可各占一行并用冒号标注。"
+                :placeholder="`填写实际会议文本。${minuteSections
+                  .map((section) => section.label)
+                  .join('、')}可各占一行并用冒号标注。`"
               />
             </label>
             <p v-if="edit.transcript !== current.transcript" class="u-meta">

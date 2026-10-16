@@ -23,6 +23,7 @@ from app.api.v1 import (
     meeting,
     member,
     member_full,
+    member_review,
     member_self,
     notifications,
     qa,
@@ -215,6 +216,7 @@ app.include_router(member.router, prefix="/api/v1", tags=["党员发展"])
 app.include_router(member_self.router, prefix="/api/v1", tags=["本人档案与材料"])
 app.include_router(member_full.router, prefix="/api/v1", tags=["党员发展全流程"])
 app.include_router(meeting.router, prefix="/api/v1", tags=["组织生活"])
+app.include_router(member_review.router, prefix="/api/v1", tags=["组织生活"])
 app.include_router(assessment.router, prefix="/api/v1", tags=["年度考核"])
 app.include_router(user.router, prefix="/api/v1", tags=["兼容用户接口"])
 app.include_router(admin.router, prefix="/api/v1", tags=["管理"])

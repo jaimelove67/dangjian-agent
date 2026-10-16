@@ -705,11 +705,13 @@ async def test_frequency_reminder_counts_only_approved_and_scopes_to_branches(li
         pending = {
             row["activity_type"] for row in after["reminders"] if row["org_unit_id"] == "branch-c"
         }
-        # branch-c 本周期只有支部大会达标，其余三类都在提醒里
+        # branch-c 本周期只有支部大会达标；其余三类都在提醒里
+        # 组织生活会按年度计（每年至少 1 次，一般排在第四季度）：截止日未到也算本周期未达标
         assert pending == {
             "branch_committee_meeting",
             "party_group_meeting",
             "party_lecture",
+            "organizational_life_meeting",
         }
         # 未开的活动给出最晚期限与已安排次数
         lecture = rows[("party_lecture", "branch-c")]
@@ -727,3 +729,128 @@ async def test_frequency_reminder_counts_only_approved_and_scopes_to_branches(li
     # 无查询权限的角色看不到频次
     async with client_for(life_url, actor(role=UserRole.MEMBER, org="branch-a")) as (client, _):
         assert (await client.get("/api/v1/meeting/frequency")).status_code == 403
+
+
+ORG_LIFE_TRANSCRIPT = (
+    "会议原文起始\n查摆问题：班子集中学习安排不够固定，联系实际不够。\n"
+    "批评意见：班子成员对年轻党员的培养关心不够。\n"
+    "整改方向：每季度固定一次集中学习并逐条销号。\n"
+    "学习要点：这一句属于三会一课栏目，组织生活会不提取。\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_organizational_life_meeting_uses_its_own_minutes_template(life_url):
+    """组织生活会不是三会一课：纪要栏目是查摆问题 / 批评意见 / 整改方向。"""
+    year = date.today().year
+    async with client_for(life_url, actor()) as (client, _):
+        record = await ok(
+            client,
+            "POST",
+            "/meeting/records",
+            {
+                "org_unit_id": "branch-a",
+                "activity_type": "organizational_life_meeting",
+                "title": f"{year}年度组织生活会（合成）",
+                "scheduled_on": f"{year}-09-05",
+                "host": "合成主持人",
+                "source_doc_ids": ["LIFE-VALID"],
+                "reason": "合成一次组织生活会",
+            },
+        )
+        listed = await ok(
+            client,
+            "GET",
+            f"/meeting/records?activity_type=organizational_life_meeting&year={year}",
+        )
+        assert listed["total"] >= 1
+
+        record = await ok(
+            client,
+            "POST",
+            f"/meeting/records/{record['id']}/generate-agenda",
+            {"expected_revision": record["revision"], "reason": "生成议程草稿"},
+        )
+        agenda = record["context"]["agenda"]
+        assert "查摆问题" in agenda and "批评和自我批评" in agenda and "整改方向" in agenda
+        assert "谈心谈话" in agenda and "谈心谈话" in record["context"]["notice"]
+        assert "讨论安排" not in agenda
+
+        # 用三会一课那三栏冒充组织生活会纪要：送审时必须被拦下
+        wrong = await ok(
+            client,
+            "PATCH",
+            f"/meeting/records/{record['id']}",
+            {
+                "expected_revision": record["revision"],
+                "reason": "登记实际召开情况",
+                "held_on": f"{year}-09-06",
+                "participants": [{"participant_id": "p1", "name": "合成人员甲", "attended": True}],
+                "transcript": TRANSCRIPT,
+            },
+        )
+        wrong = await ok(
+            client,
+            "POST",
+            f"/meeting/records/{wrong['id']}/generate-minutes",
+            {"expected_revision": wrong["revision"], "reason": "提取纪要"},
+        )
+        # 三会一课的三栏原文进不了组织生活会纪要：三个栏目都是空的
+        assert {key for key, notes in wrong["minutes"].items() if notes} == set()
+        response = await client.post(
+            f"/api/v1/meeting/records/{wrong['id']}/submit",
+            json={"expected_revision": wrong["revision"], "reason": "缺项送审"},
+        )
+        assert response.status_code == 422
+        assert "查摆问题待补" in response.json()["message"]
+
+        record = await ok(
+            client,
+            "PATCH",
+            f"/meeting/records/{wrong['id']}",
+            {
+                "expected_revision": wrong["revision"],
+                "reason": "改按组织生活会记录",
+                "transcript": ORG_LIFE_TRANSCRIPT,
+            },
+        )
+        record = await ok(
+            client,
+            "POST",
+            f"/meeting/records/{record['id']}/generate-minutes",
+            {"expected_revision": record["revision"], "reason": "逐项提取原文"},
+        )
+        assert set(record["minutes"]) == {"problems", "criticisms", "rectifications"}
+        assert record["missing"] == []
+        record = await ok(
+            client,
+            "POST",
+            f"/meeting/records/{record['id']}/submit",
+            {"expected_revision": record["revision"], "reason": "提交人工审核"},
+        )
+        assert record["review_status"] == "pending"
+    async with client_for(life_url, actor("life-reviewer")) as (client, _):
+        record = await ok(
+            client,
+            "POST",
+            f"/meeting/records/{record['id']}/review",
+            {
+                "expected_revision": record["revision"],
+                "reason": "核对原文与参会后通过",
+                "decision": "approved",
+            },
+        )
+        assert record["execution_status"] == "completed"
+    # 组织生活会按年度计频次：这一年有一场审核通过的组织生活会即达标
+    async with client_for(life_url, actor()) as (client, _):
+        frequency = await ok(client, "GET", "/meeting/frequency")
+        row = next(
+            item
+            for item in frequency["rows"]
+            if item["activity_type"] == "organizational_life_meeting"
+            and item["org_unit_id"] == "branch-a"
+        )
+        assert row["period"] == "year" and row["period_label"] == f"{year} 年度"
+        assert row["required"] == 1 and row["annual_required"] == 1
+        assert row["state"] == "met"
+

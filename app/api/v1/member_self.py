@@ -42,6 +42,7 @@ from app.schemas.member_self import (
     PersonalArchive,
     PersonalMaterial,
 )
+from app.services.member_review_service import own_reviews as own_review_records
 from app.services.org_scope import accessible_org_units
 
 router = APIRouter()
@@ -105,6 +106,29 @@ async def own_archive(
             profile=MemberRosterItem.from_profile(profile) if profile else None,
             max_upload_size=settings.MAX_UPLOAD_SIZE,
         ),
+        trace_id=_trace(request),
+    )
+
+
+@router.get(
+    "/member/self/reviews",
+    response_model=APIResponse[dict],
+    summary="本人民主评议结果",
+)
+async def own_reviews(
+    request: Request,
+    year: int | None = Query(None, ge=2000, le=2100),
+    user: User = Depends(_self_query),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """只返回本人档案下、已通过审核的评议结果；不接受目标人员编号，也看不到别人的。"""
+    profile = await _own_profile(db, user)
+    items = await own_review_records(db, user, str(profile.id), year=year) if profile else []
+    return APIResponse(
+        data={
+            "items": items,
+            "notice": "评议结果由组织记录、经另一位有权限的人员审核后生效；未生效版本不在此显示",
+        },
         trace_id=_trace(request),
     )
 

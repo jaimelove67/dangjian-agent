@@ -223,6 +223,7 @@ async function checkRole(browser, spec) {
     await checkOperationsTab(page, spec)
     await checkQaRecordsAccess(page, spec)
     await checkMeetingFrequency(page, spec)
+    await checkMemberReviews(page, spec)
   } finally {
     await context.close()
   }
@@ -440,7 +441,7 @@ async function checkQaRecordsAccess(page, spec) {
 }
 
 /**
- * 「年度统计」必须挂载三会一课频次合规提醒。
+ * 「年度统计」必须挂载组织生活频次合规提醒。
  *
  * T-ORG-10 的落点是"按制度频次生成提醒"：接口有了、页面没有，支部书记还是得靠脑子记
  * 本季度党课讲没讲。这里同时钉住三件事：周期要求（不是只有年度数字）、"已召开没审"
@@ -468,11 +469,11 @@ async function checkMeetingFrequency(page, spec) {
     await page.waitForTimeout(1500)
     const panel = page.locator('.meeting-frequency')
     if (!(await panel.count())) {
-      fail(`${spec.username}: 年度统计未挂载「三会一课频次合规」提醒（提醒只在接口里，用户看不到）`)
+      fail(`${spec.username}: 年度统计未挂载「组织生活频次合规」提醒（提醒只在接口里，用户看不到）`)
       return
     }
     const text = await panel.innerText()
-    if (!/本周期各支部三会一课均已达标|本周期需处理|没有可提示的支部/.test(text)) {
+    if (!/本周期各支部组织生活均已达标|本周期需处理|没有可提示的支部/.test(text)) {
       fail(`${spec.username}: 频次提醒区块没有给出本周期结论`)
     }
     if (!/至少 1 次|不设固定频次/.test(text)) {
@@ -482,6 +483,56 @@ async function checkMeetingFrequency(page, spec) {
       fail(`${spec.username}: 频次提醒缺少"完成认定以人工审核通过为准"的口径`)
     }
     if (apiErrors.length) fail(`${spec.username}: 频次接口报错 ${[...new Set(apiErrors)].join(', ')}`)
+  } finally {
+    page.off('response', listener)
+  }
+}
+
+/**
+ * 「民主评议党员」工作区必须真的挂载并给出年度结论。
+ *
+ * T-ORG-11 要求"可按年度发起、记录流程与意见、人工审核与留痕"：接口有了、页面没有，
+ * 支部书记还是不知道谁没评、缺什么、能不能送审。这里钉住：年度工作区能打开、名单与
+ * 进度（含"未发起"）给得出来、以及"等次由人工审定、不按票数排名"的口径在页面上。
+ */
+async function checkMemberReviews(page, spec) {
+  if (!spec.allow.includes('/meeting')) return
+  const apiErrors = []
+  const listener = (response) => {
+    const path = new URL(response.url()).pathname
+    if (response.status() >= 400 && path.endsWith('/meeting/member-reviews/workspace')) {
+      apiErrors.push(`${response.status()} ${path}`)
+    }
+  }
+  page.on('response', listener)
+  try {
+    await page.goto(`${BASE}/meeting`, { waitUntil: 'domcontentloaded' })
+    await settle(page)
+    const reviewsTab = page.getByRole('tab', { name: '民主评议党员' })
+    if (!(await reviewsTab.count())) {
+      fail(`${spec.username}: 组织生活页没有「民主评议党员」工作区（功能只在接口里，用户看不到）`)
+      return
+    }
+    await reviewsTab.first().click()
+    await page.waitForTimeout(1500)
+    const panel = page.locator('.review')
+    if (!(await panel.count())) {
+      fail(`${spec.username}: 「民主评议党员」没有挂载工作区面板`)
+      return
+    }
+    const text = await panel.innerText()
+    if (!/年度民主评议党员/.test(text)) fail(`${spec.username}: 民主评议没有给出年度工作区标题`)
+    if (!/应评议党员/.test(text)) fail(`${spec.username}: 民主评议没有给出应评议名单口径`)
+    if (!/未发起|已通过审核/.test(text)) fail(`${spec.username}: 民主评议没有给出进度（谁还没评）`)
+    if (!/系统不按票数排名、不自动定等次/.test(text)) {
+      fail(`${spec.username}: 民主评议缺少"等次由人工审定"的口径`)
+    }
+    if (!/优秀等次比例上限/.test(text)) {
+      fail(`${spec.username}: 民主评议缺少优秀比例与不合格处置的边界说明`)
+    }
+    if (apiErrors.length) {
+      fail(`${spec.username}: 民主评议接口报错 ${[...new Set(apiErrors)].join(', ')}`)
+    }
   } finally {
     page.off('response', listener)
   }

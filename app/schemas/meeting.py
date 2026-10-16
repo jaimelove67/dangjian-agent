@@ -21,6 +21,7 @@ ACTIVITY_TYPE_OPTIONS = Literal[
     "branch_committee_meeting",  # 支委会
     "party_group_meeting",  # 党小组会
     "party_lecture",  # 党课
+    "organizational_life_meeting",  # 组织生活会
     "other",  # 其他组织生活
 ]
 
@@ -53,6 +54,10 @@ class MinutesInput(MeetingInput):
     learning_points: list[EvidenceNote] = Field(default_factory=list, max_length=60)
     consensus: list[EvidenceNote] = Field(default_factory=list, max_length=60)
     requirements: list[EvidenceNote] = Field(default_factory=list, max_length=60)
+    # 组织生活会专用栏目；三会一课/中心组学习不填，服务按活动类型决定哪几栏必填。
+    problems: list[EvidenceNote] = Field(default_factory=list, max_length=60)
+    criticisms: list[EvidenceNote] = Field(default_factory=list, max_length=60)
+    rectifications: list[EvidenceNote] = Field(default_factory=list, max_length=60)
 
 
 class ActivityCreate(MeetingInput):

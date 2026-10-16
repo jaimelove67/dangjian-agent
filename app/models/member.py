@@ -182,3 +182,38 @@ class MemberArchiveCheck(Base):
     checked_by: Mapped[str] = mapped_column(String(36), nullable=False)
     rule_version: Mapped[str] = mapped_column(String(20), nullable=False)
     result: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class MemberReview(Base):
+    """民主评议党员结果（年度 × 党员）。
+
+    程序与等次**由人工记录**：系统的职责是把"个人自评、党员互评、民主测评、支部
+    评定意见"和最终等次如实留下来，供本人档案与考核复用，不替组织下结论、也不按
+    票数自动排名定等次。一条记录一个人一个年度；重复发起按年度 + 党员去重。
+    """
+
+    __tablename__ = "member_reviews"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "year", "profile_id", name="uq_member_review_year_profile"),
+        Index("ix_member_reviews_scope", "tenant_id", "org_unit_id", "year", "review_status"),
+    )
+
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # 发起时的姓名 / 组织 / 阶段快照：人员改名、流转或调出后，历年评议仍能读回去
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    # {"self_assessment":…, "peer_review":…, "test":{…票数}, "branch_opinion":…}
+    procedure: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    grade: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    basis: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    rectification: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    submitted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_comment: Mapped[str] = mapped_column(Text, nullable=False, default="")

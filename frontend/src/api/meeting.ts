@@ -12,6 +12,7 @@ export type ActivityType =
   | 'branch_committee_meeting'
   | 'party_group_meeting'
   | 'party_lecture'
+  | 'organizational_life_meeting'
   | 'other'
 
 export const ACTIVITY_TYPE_LABELS: Record<ActivityType, string> = {
@@ -19,7 +20,36 @@ export const ACTIVITY_TYPE_LABELS: Record<ActivityType, string> = {
   branch_committee_meeting: '支委会',
   party_group_meeting: '党小组会',
   party_lecture: '党课',
+  organizational_life_meeting: '组织生活会',
   other: '其他组织生活',
+}
+
+/** 组织生活会的纪要栏目与三会一课不同：查摆问题 / 批评与自我批评 / 整改方向。 */
+export type MinutesKey =
+  | 'learning_points'
+  | 'consensus'
+  | 'requirements'
+  | 'problems'
+  | 'criticisms'
+  | 'rectifications'
+
+/** 三会一课与中心组学习的纪要栏目。 */
+export const MINUTES_SECTIONS: { key: MinutesKey; label: string }[] = [
+  { key: 'learning_points', label: '学习要点' },
+  { key: 'consensus', label: '讨论共识' },
+  { key: 'requirements', label: '工作要求' },
+]
+
+/** 组织生活会的纪要栏目与三会一课不同：查摆问题 / 批评与自我批评 / 整改方向。 */
+export const ORG_LIFE_MINUTES_SECTIONS: { key: MinutesKey; label: string }[] = [
+  { key: 'problems', label: '查摆问题' },
+  { key: 'criticisms', label: '批评意见' },
+  { key: 'rectifications', label: '整改方向' },
+]
+
+/** 按活动类型给出纪要栏目，避免把"批评意见"塞进"讨论共识"。 */
+export function minutesSectionsFor(type: ActivityType | undefined) {
+  return type === 'organizational_life_meeting' ? ORG_LIFE_MINUTES_SECTIONS : MINUTES_SECTIONS
 }
 
 export interface Organization { id: string; name: string; org_type: string }
@@ -27,7 +57,7 @@ export type ReviewStatus = 'draft' | 'pending' | 'approved' | 'rejected'
 
 export interface Participant { participant_id: string; name: string; attended: boolean }
 export interface EvidenceNote { text: string; quote: string; start: number; end: number }
-export type Minutes = Partial<Record<'learning_points' | 'consensus' | 'requirements', EvidenceNote[]>>
+export type Minutes = Partial<Record<MinutesKey, EvidenceNote[]>>
 
 export interface MeetingTask {
   id: string
@@ -105,7 +135,7 @@ export interface MeetingStats {
       required: number
       performed: number
       total_registered: number
-      period: 'month' | 'quarter' | 'none'
+      period: 'month' | 'quarter' | 'year' | 'none'
       period_text: string
       basis: string
     }
@@ -125,7 +155,7 @@ export interface MeetingFrequencyRow {
   org_unit_name: string
   activity_type: ActivityType
   activity_type_label: string
-  period: 'month' | 'quarter' | 'none'
+  period: 'month' | 'quarter' | 'year' | 'none'
   period_label: string
   period_start: string
   period_end: string
@@ -147,7 +177,7 @@ export interface MeetingFrequencyGap {
   org_unit_name: string
   activity_type: ActivityType
   activity_type_label: string
-  period: 'month' | 'quarter' | 'none'
+  period: 'month' | 'quarter' | 'year' | 'none'
   required: number
   missed_periods: string[]
   missing_total: number
@@ -209,6 +239,151 @@ export const meetingApi = {
     return http.post(`/meeting/tasks/${encodeURIComponent(taskId)}/handle`, body)
   },
   tasks(params: object): Promise<MeetingPage<MeetingTask>> { return http.get('/meeting/tasks', { params }) },
+}
+
+/** 民主评议党员（模块3 / T-ORG-11）：一条 = 一个年度 × 一名党员。 */
+export type ReviewGrade = 'outstanding' | 'qualified' | 'basic' | 'unqualified'
+
+export const GRADE_LABELS: Record<ReviewGrade, string> = {
+  outstanding: '优秀',
+  qualified: '合格',
+  basic: '基本合格',
+  unqualified: '不合格',
+}
+
+export interface ReviewTest {
+  eligible: number
+  attended: number
+  outstanding: number
+  qualified: number
+  basic: number
+  unqualified: number
+}
+
+export interface ReviewProcedure {
+  self_assessment: string
+  peer_review: string
+  test: ReviewTest | null
+  branch_opinion: string
+}
+
+export interface MemberReviewTarget {
+  profile_id: string
+  member_name: string
+  stage: string
+  stage_label: string
+  org_unit_id: string
+  org_name: string
+  in_roster: boolean
+  review_id: string | null
+  revision: number
+  review_status: ReviewStatus | 'not_started'
+  submitted_by: string | null
+  can_review: boolean
+  grade: string
+  grade_label: string
+  missing: string[]
+  advisories: string[]
+}
+
+export interface MemberReviewProgress {
+  target_total: number
+  launched: number
+  not_started: number
+  draft: number
+  pending: number
+  approved: number
+  rejected: number
+}
+
+export interface MemberReviewAttention {
+  review_id: string
+  member_name: string
+  org_name: string
+  grade: string
+  grade_label: string
+  rectification: string
+}
+
+export interface MemberReviewWorkspace {
+  year: number
+  org_unit_id: string | null
+  org_name: string
+  targets: MemberReviewTarget[]
+  target_total: number
+  progress: MemberReviewProgress
+  grades: Record<string, number>
+  grade_options: { key: ReviewGrade; label: string }[]
+  outstanding: number
+  outstanding_ratio: number
+  attention: MemberReviewAttention[]
+  advisory_count: number
+  truncated: boolean
+  missing: string[]
+  notices: {
+    outstanding_notice: string
+    unqualified_notice: string
+    feedback_notice: string
+  }
+  notice: string
+  boundary: string
+}
+
+export interface MemberReviewDetail {
+  id: string
+  year: number
+  profile_id: string
+  org_unit_id: string
+  org_name: string
+  member_name: string
+  stage: string
+  procedure: Partial<ReviewProcedure>
+  grade: string
+  grade_label: string
+  basis: string
+  rectification: string
+  revision: number
+  review_status: ReviewStatus
+  submitted_by: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  review_comment: string
+  missing: string[]
+  advisories: string[]
+  revisions: MeetingRevision[]
+  notice: string
+  boundary: string
+}
+
+export const memberReviewApi = {
+  workspace(params: { year: number; org_unit_id?: string }): Promise<MemberReviewWorkspace> {
+    return http.get('/meeting/member-reviews/workspace', { params })
+  },
+  launch(body: {
+    year: number
+    org_unit_id: string
+    reason: string
+  }): Promise<{ created: number; skipped: number; target_total: number; org_name: string; notice: string }> {
+    return http.post('/meeting/member-reviews/launch', body)
+  },
+  create(body: object): Promise<{ id: string; year: number; revision: number }> {
+    return http.post('/meeting/member-reviews', body)
+  },
+  detail(id: string): Promise<MemberReviewDetail> {
+    return http.get(`/meeting/member-reviews/${encodeURIComponent(id)}`)
+  },
+  update(id: string, body: object): Promise<{ id: string; revision: number; review_status: ReviewStatus }> {
+    return http.patch(`/meeting/member-reviews/${encodeURIComponent(id)}`, body)
+  },
+  submit(id: string, body: RevisionPayload): Promise<{ id: string; revision: number; review_status: ReviewStatus }> {
+    return http.post(`/meeting/member-reviews/${encodeURIComponent(id)}/submit`, body)
+  },
+  review(
+    id: string,
+    body: RevisionPayload & { decision: 'approved' | 'rejected' },
+  ): Promise<{ id: string; revision: number; review_status: ReviewStatus }> {
+    return http.post(`/meeting/member-reviews/${encodeURIComponent(id)}/review`, body)
+  },
 }
 
 export const REVIEW_LABELS: Record<ReviewStatus, string> = {

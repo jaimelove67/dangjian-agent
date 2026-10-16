@@ -25,17 +25,19 @@ import yaml
 
 RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "business_rules.yaml"
 
-PERIOD_MONTHS: dict[str, int] = {"month": 1, "quarter": 3, "none": 0}
+PERIOD_MONTHS: dict[str, int] = {"year": 12, "quarter": 3, "month": 1, "none": 0}
 PERIOD_TEXT: dict[str, str] = {
-    "month": "每月至少 1 次",
+    "year": "每年至少 1 次",
     "quarter": "每季度至少 1 次",
+    "month": "每月至少 1 次",
     "none": "不设固定频次",
 }
 
 FREQUENCY_NOTICE = "频次为制度提示，完成认定以人工审核通过的会议记录为准，系统不自动认定完成"
 FREQUENCY_RULE = (
     "org-life-frequency-1：按《中国共产党支部工作条例（试行）》的周期口径"
-    "（支部党员大会、党课每季度至少 1 次；党支部委员会会议、党小组会每月至少 1 次）；"
+    "（组织生活会每年至少 1 次；支部党员大会、党课每季度至少 1 次；"
+    "党支部委员会会议、党小组会每月至少 1 次）；"
     "只统计已召开且人工审核通过的记录，跨周期不互相抵扣，已形成的周期缺口不因后续补开而消除"
 )
 
@@ -93,6 +95,13 @@ DEFAULT_REQUIREMENTS: tuple[Requirement, ...] = (
         "党小组会一般每月召开 1 次（未划分党小组的支部不适用）",
     ),
     Requirement("party_lecture", "党课", "quarter", 1, "党支部一般每季度至少组织 1 次党课"),
+    Requirement(
+        "organizational_life_meeting",
+        "组织生活会",
+        "year",
+        1,
+        "党支部每年至少召开 1 次组织生活会，一般安排在第四季度",
+    ),
     Requirement("other", "其他组织生活", "none", 0, "其他组织生活不设固定频次"),
 )
 
@@ -144,30 +153,36 @@ def _month_end(month_start: date) -> date:
 
 def period_window(period: str, on: date) -> tuple[date, date] | None:
     """``on`` 所在周期的首末日（含）；不设周期返回 ``None``。"""
-    if period == "month":
-        start = on.replace(day=1)
-        return start, _month_end(start)
+    if period == "year":
+        return date(on.year, 1, 1), date(on.year, 12, 31)
     if period == "quarter":
         start = date(on.year, (on.month - 1) // 3 * 3 + 1, 1)
         return start, _month_end(date(start.year, start.month + 2, 1))
+    if period == "month":
+        start = on.replace(day=1)
+        return start, _month_end(start)
     return None
 
 
 def period_label(period: str, start: date) -> str:
     """周期的人读标签，接口与界面共用同一个说法。"""
-    if period == "month":
-        return f"{start.year} 年 {start.month} 月"
+    if period == "year":
+        return f"{start.year} 年度"
     if period == "quarter":
         return f"{start.year} 年第 {(start.month - 1) // 3 + 1} 季度"
+    if period == "month":
+        return f"{start.year} 年 {start.month} 月"
     return f"{start.year} 年度"
 
 
 def periods_in_year(period: str, year: int) -> list[tuple[date, date]]:
     """本年度内该周期的全部窗口，按时间正序。"""
-    if period == "month":
-        starts = [date(year, month, 1) for month in range(1, 13)]
+    if period == "year":
+        starts = [date(year, 1, 1)]
     elif period == "quarter":
         starts = [date(year, month, 1) for month in (1, 4, 7, 10)]
+    elif period == "month":
+        starts = [date(year, month, 1) for month in range(1, 13)]
     else:
         return []
     windows: list[tuple[date, date]] = []

@@ -245,6 +245,22 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 
 未覆盖：系统没有党小组模型，党小组会提示恒给（`basis` 标明「未划分党小组的支部不适用」，可在配置里设 `period: none` 关闭）；不做自动认定完成（完成认定仍以人工审核通过为准）；只做页面提醒，不生成待办任务、不发通知；`as_of` 只读、不回填历史缺口、不产生数据；未做超 200 个支部的分页查看（截断时显式提示）。
 
+## 组织生活会 / 民主评议党员回归（T-ORG-11）
+
+2026-10-16，组织生活会复用 `meeting_records`（`activity_type = organizational_life_meeting`，口径入 `activity_requirements` 为 `period: year` × `per_period: 1`）并**按活动类型切换纪要栏目**（查摆问题 / 批评意见 / 整改方向，模板 `org-life-meeting-1`；原三会一课标准模板仍是 `org-life-1`）；民主评议党员新增**一人一年一条**的 `member_reviews`（迁移 `017_member_reviews`，唯一约束 tenant × year × profile），「组织生活」新增「民主评议党员」工作区，统一人工审核新增 `source_kind = "member_review"`，原「三会一课频次合规」区块改名「组织生活频次合规」（面板现在也覆盖年度组织生活会）。
+
+- `tests/unit/test_member_review.py`：28 项通过（无需数据库）。覆盖民主测评票数校验（实到不得超应到、各等次合计不得超实到、弃权允许、应到为 0 不做合计校验）、等次受 `config/business_rules.yaml` 的 `democratic_review.grades` 驱动（配置改了列表就跟着改、未知等次键回落默认四项、配置缺失回落内置）、缺项只列四项阻断字段且各一次（个人自评 / 支部评定意见 / 等次 / 评定依据）、党员互评与测评票数是 `advisories` 不阻断、**只打空格不算填**、逐行视图的 `can_review`（提交人本人不给审核入口、无审核权不给入口、只有 `pending` 可审）、评议对象只含正式党员与预备党员（未知 / 空阶段不抛异常）、以及三条文案口径（不承诺自动定等次、优秀比例按上级规定且系统不截断、不合格处置由党组织研究决定）。
+- `tests/unit/test_org_life_minutes.py`：8 项通过。钉住组织生活会的栏目恰为「查摆问题 / 批评意见 / 整改方向」、按该类型提取原文与缺项、**三会一课模板不能顶替组织生活会**（反之亦然）、组织生活会缺项用会议口径而不是中心组学习口径、条目上限对新栏目同样生效。
+- `tests/unit/test_activity_frequency.py`：42 项通过（新增组织生活会的年度周期：`period_text` 为「年度」、`annual_required` 为 1、`periods_in_year` 为 1，类型键与 `ACTIVITY_TYPES` 保持键相等）。
+- `tests/integration/test_member_review_workflow.py`：5 项通过（一次性 PostgreSQL 库 + `alembic upgrade head`）。钉住发起 → 录入 → 送审 → **另一位**审核 → 生效 → 本人可见的完整链路；越权组织 403；送审缺项 / 只打空格 / 票数越界 / 等次非法 / `expected_revision` 过期分别 422 与 409，退回后可重新送审；低等次进「需按党章党规研究处置」提醒且带整改要求；统一审核队列 `POST /admin/reviews` 送审 + `.../decision` 决定同一条记录。
+- `tests/integration/test_meeting_workflow.py`：9 项通过（新增 1 项：组织生活会用自己的纪要模板，断言栏目恰为三项且不含「学习要点 / 讨论共识 / 工作要求」；既有频次用例的待审集合加入 `organizational_life_meeting`）。
+- `node frontend/scripts/verify-modules123.mjs`：26 组接口契约与界面检查通过。新增 6 项：民主评议工作区（应评议党员、未发起进度、`优秀 1 人，占应评议 20%`、四个等次徽标、缺项「个人自评待录」与提示「未登记民主测评票数」分别显示、低等次提醒带整改要求）、未发起党员的「录入评议」新建草稿、按年度发起**只补缺不覆盖**（断言「已发起：新建 1 条草稿，跳过 4 条已有记录（共 5 名在册党员）」）、录入送审与**提交人不能自审**（断言审核按钮数量不因自己送审而增加）、他人审核生效、已生效评议修订回到草稿；查询权限账号看不到「按年度发起 / 录入修订 / 审核 / 保存并送审」任何写入口。
+- `python scripts/validate_modules123_ui_contracts.py tmp/modules123-ui/contract-requests.json`：29 个请求体经后端输入模型校验通过（新增 5 个 `/meeting/member-reviews*` 契约：发起 / 新建 / 修订 / 送审 / 审核）。
+- `node frontend/scripts/check-roles-ui.mjs`（7 个角色）通过：可访问组织生活的角色在「民主评议党员」工作区必须看到年度工作区标题、应评议党员口径、进度与「系统不按票数排名、不自动定等次」的口径；`/meeting/member-reviews/workspace` 不得出现 4xx；改名后的「组织生活频次合规」区块与周期要求仍在「年度统计」。
+- 开发库端到端手工核对（`TEST_TENANT` / `TEST_BRANCH`，2 名应评议党员）：工作区 200 只列正式党员与预备党员、给出 4 个等次选项与两条边界口径；按年度发起新建 2 条草稿（再点返回 `created: 0`、`skipped: 2`）；录入后 `missing: []`、`advisories: ["未登记党员互评意见"]`；送审 `pending` → 另一位审核 `approved`、生效等次「合格」，留痕 `v1 launch / v2 revise / v3 submit / v4 review`；`GET /admin/reviews?status=pending` 能列出 `source_kind = member_review` 并由另一名同租户成员审核通过；组织生活会从登记 → 生成议程（含会前谈心谈话）→ 纪要只出「查摆问题 / 批评意见 / 整改方向」（未选政策依据时如实列「政策依据待补」）→ 提交 → 他人审核通过，`GET /meeting/frequency` 随之把该支部 2026 年度组织生活会从「还差 1 次」变成达标。
+
+未覆盖：不自动生成 / 不按票数排名等次、不自动生成不合格处置意见、不自动限制优秀比例（只在页面写明「按上级规定执行、系统不自动截断」）；不产生组织生活会与民主评议的个体通知与待办；评议结果不自动写入档案正文（本人经「本人档案」看自己的结果，归档正文仍走既有流程）；**年度考核 `source: meetings` 的会议计数会把组织生活会一并计入 `LIFE_001` / `LIFE_002`**（`assessment_sources.py` 只排除中心组学习，未按活动类型拆分——计数口径如此，未改）；民主测评只存汇总票数、不存逐人票向（不可回溯到人）；本人查看只返回本人 `approved` 的年度结果，测试账号未与名册档案关联时为空列表（关联后的可见性由集成用例覆盖）；未做多支部大批量发起的性能验证。
+
 ## 本地扩展证据与主分支区分
 
 文档分支所引用的 `admin-workspace-isolated.xml`（179项、0失败/错误/跳过）与 `admin-workspace-backend.xml`（205项、30项准备错误）属于未合入的本地管理员工作台扩展，不能套用到本次主分支合并结果；各范围有重复用例，不累加为通过总数。原先开户43项及相关91项记录保留其原始范围。

@@ -61,6 +61,7 @@ class ReviewSubmit(StrictInput):
         "score",
         "vote",
         "meeting",
+        "member_review",
         "study_activity",
         "study_plan",
         "assessment_report",

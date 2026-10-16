@@ -140,12 +140,51 @@ class TestPeriodMath:
     def test_period_labels(self):
         assert period_label("month", date(2026, 5, 1)) == "2026 年 5 月"
         assert period_label("quarter", date(2026, 10, 1)) == "2026 年第 4 季度"
+        assert period_label("year", date(2026, 1, 1)) == "2026 年度"
         assert period_label("none", date(2026, 1, 1)) == "2026 年度"
 
     def test_periods_in_year(self):
         assert len(periods_in_year("month", 2026)) == 12
         assert len(periods_in_year("quarter", 2026)) == 4
+        assert periods_in_year("year", 2026) == [(date(2026, 1, 1), date(2026, 12, 31))]
         assert periods_in_year("none", 2026) == []
+
+    def test_year_window_covers_the_whole_year(self):
+        assert period_window("year", date(2026, 5, 10)) == (date(2026, 1, 1), date(2026, 12, 31))
+        assert period_window("year", date(2026, 12, 31)) == (date(2026, 1, 1), date(2026, 12, 31))
+
+
+class TestOrganizationalLifeMeeting:
+    """组织生活会按年度计频次：季度口径套不上去（一年只有一次，且一般排在第四季度）。"""
+
+    def test_organizational_life_is_annual(self):
+        requirement = load_requirements()["organizational_life_meeting"]
+        assert requirement.period == "year"
+        assert requirement.per_period == 1
+        assert requirement.annual_required == 1
+        assert requirement.period_text == "每年至少 1 次"
+
+    def test_current_year_not_yet_held_is_open_not_a_gap(self):
+        rows, built = rows_for([], activity_type="organizational_life_meeting")
+        assert rows[0]["state"] == OPEN
+        assert rows[0]["period_label"] == "2026 年度"
+        # 本年度还没结束，不算"已结束周期缺口"：不能把未到期说成违规
+        assert [
+            gap for gap in built["gaps"] if gap["activity_type"] == "organizational_life_meeting"
+        ] == []
+
+    def test_organizational_life_approved_meets_the_year(self):
+        row = only(
+            [facts(activity_type="organizational_life_meeting", held_on=date(2026, 4, 2), status="approved")],
+            activity_type="organizational_life_meeting",
+        )
+        assert row["state"] == MET
+        assert row["annual_required"] == 1
+
+    def test_reminder_names_the_year_deadline(self):
+        row = only([], activity_type="organizational_life_meeting")
+        assert "2026 年度" in row["reminder"]
+        assert "2026-12-31" in row["reminder"]
 
 
 class TestCurrentPeriod:

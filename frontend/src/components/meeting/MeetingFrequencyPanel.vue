@@ -4,7 +4,7 @@ import { computed } from 'vue'
 import type { MeetingFrequency, MeetingFrequencyRow, FrequencyState } from '@/api/meeting'
 
 /**
- * 三会一课频次合规提醒面板。
+ * 组织生活频次合规提醒面板（三会一课 + 组织生活会）。
  *
  * 只在「年度统计」工作区里出现，数据来自 `/meeting/frequency`。三块内容按使用者
  * 关心的顺序排：先是要动手的（本周期提醒），再是全景（逐支部逐类型），最后是
@@ -50,7 +50,7 @@ function gapText(row: MeetingFrequencyRow): string {
 <template>
   <section v-if="frequency" class="meeting-frequency wb-stack">
     <div class="wb-toolbar">
-      <h2>三会一课频次合规</h2>
+      <h2>组织生活频次合规</h2>
       <span class="u-meta">截至 {{ frequency.as_of }} · {{ frequency.branch_count }} 个支部</span>
     </div>
     <p class="wb-note">{{ frequency.calculation_rule }}</p>
@@ -64,9 +64,9 @@ function gapText(row: MeetingFrequencyRow): string {
         </li>
       </ul>
       <p v-else-if="!frequency.branch_count" class="wb-note">
-        当前范围内没有可提示的支部；三会一课按支部计算，请选择或补充支部组织。
+        当前范围内没有可提示的支部；组织生活按支部计算，请选择或补充支部组织。
       </p>
-      <p v-else class="wb-note">本周期各支部三会一课均已达标。</p>
+      <p v-else class="wb-note">本周期各支部组织生活均已达标。</p>
     </div>
 
     <div v-if="frequency.rows.length" class="wb-table-wrap">

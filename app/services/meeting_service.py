@@ -10,8 +10,25 @@ MINUTES_LABELS = {
     "learning_points": ("学习要点", "学习重点"),
     "consensus": ("讨论共识", "会议共识"),
     "requirements": ("工作要求", "落实要求"),
+    # 组织生活会（《中国共产党支部工作条例（试行）》第十五条）要记的是查摆问题、
+    # 开展批评和自我批评、明确整改方向——三会一课那三栏套不进这三件事，硬套的结果
+    # 是"批评意见"被写进"讨论共识"，复核时看不出哪句是对谁提的意见。
+    "problems": ("查摆问题", "存在问题"),
+    "criticisms": ("批评意见", "批评与自我批评", "批评和自我批评"),
+    "rectifications": ("整改方向", "整改措施"),
 }
+# 三会一课与中心组学习共用一套栏目；组织生活会单独一套，互不混用。
+DEFAULT_MINUTES_SECTIONS = ("learning_points", "consensus", "requirements")
+ORG_LIFE_MINUTES_SECTIONS = ("problems", "criticisms", "rectifications")
+ORG_LIFE_ACTIVITY_TYPE = "organizational_life_meeting"
 STUDY_NOTICE = "供党委研究确定"
+
+
+def minutes_sections(activity_type: str | None) -> tuple[str, ...]:
+    """按活动类型给出必填纪要栏目；缺省按三会一课口径。"""
+    if activity_type == ORG_LIFE_ACTIVITY_TYPE:
+        return ORG_LIFE_MINUTES_SECTIONS
+    return DEFAULT_MINUTES_SECTIONS
 
 
 def utc_now() -> datetime:
@@ -19,12 +36,15 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def extract_minutes(transcript: str) -> dict[str, Any]:
+def extract_minutes(
+    transcript: str, sections: tuple[str, ...] = DEFAULT_MINUTES_SECTIONS
+) -> dict[str, Any]:
     """仅摘录带明确标签的原文行；模糊或缺少的内容留空并显示待补。"""
-    result: dict[str, Any] = {key: [] for key in MINUTES_LABELS}
+    result: dict[str, Any] = {key: [] for key in sections}
     offset = 0
     for line in transcript.splitlines(keepends=True):
-        for key, labels in MINUTES_LABELS.items():
+        for key in sections:
+            labels = MINUTES_LABELS[key]
             pattern = r"^\s*(?:" + "|".join(labels) + r")[：:]\s*(\S.*)"
             match = re.match(pattern, line.rstrip("\r\n"))
             if match:
@@ -58,16 +78,19 @@ def validate_minutes(transcript: str, minutes: dict[str, Any]) -> None:
 
 def minutes_missing(record: Any) -> list[str]:
     """缺项不能用空白、零值或模型补写掩盖。"""
+    activity_type = getattr(record, "activity_type", None)
     missing = []
-    for key, labels in MINUTES_LABELS.items():
+    for key in minutes_sections(activity_type):
         if not (record.minutes or {}).get(key):
-            missing.append(labels[0] + "待补")
+            missing.append(MINUTES_LABELS[key][0] + "待补")
+    # 中心组学习是"学习"，组织生活是"会议"；用词不能互相套（原先把会议也叫"参学"）。
+    study = activity_type == "center_group"
     if not record.held_on:
-        missing.append("实际学习日期待补")
+        missing.append("实际学习日期待补" if study else "实际召开日期待补")
     if not record.host:
         missing.append("主持人待补")
     if not record.participants:
-        missing.append("参学记录待补")
+        missing.append("参学记录待补" if study else "参会人员待补")
     if not record.transcript:
         missing.append("原始文本待补")
     return missing
