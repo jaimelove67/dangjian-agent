@@ -23,6 +23,7 @@ from app.services.qa_record_service import (
     QaRecordFilters,
     QaRecordRow,
     build_qa_record_query,
+    versions_text,
 )
 
 
@@ -119,11 +120,14 @@ class TestRowMapping:
             is_deleted=False,
             created_at=datetime(2026, 1, 1),
             session_id="s1",
+            versions=None,
         )
         # 外连接查不到账号（用户已清理）→ 两个字段都是 NULL，也必须给出可读的提问人
         assert QaRecordRow.from_row((record, None, None)).asker == UNKNOWN_ASKER
         # 有账号但没有姓名 → 回落为登录账号，不留空白单元格
         assert QaRecordRow.from_row((record, "", "a1")).asker == "a1"
+        # 版本留痕上线前的历史记录（列为 NULL）→ 空字典，不是 None，界面据空判断"未留痕"
+        assert QaRecordRow.from_row((record, "", "a1")).versions == {}
 
     def test_counts_come_from_stored_lists(self):
         record = SimpleNamespace(
@@ -141,11 +145,15 @@ class TestRowMapping:
             is_deleted=True,
             created_at=datetime(2026, 1, 2),
             session_id=None,
+            versions={"prompt": {"qa": "v2"}, "workflow": {"WF-03": "wf-03/1"}},
         )
         row = QaRecordRow.from_row((record, "张三", "zhangsan"))
         assert (row.citation_count, row.warning_count) == (2, 1)
         assert row.is_deleted is True
         assert row.refused is True
+        # 版本指纹要逐字带出来（SEC-11）：列表与导出都靠它回答"这条答案用了哪个版本"
+        assert row.versions["prompt"]["qa"] == "v2"
+        assert versions_text(row.versions) == "提示词：问答提示词 v2；工作流：WF-03 wf-03/1"
 
 
 def record_row(**overrides) -> QaRecordRow:
@@ -209,8 +217,17 @@ class TestExportWorkbook:
         assert values[4] == "已作答"
         assert values[5] == "有依据"
         assert values[6] == "正常"
-        assert (values[7], values[8], values[9]) == (3, 2, 1)
-        assert values[10] == "转正需要什么材料？"
+        # 版本留痕（SEC-11）：这条测试数据没有版本指纹 → 明确写"未留痕"，不假装知道
+        assert values[7] == "未留痕"
+        assert (values[8], values[9], values[10]) == (3, 2, 1)
+        assert values[11] == "转正需要什么材料？"
+
+    def test_version_fingerprint_is_exported(self):
+        sheet = self.workbook(
+            [record_row(versions={"prompt": {"qa": "v2"}, "workflow": {"WF-03": "wf-03/1"}})]
+        )[RECORD_SHEET]
+        values = [cell.value for cell in sheet[2]]
+        assert values[7] == "提示词：问答提示词 v2；工作流：WF-03 wf-03/1"
 
     def test_refused_and_deleted_rows_are_labelled(self):
         sheet = self.workbook(

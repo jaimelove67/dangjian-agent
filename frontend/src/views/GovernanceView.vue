@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import * as api from '@/api/governance'
-import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, ReviewRecord, RunLogRecord, TenantRecord, UserRecord } from '@/api/governance'
+import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, ReviewRecord, RunLogRecord, TenantRecord, UserRecord, VersionChange, VersionTrail } from '@/api/governance'
 import { ApiError } from '@/api/http'
 import * as qaApi from '@/api/qa'
-import { DOC_AUTHORITY_LABELS, DOC_AUTHORITY_ORDER, PERM, ROLE_LABELS, type QARecord, type UserRole } from '@/api/types'
+import { DOC_AUTHORITY_LABELS, DOC_AUTHORITY_ORDER, PERM, ROLE_LABELS, type QARecord, type UserRole, type VersionFingerprint } from '@/api/types'
 import ActionDialog from '@/components/ActionDialog.vue'
 import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
 import { session } from '@/stores/session'
@@ -36,6 +36,8 @@ const auditScope = ref('')
 // 运行日志（T-SYS-06E）：任务执行与定时扫描的经过，从审计轨迹读取——不新起一张表
 const runLogs = ref<RunLogRecord[]>([]), runLogPage = ref(1), runLogTotal = ref(0), runLogScope = ref('')
 const runFilters = reactive({event: '', kind: '', result: '', start_at: '', end_at: ''})
+// 版本留痕（T-SEC-11）：提示词版本与变更历史 / 工作流契约版本 / 知识库修订事件
+const versionTrail = ref<VersionTrail | null>(null), versionPage = ref(1)
 // 事件名由后端给出（列表用 event_text）；筛选项与任务类型的中文标签按同一套口径列出
 const runEventText: Record<string,string> = {job_enqueue:'任务入队', job_attempt_failed:'执行失败',
   job_completed:'执行完成', member_scheduled_scan:'党员提醒扫描',
@@ -212,6 +214,33 @@ async function loadRunLogs(): Promise<void> {
   const page = await api.listRunLogs({...runParams(), page: runLogPage.value})
   runLogs.value = page.items; runLogTotal.value = page.total; runLogScope.value = page.scope_note
 }
+/** 版本留痕（T-SEC-11）：三块来源都是既有事实的可查视图，不新增登记表 */
+async function loadVersionTrail(): Promise<void> {
+  versionTrail.value = await api.getVersionTrail(versionPage.value)
+}
+// 提示词种类显示名：与导出台账同一套说法（后端 app/core/versions.py::PROMPT_LABELS）
+const promptKindText: Record<string,string> = {qa:'问答提示词', rewrite:'追问改写'}
+/** 版本指纹压成一行（与导出说明一致）；空指纹是留痕功能上线前的记录 */
+function fingerprintText(versions?: VersionFingerprint): string {
+  const prompt = versions?.prompt ?? {}, workflow = versions?.workflow ?? {}
+  const parts: string[] = []
+  const promptText = Object.entries(prompt).map(([kind, value]) => `${promptKindText[kind] ?? kind} ${value}`).join(' / ')
+  const workflowText = Object.entries(workflow).map(([id, value]) => `${id} ${value}`).join(' / ')
+  if (promptText) parts.push('提示词：' + promptText)
+  if (workflowText) parts.push('工作流：' + workflowText)
+  return parts.join('；')
+}
+const currentPromptText = computed(() => Object.entries(versionTrail.value?.prompt.current ?? {})
+  .map(([kind, value]) => `${promptKindText[kind] ?? kind} ${value}`).join(' / '))
+/** 一次变更压成一行：界面上"从什么改成了什么"要一眼可读 */
+function changeText(change: VersionChange): string {
+  return `${promptKindText[change.kind] ?? change.kind} ${change.before ?? '未设置'} → ${change.after}`
+}
+/** 知识库修订事件：入库即第 1 版；内容更新给出前后两个版本号 */
+function revisionText(previous: number | null, revision: number | null): string {
+  if (revision === null) return '—'
+  return previous === null ? `第 ${revision} 版` : `第 ${previous} → ${revision} 版`
+}
 async function loadRecords(): Promise<void> {
   const page = await qaApi.listQaRecords({...recordParams(), page: recordPage.value})
   records.value = page.items; recordTotal.value = page.total; recordScope.value = page.scope_note
@@ -246,7 +275,7 @@ async function loadTab(): Promise<void> {
       operations.value = stats; logs.value = audit.items; auditTotal.value = audit.total
       auditScope.value = audit.scope_note ?? ''
       // 运行日志与审计查询同一页展示：排障时"谁点了什么"和"任务跑成什么样"要能对上时间
-      await loadRunLogs()
+      await Promise.all([loadRunLogs(), loadVersionTrail()])
     }
   } catch (err) { fail(err) } finally { loading.value = false }
 }
@@ -474,6 +503,27 @@ function formatDate(value: string | null): string {
           <p v-else class="wb-empty">没有符合条件的运行记录。任务入队、执行与定时扫描都会在此留痕。</p>
           <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="runLogPage===1" @click="runLogPage--; loadRunLogs()">上一页</button><span>第 {{ runLogPage }} 页 · 共 {{ runLogTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="runLogPage*40>=runLogTotal" @click="runLogPage++; loadRunLogs()">下一页</button></div>
         </section>
+        <section v-if="versionTrail" class="wb-section wb-stack"><h2>版本留痕</h2>
+          <p class="wb-note">一条回答由"提示词 + 工作流契约 + 被引知识版本"共同决定，三者都要能查到。三处来源各自权威，不另起一张登记表：提示词版本来自学校配置的变更历史（谁、何时、为什么改），工作流契约版本随代码发布，知识库版本随每条引用记在问答记录里。历史版本不会被当前配置覆盖——查询看到的始终是当时的取值。</p>
+          <h3 class="u-title-sub">提示词版本</h3>
+          <p class="wb-note">当前生效：{{ currentPromptText || '未登记' }}。<small>{{ versionTrail.prompt.scope_note }}</small></p>
+          <div v-if="versionTrail.prompt.history.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>配置版本</th><th>变更时间</th><th>操作人</th><th>变更</th><th>原因</th></tr></thead><tbody>
+            <tr v-for="row in versionTrail.prompt.history" :key="row.config_version"><td>第 {{ row.config_version }} 版</td><td>{{ formatDate(row.changed_at) }}</td><td>{{ row.actor }}<small>{{ row.username }}</small></td>
+              <td><span v-for="change in row.changes" :key="change.kind" class="governance__change">{{ changeText(change) }}</span></td><td>{{ row.reason || '—' }}</td></tr></tbody></table></div>
+          <p v-else class="wb-note">该校配置从未改动过提示词版本，一直在用出厂默认版本；改动后这里会留下"谁、何时、为什么改"。</p>
+          <h3 class="u-title-sub">工作流契约版本</h3>
+          <p class="wb-note"><small>{{ versionTrail.workflow.scope_note }}</small></p>
+          <div class="wb-table-wrap"><table class="wb-table"><thead><tr><th>工作流</th><th>用途</th><th>契约版本</th></tr></thead><tbody>
+            <tr v-for="row in versionTrail.workflow.items" :key="row.workflow"><td>{{ row.workflow }}</td><td>{{ row.name }}</td><td>{{ row.version }}</td></tr></tbody></table></div>
+          <h3 class="u-title-sub">知识库版本</h3>
+          <p class="wb-note"><small>{{ versionTrail.knowledge.scope_note }}</small></p>
+          <div v-if="versionTrail.knowledge.items.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>条目</th><th>事件</th><th>修订</th><th>操作人</th></tr></thead><tbody>
+            <tr v-for="(row, index) in versionTrail.knowledge.items" :key="(row.resource_id ?? '') + index"><td>{{ formatDate(row.created_at) }}</td>
+              <td>{{ row.title ?? '条目已删除或查不到' }}<small>{{ row.doc_id ?? row.resource_id ?? '—' }}</small></td>
+              <td>{{ row.event_text }}</td><td>{{ revisionText(row.previous_revision, row.revision) }}</td><td>{{ row.actor }}<small>{{ row.username }}</small></td></tr></tbody></table></div>
+          <p v-else class="wb-empty">暂无知识库修订记录。条目入库与内容更新都会在此留痕。</p>
+          <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="versionPage===1" @click="versionPage--; loadVersionTrail()">上一页</button><span>第 {{ versionTrail.knowledge.page }} 页 · 共 {{ versionTrail.knowledge.total }} 条</span><button class="btn btn--quiet" type="button" :disabled="versionTrail.knowledge.page * versionTrail.knowledge.page_size >= versionTrail.knowledge.total" @click="versionPage++; loadVersionTrail()">下一页</button></div>
+        </section>
         <section class="wb-section wb-stack"><div class="wb-toolbar"><div><h2>通知渠道与投递台账</h2>
           <p class="wb-note">事件→渠道全部可配置；未配置凭据的渠道不参与投递，投递失败会留在台账并进入审计。系统不替组织自动外发。</p></div>
           <button v-if="session.can(PERM.CONFIG_MANAGE)" class="btn btn--quiet" type="button" :disabled="busy" @click="selfTest">{{ busy ? '投递中…' : '发起渠道自检' }}</button></div>
@@ -487,7 +537,7 @@ function formatDate(value: string | null): string {
       </section>
       <section v-else-if="tab === 'records'" class="wb-stack">
         <div class="wb-toolbar"><div><h2 class="u-title-sub">问答记录</h2>
-          <p class="wb-note">集中查看本租户的问答记录：可核对谁在什么时候问了什么、是否拒答、有没有依据、用的是哪个级别的数据。提问人本人删除的记录默认不显示，勾选后可查看——删除只是不再显示，不是销毁证据。</p></div>
+          <p class="wb-note">集中查看本租户的问答记录：可核对谁在什么时候问了什么、是否拒答、有没有依据、用的是哪个级别的数据；每条记录还留有生成它时的版本（提示词 / 工作流契约），功能上线前的记录标"未留痕"——不按当前配置倒推，否则旧答案会被说成新版本的产物。提问人本人删除的记录默认不显示，勾选后可查看——删除只是不再显示，不是销毁证据。</p></div>
           <button class="btn btn--quiet" type="button" :disabled="busy || !records.length" @click="exportRecords">{{ busy ? '导出中…' : '导出当前筛选（Excel）' }}</button></div>
         <form class="wb-section wb-stack" @submit.prevent="recordPage=1; loadTab()"><div class="wb-grid">
           <label class="wb-field"><span>提问人编号</span><input class="input" v-model="recordFilters.user_id" /></label><label class="wb-field"><span>问题或回答包含</span><input class="input" v-model="recordFilters.keyword" maxlength="100" placeholder="如：转正" /></label>
@@ -498,9 +548,10 @@ function formatDate(value: string | null): string {
           <label class="wb-check"><input v-model="recordFilters.include_deleted" type="checkbox" />包含提问人已删除的记录</label>
         </div><div class="wb-actions"><button class="btn btn--primary" type="submit">查询问答记录</button><button class="btn btn--quiet" type="button" @click="resetRecordFilters">清空条件</button></div></form>
         <p class="wb-note">当前范围：{{ recordScope || '未筛选' }}。</p>
-        <div v-if="records.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>提问人</th><th>问题</th><th>数据级别</th><th>结果</th><th>依据</th><th>引用</th><th>状态</th></tr></thead><tbody>
+        <div v-if="records.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>提问人</th><th>问题</th><th>数据级别</th><th>结果</th><th>依据</th><th>引用</th><th>状态</th><th>版本</th></tr></thead><tbody>
           <tr v-for="row in records" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td>{{ row.asker }}<small>{{ row.username }}</small></td><td>{{ row.question }}</td>
-            <td>{{ levelText[row.data_level] ?? row.data_level }}</td><td>{{ row.refused ? '无依据拒答' : '已作答' }}</td><td>{{ row.has_sufficient_evidence ? '有依据' : '无依据' }}</td><td>{{ row.citation_count }}</td><td>{{ row.is_deleted ? '提问人已删除' : '正常' }}</td></tr></tbody></table></div>
+            <td>{{ levelText[row.data_level] ?? row.data_level }}</td><td>{{ row.refused ? '无依据拒答' : '已作答' }}</td><td>{{ row.has_sufficient_evidence ? '有依据' : '无依据' }}</td><td>{{ row.citation_count }}</td><td>{{ row.is_deleted ? '提问人已删除' : '正常' }}</td>
+            <td>{{ fingerprintText(row.versions) || '未留痕（功能上线前的记录）' }}</td></tr></tbody></table></div>
         <p v-else class="wb-empty">当前范围没有问答记录。可清空条件或放宽时间范围再看；跨租户记录需平台管理员指定租户。</p>
         <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="recordPage===1" @click="recordPage--; loadTab()">上一页</button><span>第 {{ recordPage }} 页 · 共 {{ recordTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="recordPage*40>=recordTotal" @click="recordPage++; loadTab()">下一页</button></div>
       </section>
@@ -553,6 +604,8 @@ function formatDate(value: string | null): string {
 .governance__facts { display:flex; flex-wrap:wrap; gap:var(--space-6); margin:var(--space-4) 0; }
 .governance__facts dt { color:var(--ink-soft); font-size:var(--text-sm); }
 .governance__facts dd { margin-top:var(--space-2); font-size:var(--text-2xl); font-variant-numeric:tabular-nums; }
+/* 版本变更单元格：同一次配置提交可能同时改了多个提示词，逐条成行显示 */
+.governance__change { display:block; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .governance__snapshot { white-space:pre-wrap; overflow-wrap:anywhere; max-height:400px; overflow:auto; padding:var(--space-4); border:var(--border); border-radius:var(--radius-sm); font-size:var(--text-sm); }
 small { display:block; color:var(--ink-soft); overflow-wrap:anywhere; }
 details summary { cursor:pointer; margin-bottom:var(--space-3); }

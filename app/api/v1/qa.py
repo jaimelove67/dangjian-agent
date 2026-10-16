@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
@@ -20,6 +20,7 @@ from app.core.config import settings, tenant_config
 from app.core.constants import XLSX_MEDIA_TYPE
 from app.core.security import Permission
 from app.core.timeutil import as_utc_naive
+from app.core.versions import version_fingerprint
 from app.db.session import get_db
 from app.deps import get_current_tenant, require_permissions
 from app.llm.base import DataLevel
@@ -85,6 +86,7 @@ class CitationSchema(BaseModel):
     security_level: Optional[str] = None
     level: Optional[str] = None
     chunk_id: Optional[str] = None
+    content_revision: Optional[int] = None
 
 
 class QuestionResponse(BaseModel):
@@ -99,6 +101,11 @@ class QuestionResponse(BaseModel):
     disclaimer: str
     refused: bool
     session_id: Optional[str] = None
+    # 版本指纹（SEC-11 / T-SEC-11）：这条答案由哪个提示词版本、哪个工作流契约版本产出。
+    # 写入问答记录后即可事后追溯；引用条各自带 content_revision 说明引的是哪一版。
+    versions: dict[str, Any] = Field(
+        default_factory=dict, description="本次回答的版本指纹（提示词与工作流契约版本）"
+    )
 
 
 class QASessionItem(QuestionResponse):
@@ -131,6 +138,8 @@ class QASessionItem(QuestionResponse):
             disclaimer=record.disclaimer,
             refused=record.refused,
             session_id=record.session_id,
+            # 本功能上线前的历史记录没有版本指纹，返回空字典，界面显示"未留痕"
+            versions=dict(record.versions or {}),
         )
 
 
@@ -160,6 +169,8 @@ class QARecordItem(BaseModel):
     is_deleted: bool
     created_at: datetime
     session_id: Optional[str] = None
+    #: 版本指纹（SEC-11）：提示词 / 工作流契约版本；上线前的记录为空字典
+    versions: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_record(cls, row: QaRecordRow) -> "QARecordItem":
@@ -181,6 +192,7 @@ class QARecordItem(BaseModel):
             is_deleted=row.is_deleted,
             created_at=row.created_at,
             session_id=row.session_id,
+            versions=dict(row.versions or {}),
         )
 
 
@@ -316,6 +328,9 @@ async def ask_question(
         disclaimer=rag_response.disclaimer,
         refused=rag_response.refused,
         session_id=body.session_id,
+        # 版本留痕（SEC-11）：在"回答产生的那一刻"记下当时的提示词与工作流契约版本，
+        # 而不是事后按当前配置倒推——配置随时可改，倒推会把旧答案说成新版本的产物。
+        versions=version_fingerprint(tenant_id),
     )
     try:
         # 历史是可降级能力；SAVEPOINT 防止写历史失败破坏问答审计所在事务。

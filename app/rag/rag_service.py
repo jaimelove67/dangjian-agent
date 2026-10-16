@@ -38,6 +38,8 @@ class Citation:
     chunk_id: Optional[str] = None
     authority: Optional[str] = None
     validity: Optional[str] = None
+    # 被引文档的内容修订号（知识库版本留痕 SEC-11）：随引用一路带到响应与问答记录
+    content_revision: Optional[int] = None
 
 
 @dataclass
@@ -100,6 +102,7 @@ class _RetrieverAdapter:
                     chunk_id=result.chunk_id,
                     authority=meta.get("authority"),
                     validity=meta.get("validity"),
+                    content_revision=meta.get("content_revision"),
                 )
             )
         return chunks
@@ -206,6 +209,7 @@ class RAGService:
                 chunk_id=c.chunk_id,
                 authority=c.authority,
                 validity=c.validity,
+                content_revision=c.content_revision,
             )
             for c in response.citations
         ]

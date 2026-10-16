@@ -226,6 +226,14 @@ export interface Citation {
   expiration_date?: string | null
   visibility?: string | null
   chunk_id?: string | null
+  /** 被引文档的内容修订号（SEC-11 知识库版本留痕）；历史引用可能没有 */
+  content_revision?: number | null
+}
+
+/** 一条答案的版本指纹（SEC-11）：提示词版本 + 工作流契约版本 */
+export interface VersionFingerprint {
+  prompt?: Record<string, string>
+  workflow?: Record<string, string>
 }
 
 /** app/api/v1/qa.py::QuestionResponse */
@@ -239,6 +247,8 @@ export interface AskQuestionResponse {
   disclaimer: string
   refused: boolean
   session_id?: string | null
+  /** 本次回答的版本指纹（SEC-11）：回答产生时记录，不做事后倒推 */
+  versions?: VersionFingerprint
 }
 
 export interface QASessionItem extends AskQuestionResponse {
@@ -273,6 +283,8 @@ export interface QARecord {
   is_deleted: boolean
   created_at: string
   session_id: string | null
+  /** 版本留痕（SEC-11）：提示词 / 工作流契约版本；上线前的记录为空对象 */
+  versions: VersionFingerprint
 }
 
 export interface QARecordListResponse {

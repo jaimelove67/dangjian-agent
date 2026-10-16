@@ -58,6 +58,8 @@ class RetrievedChunk:
     chunk_id: Optional[str] = None
     authority: Optional[str] = None
     validity: Optional[str] = None
+    # 被引文档的内容修订号：引用核验与输出都要带上，答案才能追溯到"引的是哪一版"
+    content_revision: Optional[int] = None
 
 
 @dataclass
@@ -188,6 +190,7 @@ class CitationVerifier:
             chunk_id=chunk.chunk_id,
             authority=chunk.authority,
             validity=chunk.validity,
+            content_revision=chunk.content_revision,
             score=chunk.score or 0.0,
         )
 

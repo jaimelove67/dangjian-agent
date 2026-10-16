@@ -44,6 +44,8 @@ class CitationInput(BaseModel):
     chunk_id: Optional[str] = None
     authority: Optional[str] = None
     validity: Optional[str] = None
+    # 被引文档的内容修订号（知识库版本留痕；检索实现未提供时为空，不编造）
+    content_revision: Optional[int] = None
 
 
 class CitationCheckRequest(BaseModel):

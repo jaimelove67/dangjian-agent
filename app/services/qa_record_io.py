@@ -18,6 +18,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from app.core.timeutil import local_now_text, local_time
+from app.services.qa_record_service import versions_text
 
 RECORD_SHEET = "问答记录"
 GUIDE_SHEET = "导出说明"
@@ -29,13 +30,14 @@ HEADERS: tuple[str, ...] = (
     "结果",
     "依据",
     "状态",
+    "版本",
     "检索片段",
     "使用片段",
     "引用数",
     "问题",
     "回答",
 )
-_WIDTHS = (18, 12, 16, 10, 12, 10, 14, 10, 10, 10, 40, 60)
+_WIDTHS = (18, 12, 16, 10, 12, 10, 14, 34, 10, 10, 10, 40, 60)
 _LEVEL_LABELS = {"public": "公开", "internal": "内部", "sensitive": "敏感", "classified": "涉密"}
 
 
@@ -69,6 +71,7 @@ def build_qa_records(rows: Iterable[Any], *, scope_note: str = "", exported_by: 
             "无依据拒答" if item.refused else "已作答",
             "有依据" if item.has_sufficient_evidence else "无依据",
             "提问人已删除" if item.is_deleted else "正常",
+            versions_text(getattr(item, "versions", None)) or "未留痕",
             item.retrieved_count,
             item.used_count,
             item.citation_count,
@@ -94,6 +97,9 @@ def build_qa_records(rows: Iterable[Any], *, scope_note: str = "", exported_by: 
         "「依据」表示本次问答是否有足够的可引用依据。",
         "「状态」为「提问人已删除」表示提问人在自己的记录里软删除了这条；"
         "软删除只是不再显示，记录仍保留用于复核。",
+        "「版本」为本次回答的版本留痕（提示词版本与工作流契约版本，SEC-11）；"
+        "「未留痕」表示该记录早于版本留痕功能上线，系统不按当前版本倒推，避免把旧答案"
+        "说成新版本产出的。被引文档的修订号见系统内的问答记录明细。",
     ]
     for row_no, text in enumerate(lines, start=1):
         cell = guide.cell(row=row_no, column=1, value=text)

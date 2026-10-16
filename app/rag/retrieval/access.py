@@ -132,10 +132,15 @@ def source_columns() -> tuple:
         KnowledgeDoc.status,
         KnowledgeDoc.authority,
         KnowledgeDoc.validity,
+        # 内容修订号（知识库版本留痕 T-SEC-11）藏在条目元数据里，只能整列取出；
+        # 引用条数与返回片段数同量级（top_k 级别），代价可控。
+        KnowledgeDoc.doc_metadata,
     )
 
 
 def source_metadata(row: Any, method: str) -> dict[str, Any]:
+    metadata = getattr(row, "doc_metadata", None)
+    metadata = metadata if isinstance(metadata, dict) else {}
     return {
         **{
             key: getattr(row, key, None)
@@ -154,5 +159,8 @@ def source_metadata(row: Any, method: str) -> dict[str, Any]:
                 "validity",
             )
         },
+        # 内容修订号：知识库版本留痕（T-SEC-11）要回答"引的是哪一版"；
+        # 与条目接口同一口径（缺省 1），检索链路与展示不会各说各话。
+        "content_revision": metadata.get("content_revision", 1),
         "retrieval_method": method,
     }

@@ -25,3 +25,6 @@ class QASession(Base):
     disclaimer: Mapped[str] = mapped_column(Text, nullable=False, default=DEFAULT_DISCLAIMER)
     refused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 版本指纹（SEC-11 / T-SEC-11）：这条答案由哪个提示词版本、哪个工作流契约版本产出。
+    # 允许为空：本功能上线前的历史记录没有留痕，界面显示"未留痕"而不是假装知道。
+    versions: Mapped[Any | None] = mapped_column(JSON, nullable=True)

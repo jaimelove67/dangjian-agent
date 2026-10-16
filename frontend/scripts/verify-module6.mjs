@@ -92,6 +92,21 @@ async function page(width=1440, readonly=false) {
         duration_ms:16,error_code:'HTTPException',processed:null,reminder_count:null,
         resource_id:'job-2',request_id:'fixture-trace-2'}],
       total:2,page:1,page_size:40,scope_note:'租户 界面验收样例租户'}
+    // 版本留痕（T-SEC-11）：提示词当前值 + 变更历史、工作流契约版本、知识库修订事件
+    else if (path==='/admin/version-trail') data={
+      prompt:{current:{qa:'v2',rewrite:'v1'},defaults:{qa:'v1',rewrite:'v1'},
+        history:[{config_version:3,changed_at:'2026-10-15T02:00:00',actor:'界面验收账号',
+          username:'ui-fixture',reason:'调整问答提示词',prompt_versions:{qa:'v2',rewrite:'v1'},
+          changes:[{kind:'qa',before:'v1',after:'v2'}]}],
+        scope_note:'租户 界面验收样例租户；提示词版本来自租户配置（缺省回落到出厂默认）'},
+      workflow:{items:[{workflow:'WF-03',name:'引用核验',version:'wf-03/1'},
+        {workflow:'WF-04',name:'敏感信息检查',version:'wf-04/1'}],
+        scope_note:'工作流契约版本来自代码常量（app/schemas/wf.py）'},
+      knowledge:{items:[{created_at:'2026-10-15T01:00:00',event:'update_content',
+        event_text:'内容更新',doc_id:'DOC-1',title:'某制度',revision:3,previous_revision:2,
+        actor:'界面验收账号',username:'ui-fixture',resource_id:'doc-1'}],
+        total:1,page:1,page_size:20,
+        scope_note:'租户 界面验收样例租户；来源为知识条目的入库与内容更新审计'}}
     else if (path==='/admin/notification-channels') data={items:[
       {name:'inapp',description:'站内：投递记录即用户可见提醒，不外发',configured:true}],
       events:['channel_self_test'],routes:{channel_self_test:['inapp']},max_attempts:3}
@@ -204,6 +219,18 @@ try {
   assert.equal(await tab.getByRole('cell',{name:'文档向量化',exact:true}).count(),1)
   assert.equal(await tab.getByText('第 1 页 · 共 2 条',{exact:true}).count(),1)
   checks.push('运行日志可见每次尝试的耗时与失败原因，时间筛选按北京时间发出')
+  // 版本留痕（T-SEC-11）：提示词/工作流/知识库三块来源同页可查，
+  // 提示词变更要能看出"从什么改成了什么"，知识库要能看出改到第几版。
+  await tab.getByRole('heading',{name:'版本留痕',exact:true}).waitFor()
+  assert.equal(await tab.getByRole('cell',{name:'问答提示词 v1 → v2',exact:true}).count(),1)
+  assert.equal(await tab.getByRole('cell',{name:'wf-03/1',exact:true}).count(),1)
+  assert.equal(await tab.getByRole('cell',{name:'第 2 → 3 版',exact:true}).count(),1)
+  assert.equal(await tab.getByText('当前生效：问答提示词 v2 / 追问改写 v1',{exact:false}).count(),1)
+  // 时间是库里存的 UTC 朴素时间，展示必须走与审计 / 台账同一件钟（+8 小时）；
+  // 若界面照原样显示，会把 10:00 显示成 02:00——留痕时间对不上就白留了。
+  const promptChangeRow=tab.getByRole('row',{name:/问答提示词 v1 → v2/})
+  assert.ok((await promptChangeRow.innerText()).includes('10:00'))
+  checks.push('版本留痕可见提示词变更、工作流契约版本与知识库修订，时间按北京时间展示')
   // 通知渠道与投递台账属于运行审计工作区：渠道就绪状态与投递事实都要可见。
   assert.ok(await tab.getByRole('heading',{name:'通知渠道与投递台账',exact:true}).count())
   // inapp 既是已登记渠道，也出现在投递台账的「渠道」列，因此这里只断言存在。

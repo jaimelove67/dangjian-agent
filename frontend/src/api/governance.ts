@@ -75,6 +75,33 @@ export interface NotificationDelivery {
 export interface NotificationDispatch {
   results: { channel: string; status: string; attempts: number; skipped: boolean; error: string | null }[]
 }
+// 版本留痕（T-SEC-11）：提示词 / 工作流 / 知识库三个版本的可查记录
+export interface VersionChange {
+  kind: string; before: string | null; after: string
+}
+export interface PromptVersionEntry {
+  config_version: number; changed_at: string; actor: string; username: string; reason: string
+  prompt_versions: Record<string, string>; changes: VersionChange[]
+}
+export interface WorkflowVersion {
+  workflow: string; name: string; version: string
+}
+export interface KnowledgeRevision {
+  created_at: string; event: string; event_text: string
+  doc_id: string | null; title: string | null
+  revision: number | null; previous_revision: number | null
+  actor: string; username: string; resource_id: string | null
+}
+export interface VersionTrail {
+  prompt: {
+    current: Record<string, string>; defaults: Record<string, string>
+    history: PromptVersionEntry[]; scope_note: string
+  }
+  workflow: { items: WorkflowVersion[]; scope_note: string }
+  knowledge: {
+    items: KnowledgeRevision[]; total: number; page: number; page_size: number; scope_note: string
+  }
+}
 const target = (tenant_id?: string) => tenant_id ? { tenant_id } : {}
 export const listTenants = () => http.get<never, {items: TenantRecord[]}>('/admin/tenants')
 export const listOrgs = (tenant_id?: string) =>
@@ -110,6 +137,9 @@ export const listAudit = (params: Record<string, string | number>) =>
   http.get<never, {items: AuditRecord[]; total: number; scope_note: string}>('/admin/audit-logs', {params})
 export const listRunLogs = (params: Record<string, string | number> = {}) =>
   http.get<never, {items: RunLogRecord[]; total: number; scope_note: string}>('/admin/run-logs', {params})
+/** 版本留痕（SEC-11）：当前提示词版本 + 变更历史、工作流契约版本、知识库修订事件 */
+export const getVersionTrail = (page = 1) =>
+  http.get<never, VersionTrail>('/admin/version-trail', {params: {page}})
 export const exportAudit = (params: Record<string, string | number>): Promise<Blob> =>
   http.get('/admin/audit-logs/export', {params, responseType: 'blob'})
 export const saveArchivePolicy = (body: {enabled: boolean; expected_revision: number; evidence: string}) =>

@@ -359,6 +359,23 @@ async function checkOperationsTab(page, spec) {
   if (!(await page.getByText(/失败只记错误类型与状态/).count())) {
     fail(`${spec.username}: 运行日志未说明失败记录口径（不记供应商错误正文）`)
   }
+  // 版本留痕（T-SEC-11）：提示词版本、工作流契约版本、知识库版本三块都要能查。
+  // 只答"现在用的是哪个版本"不够——答不了"这条答案是哪个版本产出的"。
+  if (!(await page.getByRole('heading', { name: '版本留痕' }).count())) {
+    fail(`${spec.username}: 运行审计页缺少「版本留痕」区块`)
+  }
+  if (!(await page.getByText(/当前生效：/).count())) {
+    fail(`${spec.username}: 版本留痕未给出当前生效的提示词版本`)
+  }
+  if (!(await page.getByRole('heading', { name: '工作流契约版本' }).count())) {
+    fail(`${spec.username}: 版本留痕缺少工作流契约版本清单`)
+  }
+  if (!(await page.getByRole('heading', { name: '知识库版本' }).count())) {
+    fail(`${spec.username}: 版本留痕缺少知识库版本区块`)
+  }
+  if (!(await page.getByText(/不另起一张登记表/).count())) {
+    fail(`${spec.username}: 版本留痕未说明三块来源口径（凭空另立登记表会与事实对不上）`)
+  }
   // 跨租户检索入口只对平台系统管理员出现：其他角色显示了就是必然 403 的假入口
   const tenantField = await page.getByText('租户编号（跨租户）', { exact: true }).count()
   if (spec.role === 'system_admin' && !tenantField) {
@@ -403,6 +420,18 @@ async function checkQaRecordsAccess(page, spec) {
   }
   if (!(await page.getByRole('button', { name: /导出当前筛选|导出中/ }).count())) {
     fail(`${spec.username}: 问答记录页缺少筛选结果导出入口`)
+  }
+  // 版本留痕（T-SEC-11）：列表要能看出"这条答案由哪个版本产出"，否则可追溯只做了一半。
+  // 当前范围没有记录时列表根本不渲染，这种租户按空状态断言，别把"没数据"误报成"缺列"。
+  if (await page.locator('.wb-table').count()) {
+    if (!(await page.getByText('版本', { exact: true }).count())) {
+      fail(`${spec.username}: 问答记录列表缺少「版本」列`)
+    }
+  } else if (!(await page.getByText('当前范围没有问答记录').count())) {
+    fail(`${spec.username}: 问答记录页既无列表也无空状态说明`)
+  }
+  if (!(await page.getByText(/不按当前配置倒推/).count())) {
+    fail(`${spec.username}: 问答记录未说明历史记录不按当前版本倒推`)
   }
   if (await page.locator('.wb-error').count()) {
     fail(`${spec.username}: 问答记录页出现错误态`)

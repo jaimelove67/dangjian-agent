@@ -17,6 +17,7 @@ from app.core.request_audit import spool_root
 from app.core.security import Permission
 from app.core.tenant import bypass_tenant_filter
 from app.core.timeutil import as_utc_naive
+from app.core.versions import prompt_versions, workflow_versions
 from app.db.session import get_db
 from app.deps import get_current_user, require_permissions
 from app.models.audit import AuditLog
@@ -46,12 +47,23 @@ from app.services.run_log_service import (
     count_run_logs,
     fetch_run_logs,
 )
+from app.services.version_trail_service import (
+    PROMPT_DEFAULTS,
+    count_knowledge_revisions,
+    fetch_knowledge_revisions,
+    knowledge_scope_note,
+    prompt_scope_note,
+    prompt_version_history,
+)
 
 router = APIRouter()
 identity_admin = require_permissions(Permission.IDENTITY_MANAGE)
 config_admin = require_permissions(Permission.CONFIG_MANAGE)
 review_user = require_permissions(Permission.REVIEW_MANAGE)
 ops_admin = require_permissions(Permission.OPS_QUERY)
+# 版本留痕属治理与审计证据（与问答记录、审计查询同一枚权限）：能查"谁问了什么"的人，
+# 才需要能查"这条答案由哪个版本产出"。
+audit_admin = require_permissions(Permission.AUDIT_QUERY)
 
 
 def response(request: Request, data: object) -> APIResponse:
@@ -211,7 +223,9 @@ async def update_governance(
         action="config_update",
         resource_type="governance",
         resource_id=str(user.tenant_id),
-        new_value={"version": data["version"]},
+        # 键名用 ``config_version``：它属于审计摘要白名单里的"不可变版本指针"，
+        # 写 ``version`` 会被统一脱敏成 sha256，留痕反而读不出第几个版本。
+        new_value={"config_version": data["version"]},
     )
     await db.commit()
     return response(request, data)
@@ -456,6 +470,57 @@ async def run_logs(
             "page": page,
             "page_size": page_size,
             "scope_note": filters.scope_note(),
+        },
+    )
+
+
+@router.get("/admin/version-trail")
+async def version_trail(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user: User = Depends(audit_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict[str, Any]]:
+    """版本留痕（SEC-11 / T-SEC-11）：提示词 / 工作流 / 知识库三个版本的可查记录。
+
+    与 `/admin/config-history` 的分工：那边是**配置管理**视角（整份配置的历史，权限
+    `config.manage`）；这边是**留痕**视角——只挑出版本变化，并回答"这条答案由哪个版本
+    产出"（权限 `admin.audit`，与其他治理审计证据同一枚）。三块来源各自权威，不另立登记表：
+
+    - 提示词：租户配置版本表（谁、何时、为什么改）；
+    - 工作流：代码里的契约版本（只给现行值，变更历史在代码与发布记录）；
+    - 知识库：条目入库与内容更新的审计（修订号在审计白名单里可读）。
+    """
+    tenant_id = str(user.tenant_id)
+    history = await prompt_version_history(db, tenant_id)
+    total = await count_knowledge_revisions(db, tenant_id)
+    revisions = await fetch_knowledge_revisions(
+        db, tenant_id, offset=(page - 1) * page_size, limit=page_size
+    )
+    return response(
+        request,
+        {
+            "prompt": {
+                "current": prompt_versions(tenant_id),
+                "defaults": dict(PROMPT_DEFAULTS),
+                "history": [asdict(entry) for entry in history],
+                "scope_note": prompt_scope_note(tenant_id, len(history)),
+            },
+            "workflow": {
+                "items": workflow_versions(),
+                "scope_note": (
+                    "工作流契约版本来自代码常量（app/schemas/wf.py）：契约变更才升版本；"
+                    "它的变更历史在代码与发布记录里，数据库不另存一份，这里也不编造"
+                ),
+            },
+            "knowledge": {
+                "items": [asdict(row) for row in revisions],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "scope_note": knowledge_scope_note(tenant_id),
+            },
         },
     )
 

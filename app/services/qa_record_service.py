@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
@@ -21,6 +21,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timeutil import local_time
+from app.core.versions import PROMPT_LABELS
 from app.models.qa_session import QASession
 from app.models.user import User
 
@@ -86,6 +87,8 @@ class QaRecordRow:
     is_deleted: bool
     created_at: datetime
     session_id: Optional[str] = None
+    #: 版本指纹（SEC-11）：这条答案由哪个提示词 / 工作流契约版本产出；上线前为空
+    versions: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_row(cls, row: Any) -> "QaRecordRow":
@@ -107,7 +110,30 @@ class QaRecordRow:
             is_deleted=bool(record.is_deleted),
             created_at=record.created_at,
             session_id=record.session_id,
+            versions=dict(record.versions or {}),
         )
+
+
+def versions_text(versions: dict[str, Any] | None) -> str:
+    """把版本指纹压成一行（SEC-11）：导出与列表共用一个说法，不各处拼字符串。
+
+    返回空串表示"这条记录没有版本指纹"（本功能上线前的历史记录），由调用方决定
+    显示成什么文案——服务层不自拟界面文案。
+    """
+    data = versions or {}
+    prompt = data.get("prompt") or {}
+    workflow = data.get("workflow") or {}
+    parts = []
+    if prompt:
+        parts.append(
+            "提示词："
+            + " / ".join(
+                f"{PROMPT_LABELS.get(kind, kind)} {value}" for kind, value in prompt.items()
+            )
+        )
+    if workflow:
+        parts.append("工作流：" + " / ".join(f"{wid} {value}" for wid, value in workflow.items()))
+    return "；".join(parts)
 
 
 def build_qa_record_query(filters: QaRecordFilters) -> Select[Any]:

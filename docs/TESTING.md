@@ -218,6 +218,19 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 
 未覆盖：运行日志是审计的读模型，能回溯多久由学校配置的审计保留天数决定，不另存更长历史；`assessment_reminders_scan`（手动补扫，走 `audit_operation`）只记"跑过 / 结果"，不记生成条数（该端点 `new_value` 走统一摘要口径，条数只在接口响应里）；失败不记供应商错误正文；不提供导出；未做真实 120 秒超时的长跑验证（超时分支由单测注入 `TimeoutError` 覆盖，不是真等满 120 秒）。
 
+## 版本留痕回归（T-SEC-11）
+
+2026-10-16，新增 `GET /admin/version-trail`（权限 `admin.audit`，与审计查询 / 问答记录同一枚）与前端「运行审计 → 版本留痕」，问答记录列表与 Excel 台账新增「版本」列。三块来源各自权威、**不新建版本登记表**：提示词版本取自 `config_revisions` 的变更历史（当前值来自租户配置，未配置回落出厂默认 `v1`），工作流契约版本取自代码常量（`app/schemas/wf.py` 的 `WF-03` / `WF-04`），知识库版本取自条目的入库与内容更新审计。写侧在**回答产生的那一刻**记指纹：`qa_sessions.versions`（迁移 `016_qa_session_versions`）＋ `Citation.content_revision`，存量不回填。
+
+- `tests/unit/test_version_trail.py`：15 项通过。提示词历史只列真的改了提示词的提交、首次登记基准为"未设置"、出厂默认回落；工作流契约版本清单；知识库事件集合与 WHERE 子句（只收 `create` / `update_content` 且 `result=success`）、修订号与前后版本回落、不可信字段类型不进数字；口径话术与 UTC→北京时间换算。
+- `tests/integration/test_module6_http.py`：新增 `test_version_trail_shows_prompt_workflow_and_knowledge_versions` 通过（一次性 PostgreSQL 库 + `alembic upgrade head`）。覆盖支部角色 403、三次配置提交只有两次动提示词（只调别的字段那次不出现）、首次登记 `before=null`、工作流契约版本、入库 + 内容更新两条留痕与「第 2 → 3 版」、只改元数据不出现、跨租户不可见；问答记录用例补断言「版本指纹随记录返回、上线前记录给空对象」、Excel「版本」列值与导出说明口径。
+- `tests/integration/test_qa_regressions.py`：新增写侧用例通过——回答返回版本指纹（`prompt` / `workflow`）、落库的就是那一刻的指纹（不是按当前配置重算）、引用带被引文档修订号。
+- `node frontend/scripts/check-roles-ui.mjs`（7 个角色）通过：具备权限的角色在「运行审计」能看到「版本留痕」区块、当前生效提示词、工作流契约版本与知识库版本三块及来源口径，问答记录列表有「版本」列且写明历史记录不倒推。
+- `node frontend/scripts/verify-module6.mjs --serve`：15 项通过（原 14 项 + 版本留痕 1 项）。`/admin/version-trail` 纳入界面契约，并断言「当前生效：问答提示词 v2 / 追问改写 v1」「问答提示词 v1 → v2」「wf-03/1」与「第 2 → 3 版」。
+- 开发库端到端手工核对：`GET /api/v1/admin/version-trail` 三块齐备（当前提示词 `{"qa":"v1","rewrite":"v1"}`、工作流 `wf-03/1` / `wf-04/1`、知识库修订事件 13 条含操作人 / 标题 / 文档标识），`test-member` 403；再走一次真实「入库 → 内容更新」：入库记「第 1 版」（`previous_revision=null`）、内容更新记「第 1 → 2 版」，软删除条目后审计留痕按只追加保留。
+
+未覆盖：留痕上线前的问答记录没有版本指纹（`versions` 为空、界面与导出显示「未留痕」），不按当前配置倒推；工作流契约版本只有现行值，其历史变更在代码与发布记录里，数据库无痕；提示词变更历史最多回溯最近 200 次配置提交；知识库留痕按审计保留天数自然过期，不另存更长历史；只改元数据 / 状态 / 权限的动作不算版本变更；未做真实多租户并发的留痕压力验证。
+
 ## 本地扩展证据与主分支区分
 
 文档分支所引用的 `admin-workspace-isolated.xml`（179项、0失败/错误/跳过）与 `admin-workspace-backend.xml`（205项、30项准备错误）属于未合入的本地管理员工作台扩展，不能套用到本次主分支合并结果；各范围有重复用例，不累加为通过总数。原先开户43项及相关91项记录保留其原始范围。

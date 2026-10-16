@@ -43,6 +43,9 @@ class Citation(BaseModel):
     # 权威来源（reference 为非权威）与效力状态（effective 为现行有效）
     authority: Optional[str] = None
     validity: Optional[str] = None
+    # 被引文档的内容修订号（SEC-11 知识库版本留痕）：这条答案引的是哪一版，
+    # 只能跟着引用逐条记录——事后按"当前版本"倒推会把旧答案说成新版本的产物。
+    content_revision: Optional[int] = None
 
 
 class QAResponse(BaseModel):

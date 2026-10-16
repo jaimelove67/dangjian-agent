@@ -26,7 +26,8 @@ from app.core.tenant import bypass_tenant_filter
 from app.db.session import get_db
 from app.main import app
 from app.models.audit import AuditLog
-from app.models.governance import DurableJob, ModelUsage
+from app.models.governance import ConfigRevision, DurableJob, ModelUsage
+from app.models.knowledge import KnowledgeDoc
 from app.models.meeting import MeetingRecord
 from app.models.member import MemberCultivation, MemberProfile
 from app.models.qa_session import QASession
@@ -129,6 +130,11 @@ async def seed_qa_records(case):
                         warnings=[],
                         refused=False,
                         session_id=uuid.uuid4().hex,
+                        # 版本留痕（SEC-11）：回答产生时记下的版本指纹，随记录一起查得到
+                        versions={
+                            "prompt": {"qa": "v1", "rewrite": "v1"},
+                            "workflow": {"WF-03": "wf-03/1", "WF-04": "wf-04/1"},
+                        },
                         created_at=datetime(2026, 3, 1, 1, 0),
                     ),
                     QASession(
@@ -515,6 +521,123 @@ async def test_run_logs_show_attempts_failures_and_scan_results(http_case):
     assert (await call(c, c["other_admin"], "GET", "/admin/run-logs"))["total"] == 0
 
 
+async def test_version_trail_shows_prompt_workflow_and_knowledge_versions(http_case):
+    """T-SEC-11：提示词 / 工作流 / 知识库三个版本都要可查、可追溯（admin.audit，租户内）。"""
+    c = http_case
+    # 支部书记没有 admin.audit：版本留痕与问答记录、审计查询同一枚权限
+    await call(c, c["author"], "GET", "/admin/version-trail", status=403)
+    async with c["maker"]() as db:
+        with bypass_tenant_filter():
+            db.add_all(
+                [
+                    # 三次配置提交，只有两次动了提示词：第 2 次只调了别的字段
+                    ConfigRevision(
+                        tenant_id=c["school"].id,
+                        version=1,
+                        actor_id=c["admin"].id,
+                        reason="初次登记",
+                        values={"prompt_versions": {"qa": "v1"}},
+                    ),
+                    ConfigRevision(
+                        tenant_id=c["school"].id,
+                        version=2,
+                        actor_id=c["admin"].id,
+                        reason="只调了存储期限",
+                        values={"prompt_versions": {"qa": "v1"}, "retention": {"audit_days": 400}},
+                    ),
+                    ConfigRevision(
+                        tenant_id=c["school"].id,
+                        version=3,
+                        actor_id=c["admin"].id,
+                        reason="问答提示词升版",
+                        values={"prompt_versions": {"qa": "v2"}},
+                    ),
+                ]
+            )
+            document = KnowledgeDoc(
+                tenant_id=c["school"].id,
+                doc_id="vt-" + uuid.uuid4().hex,
+                file_name="synthetic.txt",
+                title="版本留痕合成制度",
+                issuer="合成单位",
+                level="school",
+                visibility="school",
+                security_level="public",
+                effective_date=date(2020, 1, 1),
+                status="effective",
+                tags=[],
+                doc_metadata={"content_revision": 3, "org_unit_id": c["root"].id},
+            )
+            db.add(document)
+            await db.flush()
+            doc_pk, doc_business_id = str(document.id), document.doc_id
+
+            def audit(action, *, request_id, **values):
+                row = make_audit_log(
+                    tenant_id=c["school"].id,
+                    user_id=c["admin"].id,
+                    user_name=str(c["admin"].id),
+                    action=action,
+                    resource_type="knowledge_doc",
+                    resource_id=doc_pk,
+                    request_id=request_id,
+                    result="success",
+                    **values,
+                )
+                return row
+
+            created = audit("create", request_id="vt-create", new_value={"chunk_count": 4})
+            created.created_at = datetime(2026, 3, 1, 1, 0)
+            updated = audit(
+                "update_content",
+                request_id="vt-update",
+                old_value={"revision": 2},
+                new_value={"revision": 3, "chunk_count": 5},
+            )
+            updated.created_at = datetime(2026, 3, 1, 2, 0)
+            # 只改元数据：不留修订号，不算版本变更，不该出现在留痕里
+            metadata_only = audit(
+                "update_metadata", request_id="vt-meta", new_value={"title": "改了标题"}
+            )
+            metadata_only.created_at = datetime(2026, 3, 1, 3, 0)
+            db.add_all([created, updated, metadata_only])
+            await db.commit()
+
+    data = await call(c, c["admin"], "GET", "/admin/version-trail")
+    # 提示词：当前生效值来自租户配置（未配置回落出厂默认），默认值也明确给出
+    assert data["prompt"]["current"] == {"qa": "v1", "rewrite": "v1"}
+    assert data["prompt"]["defaults"] == {"qa": "v1", "rewrite": "v1"}
+    history = data["prompt"]["history"]
+    assert [entry["config_version"] for entry in history] == [3, 1]
+    assert history[0]["reason"] == "问答提示词升版" and history[0]["actor"] == "测试审核人"
+    assert [
+        (change["kind"], change["before"], change["after"]) for change in history[0]["changes"]
+    ] == [("qa", "v1", "v2")]
+    # 首次登记从"无"变成当时的取值：这一条本身也是留痕，不能只剩"最近一次改动"
+    assert history[1]["changes"][0]["before"] is None
+    assert c["school"].id in data["prompt"]["scope_note"]
+    # 工作流：契约版本是代码常量，只给现行值，不编造数据库里没有的变更历史
+    assert {item["workflow"]: item["version"] for item in data["workflow"]["items"]} == {
+        "WF-03": "wf-03/1",
+        "WF-04": "wf-04/1",
+    }
+    # 知识库：入库即第 1 版；内容更新给出前后版本；只改元数据不出现
+    knowledge = data["knowledge"]
+    assert [row["event"] for row in knowledge["items"]] == ["update_content", "create"]
+    assert knowledge["total"] == 2
+    assert knowledge["items"][0]["previous_revision"] == 2 and knowledge["items"][0]["revision"] == 3
+    assert knowledge["items"][0]["event_text"] == "内容更新"
+    assert knowledge["items"][0]["doc_id"] == doc_business_id
+    assert knowledge["items"][0]["title"] == "版本留痕合成制度"
+    assert knowledge["items"][0]["actor"] == "测试审核人"
+    assert knowledge["items"][1]["revision"] == 1 and knowledge["items"][1]["previous_revision"] is None
+    assert c["school"].id in knowledge["scope_note"]
+    # 跨租户不可见：外校管理员既看不到本校的提示词历史，也看不到知识库修订
+    foreign = await call(c, c["other_admin"], "GET", "/admin/version-trail")
+    assert foreign["prompt"]["history"] == []
+    assert foreign["knowledge"]["total"] == 0
+
+
 async def test_production_readiness_keeps_unconfirmed_school_and_models_unready(
     http_case, native, monkeypatch
 ):
@@ -816,6 +939,12 @@ async def test_qa_records_central_view_is_permission_scoped_and_filterable(http_
     assert answered["data_level"] == "internal" and answered["has_sufficient_evidence"] is True
     assert answered["citation_count"] == 1 and answered["refused"] is False
     assert answered["is_deleted"] is False
+    # 版本留痕（SEC-11）：这条答案是哪个版本产出的，要跟记录一起查得到
+    assert answered["versions"]["prompt"] == {"qa": "v1", "rewrite": "v1"}
+    assert answered["versions"]["workflow"]["WF-03"] == "wf-03/1"
+    # 上线前的历史记录没有版本指纹：给空对象而不是按当前配置倒推
+    refused = next(row for row in page["items"] if row["question"] == "合成拒答问题")
+    assert refused["versions"] == {}
     assert (
         await call(c, c["admin"], "GET", "/qa/records?refused=true")
     )["items"][0]["question"] == "合成拒答问题"
@@ -872,11 +1001,15 @@ async def test_qa_record_export_carries_its_scope_and_writes_audit(http_case, mo
     sheet = workbook[RECORD_SHEET]
     assert [cell.value for cell in sheet[1]] == list(HEADERS)
     assert sheet.max_row == 2
-    assert sheet.cell(row=2, column=11).value == "转正需要什么材料？"
+    # 版本留痕（SEC-11）：台账里"这条答案用了哪个版本"要跟着记录走，不能只在界面上有
+    assert sheet.cell(row=2, column=8).value == "提示词：问答提示词 v1 / 追问改写 v1；工作流：WF-03 wf-03/1 / WF-04 wf-04/1"
+    assert sheet.cell(row=2, column=12).value == "转正需要什么材料？"
     guide = "\n".join(str(cell.value) for cell in workbook["导出说明"]["A"] if cell.value)
     assert "导出人：测试审核人" in guide
     assert "导出条数：1" in guide
     assert "筛选口径：不含本人已删除的记录；问题或回答含「转正」" in guide
+    # "未留痕"要有解释，否则复核时会把空白当成漏记
+    assert "「版本」为本次回答的版本留痕" in guide
     async with c["maker"]() as db:
         with bypass_tenant_filter():
             logs = (

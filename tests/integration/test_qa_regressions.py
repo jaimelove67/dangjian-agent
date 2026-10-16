@@ -13,6 +13,7 @@ from app.deps import get_current_tenant, get_current_user
 from app.llm.base import DataLevel
 from app.llm.service import ModelService
 from app.main import app
+from app.models.qa_session import QASession
 from app.models.user import User, UserRole
 from app.rag.retrieval.base import RetrievalResult
 from app.rag.retrieval.hybrid import HybridRetriever
@@ -115,6 +116,29 @@ def test_admin_question_uses_content_level_not_role_clearance(qa_client):
     response = client.post("/api/v1/qa", json={"question": "申请需要什么材料？"})
     assert response.status_code == 200
     assert generate.await_args.kwargs["data_level"] == DataLevel.INTERNAL
+
+
+def test_answer_is_stamped_with_version_fingerprint_and_citation_revision(qa_client):
+    """SEC-11：回答产生时留痕提示词 / 工作流版本，引用带被引文档修订号（事后可追溯）。"""
+    client, retrieve, generate = qa_client
+    retrieved = chunk()
+    retrieved.metadata["content_revision"] = 2
+    retrieve.return_value = [retrieved]
+    db = app.dependency_overrides[get_db]()
+    saved = []
+    db.add = saved.append
+    response = client.post("/api/v1/qa", json={"question": "申请需要什么材料？"})
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["versions"]["prompt"] == {"qa": "v1", "rewrite": "v1"}
+    assert data["versions"]["workflow"] == {"WF-03": "wf-03/1", "WF-04": "wf-04/1"}
+    # 同一个会话也承载审计写入，这里只看问答记录本身
+    record = next(item for item in saved if isinstance(item, QASession))
+    # 落库的就是回答那一刻的指纹：留着将来按当前配置倒推就不是留痕了
+    assert record.versions == data["versions"]
+    # 知识库版本跟着引用走：这条答案引的是第 2 版
+    assert data["citations"][0]["content_revision"] == 2
+    assert record.citations[0]["content_revision"] == 2
 
 
 def test_public_hint_cannot_send_personal_question_to_cloud(qa_client):
