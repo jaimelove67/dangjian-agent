@@ -151,6 +151,17 @@ class StageRules:
     def next_targets(self, source: MemberStage) -> list[MemberStage]:
         return [rule.target for rule in self.transitions if rule.source == source]
 
+    def development_rank(self, stage: MemberStage) -> int | None:
+        """发展阶段链上的序号（入党申请人 0 → 正式党员 4）；非发展阶段返回 None。
+
+        接续发展顺序是判断"能不能办某一环节"的共同依据：档案清单要沿链累加
+        （`materials_for_stage`），上级备案 / 审批要在阶段已到（或已过）目标阶段后才受理
+        （T-MEM-11），两处都不能各写一套顺序。
+        """
+        if stage not in _DEVELOPMENT_PATH:
+            return None
+        return _DEVELOPMENT_PATH.index(stage)
+
     def materials_for_stage(self, stage: MemberStage) -> tuple[str, ...]:
         """转入档案清单：沿"入党申请人 → 当前阶段"累加既有材料要求。
 
@@ -159,10 +170,10 @@ class StageRules:
         预备党员按到"预备党员"为止累加，不把尚未发生的转正材料算成缺项：转入时还没
         转正，清单要跟着人的实际阶段走。非发展阶段（如"退回"）返回空清单。
         """
-        if stage not in _DEVELOPMENT_PATH:
+        stop = self.development_rank(stage)
+        if stop is None:
             return ()
         names: list[str] = []
-        stop = _DEVELOPMENT_PATH.index(stage)
         for index in range(stop):
             rule = self.get_rule(_DEVELOPMENT_PATH[index], _DEVELOPMENT_PATH[index + 1])
             if rule is None:

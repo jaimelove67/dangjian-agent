@@ -225,6 +225,7 @@ async function checkRole(browser, spec) {
     await checkMeetingFrequency(page, spec)
     await checkMemberReviews(page, spec)
     await checkMemberTransfers(page, spec)
+    await checkUpperReports(page, spec)
   } finally {
     await context.close()
   }
@@ -599,6 +600,76 @@ async function checkMemberTransfers(page, spec) {
     if (await page.getByRole('alert').count()) {
       fail(`${spec.username}: 接转工作区出现错误态`)
     }
+  } finally {
+    page.off('response', listener)
+  }
+}
+
+/**
+ * 「上级审批备案」工作区必须真的挂载，并把边界写开（T-MEM-11）。
+ *
+ * 这一屏最容易变成反人类设计的做法，是让支部自己点一个"审批通过"——系统里没有上级党组织
+ * 的登录身份，审批是上级党组织的权限。这里钉住四件事：工作区挂载并给出"不代替上级审批 / 
+ * 回填不改阶段 / 备案类时限按上级党委规定"三条口径、没有"系统自己审批"的假入口、
+ * 写入与导出入口在、且接口没有报错（含迁移未执行导致的 500）。
+ */
+async function checkUpperReports(page, spec) {
+  if (!spec.allow.includes('/members')) return
+  const apiErrors = []
+  const listener = (response) => {
+    const path = new URL(response.url()).pathname
+    if (response.status() >= 400 && path.includes('/member-full/upper-reports')) {
+      apiErrors.push(`${response.status()} ${path}`)
+    }
+  }
+  page.on('response', listener)
+  try {
+    await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' })
+    await settle(page)
+    const tab = page.getByRole('tab', { name: '上级审批备案' })
+    await tab.first().waitFor({ timeout: 15000 }).catch(() => {})
+    if (!(await tab.count())) {
+      fail(`${spec.username}: 人员档案页没有「上级审批备案」工作区（功能只在接口里，用户看不到）`)
+      return
+    }
+    await tab.first().click()
+    await page.waitForTimeout(1500)
+    const panel = page.locator('.up-summary')
+    await panel.waitFor({ timeout: 15000 }).catch(() => {})
+    if (!(await panel.count())) {
+      fail(`${spec.username}: 「上级审批备案」没有挂载台账（已报送待批复 / 超期汇总缺失）`)
+      return
+    }
+    const text = await page.locator('main').innerText()
+    if (!/系统不代替上级党组织审批/.test(text)) {
+      fail(`${spec.username}: 上级审批备案未说明"系统不代替上级党组织审批"的边界`)
+    }
+    if (!/不改动党员的阶段/.test(text)) {
+      fail(`${spec.username}: 上级审批备案未说明回填批复不改动党员阶段`)
+    }
+    if (!/备案类时限按上级党委规定/.test(text)) {
+      fail(`${spec.username}: 上级审批备案没有把备案类时限交给上级党委规定（容易凭空编一个期限）`)
+    }
+    // 没有"由系统审批"的假入口：审批是上级党组织的权限
+    if (await page.getByRole('button', { name: /系统审批|审批通过|批准入党/ }).count()) {
+      fail(`${spec.username}: 上级审批备案出现"系统自己审批"的入口`)
+    }
+    // 能看到 /members 的角色都具备 member.stage_transition，写入入口就该在
+    for (const entry of ['登记报送', '导出台账']) {
+      if (!(await page.getByRole('button', { name: entry, exact: true }).count())) {
+        fail(`${spec.username}: 看不到「${entry}」入口`)
+      }
+    }
+    if (apiErrors.length) {
+      fail(`${spec.username}: 上级审批备案接口报错 ${[...new Set(apiErrors)].join(', ')}`)
+    }
+    if (await page.getByRole('alert').count()) {
+      fail(`${spec.username}: 上级审批备案工作区出现错误态`)
+    }
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    )
+    if (overflow) fail(`${spec.username}: 上级审批备案工作区出现页面级横向溢出`)
   } finally {
     page.off('response', listener)
   }

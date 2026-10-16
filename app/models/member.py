@@ -266,3 +266,60 @@ class MemberTransfer(Base):
     revoke_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # 操作版本：登记 / 回执 / 作废各留一版完整快照，编号只增不减
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class MemberUpperReport(Base):
+    """上级党组织审批 / 备案报送台账（报送 + 回填上级批复结果）。
+
+    依据《中国共产党发展党员工作细则》：确定入党积极分子（第八条）与列为发展对象
+    （第十三条）须报上级党委**备案**；接收预备党员（第二十一条、第二十二条）与预备党员
+    转正须报上级党委**审批**，党委应当在三个月内审批（第二十五条，特殊情况不超过六个月）。
+
+    这张表只做两件事：**登记"支部已把材料报送出去"这一事实**，以及**回填上级的批复结果**。
+    它不能、也不应该替代上级审批：系统里没有上级党组织的登录身份，也就不存在"系统批准"
+    这种结论。因此：
+
+    * ``status`` 停在 ``submitted``（已报送、等批复）本身就是常态，不是异常；
+    * 回填批复（``settled``）要求给出批复文号（``reply_no``）或需补充材料的具体说明——
+      没有文号的"同意"不是批复；
+    * 回填**不改发展阶段**，阶段仍由授权人员按程序在 ``member_stage_history`` 上人工办理。
+
+    ``upper_org`` 只记上级组织名称文本：受理备案的可能是院系党委、校党委或市委组织部，
+    未必在本系统的组织树里，硬套组织字典会把"填不进去"变成登记失败。
+    """
+
+    __tablename__ = "member_upper_reports"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        Index(
+            "ix_member_upper_reports_scope", "tenant_id", "org_unit_id", "status", "submitted_on"
+        ),
+        Index("ix_member_upper_reports_profile", "tenant_id", "profile_id", "item"),
+    )
+
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # 报送时的姓名 / 组织 / 阶段快照：人员改名、流转后历史行仍能读回去
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    # 事项（activist_record / candidate_record / probationary_approval / member_approval）
+    # 与类别（record 备案 / approval 审批）由服务层单源给出，请求只能选事项
+    item: Mapped[str] = mapped_column(String(40), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="record")
+    upper_org: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    letter_no: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    submitted_on: Mapped[date] = mapped_column(Date, nullable=False)
+    # 报送材料清单快照：与阶段材料要求同一来源，配置改了也不改写历史
+    materials: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="submitted")
+    # 回填的上级批复：agreed 同意 / rejected 不同意 / supplement 需补充材料（或留空）
+    result: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    decided_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    reply_no: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    decide_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    revoked_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    revoke_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 操作版本：报送 / 回填 / 作废各留一版完整快照，编号只增不减
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

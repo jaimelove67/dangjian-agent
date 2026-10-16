@@ -34,6 +34,7 @@ import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
 import MemberFilePanel from '@/components/members/MemberFilePanel.vue'
 import MemberProcessWorkspace from '@/components/members/MemberProcessWorkspace.vue'
 import TransferPanel from '@/components/members/TransferPanel.vue'
+import UpperReportPanel from '@/components/members/UpperReportPanel.vue'
 import { session } from '@/stores/session'
 import { downloadBlob, todayISO } from '@/utils/files'
 
@@ -62,7 +63,7 @@ const flowBusy = ref(false)
 const rosterYear = ref('')
 const rosterBatch = ref('')
 const rosterIncludeTransferred = ref(false)
-const workspaces = [{ key: 'profiles', label: '人员档案' }, { key: 'transfers', label: '组织关系接转' }, { key: 'batches', label: '年度批次' }, { key: 'reminders', label: '提醒待办' }, { key: 'votes', label: '多轮选优' }]
+const workspaces = [{ key: 'profiles', label: '人员档案' }, { key: 'transfers', label: '组织关系接转' }, { key: 'upper-reports', label: '上级审批备案' }, { key: 'batches', label: '年度批次' }, { key: 'reminders', label: '提醒待办' }, { key: 'votes', label: '多轮选优' }]
 const panelTab = ref<PanelTab>('qualification')
 
 const qualification = ref<QualificationResult | null>(null)
@@ -919,6 +920,9 @@ const todoTone: Record<TodoItem['category'], string> = {
     </div>
     <div v-else-if="workspace === 'transfers'" class="wb-stack">
       <TransferPanel :organizations="organizations" @busy="flowBusy = $event" @changed="load()" />
+    </div>
+    <div v-else-if="workspace === 'upper-reports'" class="wb-stack">
+      <UpperReportPanel @busy="flowBusy = $event" />
     </div>
     <MemberProcessWorkspace v-else :mode="workspace" :organizations="organizations" @select-batch="selectBatch" @busy="flowBusy = $event" />
     </WorkspaceTabs>

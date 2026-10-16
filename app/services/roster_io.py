@@ -233,9 +233,9 @@ def read_roster(data: bytes) -> RosterSheet:
 # ---------------------------------------------------------------- 生成 Excel
 
 
-def _style_header(sheet: Any, width: tuple[int, ...]) -> None:
+def _write_header(sheet: Any, headers: tuple[str, ...], width: tuple[int, ...]) -> None:
     fill = PatternFill("solid", fgColor="DDEBF7")
-    for position, name in enumerate(HEADERS, start=1):
+    for position, name in enumerate(headers, start=1):
         cell = sheet.cell(row=1, column=position, value=name)
         cell.font = Font(bold=True)
         cell.fill = fill
@@ -244,11 +244,17 @@ def _style_header(sheet: Any, width: tuple[int, ...]) -> None:
     sheet.freeze_panes = "A2"
 
 
-def _write_rows(sheet: Any, rows: list[list[Any]]) -> None:
+def _style_header(sheet: Any, width: tuple[int, ...]) -> None:
+    _write_header(sheet, HEADERS, width)
+
+
+def _write_rows(
+    sheet: Any, rows: list[list[Any]], *, text_columns: tuple[int, ...] = (4, 5)
+) -> None:
     for row_no, values in enumerate(rows, start=2):
         for position, value in enumerate(values, start=1):
             cell = sheet.cell(row=row_no, column=position, value=value)
-            if position in (4, 5):
+            if position in text_columns:
                 # 日期与年度按文本写入：避免 Excel 按本机区域格式改写用户填的内容
                 cell.number_format = "@"
 
@@ -334,6 +340,94 @@ def build_roster(rows: list[dict[str, Any]], *, scope_note: str = "") -> bytes:
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
+
+
+UPPER_REPORT_HEADERS: tuple[str, ...] = (
+    "事项",
+    "类别",
+    "姓名",
+    "组织",
+    "阶段",
+    "上级组织",
+    "报送文号",
+    "报送日期",
+    "随报材料",
+    "状态",
+    "批复结果",
+    "批复日期",
+    "批复文号",
+    "批复说明",
+    "是否超过审批时限",
+)
+UPPER_GUIDE_SHEET = "导出说明"
+
+
+def build_upper_report_export(rows: list[dict[str, Any]], *, scope_note: str = "") -> bytes:
+    """导出上级审批 / 备案报送台账（T-MEM-11）。
+
+    只导**报送要素与批复结果**：随报材料一列是该事项应报的材料**清单**（与阶段材料要求同一
+    来源），不是材料原件；政治审查材料等敏感内容不在本表内，因此这份台账可以按需交接口、
+    也可以给上级联络人核对，而不会把敏感材料原文带出去。
+    """
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "报送台账"
+    _write_header(
+        sheet,
+        UPPER_REPORT_HEADERS,
+        (26, 8, 12, 26, 12, 26, 16, 12, 46, 14, 14, 12, 18, 30, 18),
+    )
+    _write_rows(
+        sheet,
+        [
+            [
+                row.get("item_label") or row.get("item", ""),
+                row.get("kind_label", ""),
+                row.get("member_name", ""),
+                row.get("org_name", ""),
+                row.get("stage_label") or row.get("stage", ""),
+                row.get("upper_org", ""),
+                row.get("letter_no", ""),
+                _iso(row.get("submitted_on")),
+                "、".join(str(name) for name in (row.get("materials") or [])),
+                row.get("status_label", ""),
+                row.get("result_label", ""),
+                _iso(row.get("decided_on")),
+                row.get("reply_no", ""),
+                row.get("decide_note", ""),
+                "是" if row.get("overdue") else "",
+            ]
+            for row in rows
+        ],
+        text_columns=(8, 12),
+    )
+
+    guide = workbook.create_sheet(UPPER_GUIDE_SHEET)
+    guide.column_dimensions["A"].width = 96
+    info = [
+        "导出说明",
+        f"导出时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"导出条数：{len(rows)}",
+        f"数据范围：{scope_note or '当前账号权限范围内的组织'}",
+        "本表为上级审批 / 备案的报送台账：事项、报送要素与上级批复结果。",
+        "「随报材料」是该事项应报材料的清单（与阶段流转的材料要求同一来源），不含材料原件。",
+        "政治审查材料等敏感内容不在本表内；审批与备案的结论以上级党组织的批复为准。",
+        "系统只登记报送与批复结果，不代替上级党组织审批，也不自动改动党员的阶段。",
+    ]
+    for row_no, text in enumerate(info, start=1):
+        cell = guide.cell(row=row_no, column=1, value=text)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        if row_no == 1:
+            cell.font = Font(bold=True)
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def _iso(value: Any) -> str:
+    """日期列统一输出 ISO 文本；空值输出空串（导出件不出现 None）。"""
+    return value.isoformat() if isinstance(value, date) else ""
 
 
 def template_headers() -> tuple[str, ...]:

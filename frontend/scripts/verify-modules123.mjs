@@ -437,6 +437,7 @@ function fixture() {
     ],
     votes: [],
     transfers: [],
+    upperReports: [],
     records: [structuredClone(meeting)],
     memberReviews: structuredClone(memberReviewRows),
     revisions: [],
@@ -529,6 +530,138 @@ function transferSummary(transfers, currentDay) {
 }
 const TRANSFER_NOTICE =
   '接转只记录事实：转出须收到回执才算完成，转入须核对档案；系统不自动认定接收，也不因介绍信到期自动判定失败'
+
+// ---------------------------- 上级审批 / 备案（T-MEM-11） ----------------------------
+// 事项、类别与依据由后端目录单源给出；界面不自己编条文。
+const upperStageRank = (stage) =>
+  ['applicant', 'activist', 'candidate', 'probationary', 'member'].indexOf(stage)
+const upperApprovalDays = 90
+const upperItems = [
+  {
+    item: 'activist_record',
+    label: '确定入党积极分子（报上级党委备案）',
+    kind: 'record',
+    kind_label: '备案',
+    stage: 'activist',
+    stage_label: '入党积极分子',
+    basis: '《中国共产党发展党员工作细则》第八条：确定入党积极分子由党支部委员会会议研究决定后，报上级党委备案。',
+    report_to: '上级党委',
+    materials: ['入党申请书', '党组织谈话记录', '入党积极分子备案报告'],
+  },
+  {
+    item: 'candidate_record',
+    label: '确定发展对象（报上级党委备案）',
+    kind: 'record',
+    kind_label: '备案',
+    stage: 'candidate',
+    stage_label: '发展对象',
+    basis: '《中国共产党发展党员工作细则》第十三条：确定发展对象由支部委员会研究后报上级党委备案。',
+    report_to: '上级党委',
+    materials: ['入党申请书', '党组织谈话记录', '思想汇报', '培养考察记录', '发展对象备案报告'],
+  },
+  {
+    item: 'probationary_approval',
+    label: '接收预备党员（报上级党委审批）',
+    kind: 'approval',
+    kind_label: '审批',
+    stage: 'probationary',
+    stage_label: '预备党员',
+    basis: '《中国共产党发展党员工作细则》第二十一条、第二十二条：支部大会通过后报上级党委审批，上级党委应派人谈话。',
+    report_to: '上级党委',
+    materials: [
+      '入党申请书',
+      '党组织谈话记录',
+      '思想汇报',
+      '培养考察记录',
+      '政治审查材料',
+      '入党积极分子培养考察登记表',
+      '中国共产党入党志愿书',
+    ],
+  },
+  {
+    item: 'member_approval',
+    label: '预备党员转正（报上级党委审批）',
+    kind: 'approval',
+    kind_label: '审批',
+    stage: 'member',
+    stage_label: '正式党员',
+    basis: '《中国共产党发展党员工作细则》第五章：预备党员预备期满，支部大会讨论通过后报上级党委审批。',
+    report_to: '上级党委',
+    materials: [
+      '入党申请书',
+      '党组织谈话记录',
+      '思想汇报',
+      '培养考察记录',
+      '政治审查材料',
+      '入党积极分子培养考察登记表',
+      '中国共产党入党志愿书',
+      '转正申请书',
+      '预备期考察记录',
+      '预备党员教育考察登记表',
+    ],
+  },
+]
+const UPPER_NOTICE =
+  '本台账只登记两件事：材料已报送、上级批复结果。系统不代替上级党组织审批，回填批复不改动党员阶段；备案类时限按上级党委规定。'
+const upperAdvanceDays = 15
+
+/** 只有审批类且仍在等批复的报送才有到期日；备案类细则未统一规定时限。 */
+function upperOverdue(row, currentDay) {
+  return (
+    row.kind === 'approval' &&
+    row.status === 'submitted' &&
+    addDays(row.submitted_on, upperApprovalDays) < currentDay
+  )
+}
+function upperReportView(row, currentDay) {
+  const item = upperItems.find((entry) => entry.item === row.item)
+  const approval = row.kind === 'approval'
+  const deadline = approval ? addDays(row.submitted_on, upperApprovalDays) : null
+  const overdue = upperOverdue(row, currentDay)
+  const remaining = deadline
+    ? Math.round((Date.parse(`${deadline}T00:00:00Z`) - Date.parse(`${currentDay}T00:00:00Z`)) / 86400000)
+    : null
+  return {
+    ...row,
+    item_label: item.label,
+    kind_label: item.kind_label,
+    basis: item.basis,
+    report_to: item.report_to,
+    stage_label: item.stage_label,
+    material_count: row.materials.length,
+    status_label:
+      row.status === 'submitted' ? '已报送待批复' : row.status === 'settled' ? '已回填批复' : '已作废',
+    result_label:
+      row.result === 'agreed'
+        ? '同意 / 批准'
+        : row.result === 'rejected'
+          ? '不同意'
+          : row.result === 'supplement'
+            ? '需补充材料'
+            : '',
+    deadline,
+    days_left: remaining,
+    overdue,
+    due_soon:
+      approval && row.status === 'submitted' && remaining !== null && remaining >= 0 && remaining <= upperAdvanceDays,
+    overdue_notice: overdue
+      ? `报送已超过审批时限仍未收到批复（${row.upper_org}），请向上级党组织核实审批进度；系统不判定审批失效、也不改动党员阶段`
+      : '',
+    no_deadline_note: approval ? '' : '备案类事项细则未统一规定时限，时限按上级党委规定，本系统不另设期限',
+  }
+}
+function upperSummary(rows, currentDay) {
+  const pending = rows.filter((row) => row.status === 'submitted')
+  return {
+    pending: pending.length,
+    pending_approval: pending.filter((row) => row.kind === 'approval').length,
+    overdue: rows.filter((row) => upperOverdue(row, currentDay)).length,
+    supplement: rows.filter((row) => row.result === 'supplement').length,
+    settled: rows.filter((row) => row.status === 'settled').length,
+    revoked: rows.filter((row) => row.status === 'revoked').length,
+    this_year: rows.filter((row) => row.submitted_on.startsWith(String(year))).length,
+  }
+}
 
 function updateMissing(record) {
   record.missing = [
@@ -828,6 +961,144 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
             history: row.history,
             notice: TRANSFER_NOTICE,
           }),
+        )
+      }
+    }
+    // ---------------------------- 上级审批 / 备案（T-MEM-11） ----------------------------
+    if (path === '/member-full/upper-reports/export' && method === 'GET') {
+      data.exported = true
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        body: '界面验证用台账样例',
+      })
+    }
+    if (path === '/member-full/upper-reports' && method === 'GET') {
+      const rows = data.upperReports
+        .filter((row) => !url.searchParams.has('item') || row.item === url.searchParams.get('item'))
+        .filter((row) => !url.searchParams.has('kind') || row.kind === url.searchParams.get('kind'))
+        .filter(
+          (row) => !url.searchParams.has('status') || row.status === url.searchParams.get('status'),
+        )
+        .filter((row) => url.searchParams.get('overdue') !== 'true' || upperOverdue(row, today))
+        // 列表不带留痕：留痕要走单条明细接口
+        .map(({ history, ...row }) => {
+          void history
+          return upperReportView(row, today)
+        })
+      return route.fulfill(
+        ok({
+          items: rows,
+          total: rows.length,
+          page: 1,
+          page_size: 20,
+          summary: upperSummary(data.upperReports, today),
+          items_catalog: upperItems,
+          notice: UPPER_NOTICE,
+        }),
+      )
+    }
+    if (path === '/member-full/upper-reports' && method === 'POST') {
+      const item = upperItems.find((entry) => entry.item === body.item)
+      assert.ok(item, '报送事项必须在目录内')
+      const target = body.profile_id === data.profile.id ? data.profile : transferMember
+      assert.ok(
+        upperStageRank(target.current_stage) >= upperStageRank(item.stage),
+        '阶段未到该环节不能报送',
+      )
+      const row = {
+        id: `upper-${data.upperReports.length}`,
+        item: body.item,
+        kind: item.kind,
+        profile_id: body.profile_id,
+        member_name: target.name,
+        stage: target.current_stage,
+        org_unit_id: org.id,
+        org_name: org.name,
+        upper_org: body.upper_org,
+        letter_no: body.letter_no || '',
+        submitted_on: body.submitted_on,
+        materials: item.materials,
+        status: 'submitted',
+        result: '',
+        decided_on: null,
+        reply_no: '',
+        decide_note: '',
+        note: body.note || '',
+        revoked_on: null,
+        revoke_reason: '',
+        revision: 1,
+        created_at: `${body.submitted_on}T09:00:00`,
+        history: [],
+      }
+      row.history.push({
+        revision: 1,
+        action: 'submit',
+        actor_id: 'viewer-a',
+        reason: body.reason,
+        created_at: row.created_at,
+      })
+      data.upperReports.push(row)
+      return route.fulfill(
+        ok({
+          ...upperReportView(row, today),
+          notice:
+            '已登记报送：本记录只表示材料已报出，党员阶段不受影响；收到上级批复后在台账回填批复结果',
+        }),
+      )
+    }
+    if (path.startsWith('/member-full/upper-reports/')) {
+      const parts = path.split('/')
+      const row = data.upperReports.find((entry) => entry.id === parts[3])
+      assert.ok(row, '报送记录必须存在')
+      if (parts[4] === 'settle') {
+        assert.equal(row.status, 'submitted', '只有待批复的报送可以回填')
+        if (body.result !== 'supplement') assert.ok(body.reply_no, '同意 / 不同意必须有批复文号')
+        if (body.result === 'supplement') assert.ok(body.decide_note, '需补充材料必须写清缺什么')
+        row.status = 'settled'
+        row.result = body.result
+        row.decided_on = body.decided_on || today
+        row.reply_no = body.reply_no || ''
+        row.decide_note = body.decide_note || ''
+        row.revision += 1
+        row.history.push({
+          revision: row.revision,
+          action: 'settle',
+          actor_id: 'viewer-a',
+          reason: body.reason,
+          created_at: `${today}T10:00:00`,
+        })
+        const notice =
+          body.result === 'agreed'
+            ? '已回填批复「同意 / 批准」。党员阶段不会自动变化：请按程序由授权人员在阶段流转中人工办理，并把批复件归入档案'
+            : body.result === 'rejected'
+              ? '已回填批复「不同意」。系统不自动回退阶段、不自动移出名册；请按上级结论与有关规定研究后续处理并人工办理阶段调整'
+              : '已回填「需补充材料」：补齐后重新报送，本次报送记录保留可查'
+        return route.fulfill(ok({ ...upperReportView(row, today), notice }))
+      }
+      if (parts[4] === 'revoke') {
+        assert.notEqual(row.status, 'revoked', '已作废的报送不能重复作废')
+        row.status = 'revoked'
+        row.revoked_on = today
+        row.revoke_reason = body.reason
+        row.revision += 1
+        row.history.push({
+          revision: row.revision,
+          action: 'revoke',
+          actor_id: 'viewer-a',
+          reason: body.reason,
+          created_at: `${today}T11:00:00`,
+        })
+        return route.fulfill(
+          ok({
+            ...upperReportView(row, today),
+            notice: '已作废：该次报送视同未发生，需重新报送时按新记录登记；原记录保留可查',
+          }),
+        )
+      }
+      if (method === 'GET') {
+        return route.fulfill(
+          ok({ ...upperReportView(row, today), history: row.history, notice: UPPER_NOTICE }),
         )
       }
     }
@@ -1519,6 +1790,107 @@ try {
     assert.equal(state.transfers.at(-1).status, 'revoked')
     await visible(page, '当前筛选下没有接转记录')
     checks.push('接转可作废：视同未发生但记录保留')
+
+    // ---------------------------- 上级审批 / 备案（T-MEM-11） ----------------------------
+    await tab(page, '上级审批备案')
+    await visible(page, '系统不代替上级党组织审批')
+    await visible(page, '备案类时限按上级党委规定')
+    const reportDialog = page.getByRole('dialog').filter({ has: page.getByLabel('上级组织名称（受理备案 / 审批的党委、工委）') })
+    const settleUpDialog = page.getByRole('dialog').filter({ has: page.getByLabel('批复文号（同意 / 不同意必填）') })
+    const revokeUpDialog = page.getByRole('dialog').filter({ has: page.getByLabel('作废理由') })
+    await click(page, '登记报送')
+    await reportDialog.getByLabel('报送事项').selectOption('probationary_approval')
+    // 依据条文与随报材料清单由后端目录给出：界面不自己编条文
+    await visible(page, '第二十一条')
+    await visible(page, '中国共产党入党志愿书')
+    // 阶段未到该环节的党员不能报送：候选里不能出现"陈见微"（入党积极分子）
+    const candidateSelect = reportDialog.getByLabel('报送党员（阶段已到该事项环节）')
+    await candidateSelect.locator('option', { hasText: '林舟' }).waitFor({ state: 'attached' })
+    assert.equal(await candidateSelect.locator('option', { hasText: '陈见微' }).count(), 0)
+    await candidateSelect.selectOption(transferMember.id)
+    await reportDialog.getByLabel('上级组织名称（受理备案 / 审批的党委、工委）').fill('合成院系党委')
+    await reportDialog.getByLabel('报送日期').fill(today)
+    await reportDialog.getByLabel('办理依据 / 说明').fill('支部大会讨论通过，报上级党委审批')
+    await click(page, '登记为已报送待批复')
+    await visible(page, '已登记报送')
+    await visible(page, '已报送待批复')
+    assert.equal(state.upperReports[0].status, 'submitted')
+    checks.push('登记报送只表示材料已报出，依据与随报材料清单由后端单源给出')
+
+    // 没有批复文号的"同意"不是批复：界面直接不允许提交
+    await click(page, '回填批复')
+    await settleUpDialog.getByLabel('批复文号（同意 / 不同意必填）').fill('')
+    assert.equal(
+      await settleUpDialog.getByRole('button', { name: '回填「同意 / 批准」', exact: true }).isDisabled(),
+      true,
+    )
+    await settleUpDialog.getByLabel('批复文号（同意 / 不同意必填）').fill('合成党组〔2026〕15号')
+    await settleUpDialog.getByLabel('批复日期').fill(today)
+    await settleUpDialog.getByLabel('办理依据 / 说明').fill('收到院系党委批复原件')
+    await settleUpDialog.getByRole('button', { name: '回填「同意 / 批准」', exact: true }).click()
+    await visible(page, '不会自动变化')
+    assert.equal(state.upperReports[0].status, 'settled')
+    assert.equal(state.upperReports[0].result, 'agreed')
+    checks.push('回填批复必须填文号，且回填批复不改动党员阶段')
+
+    // 审批类超过时限只提示向上级核实进度，不判定审批失效
+    await click(page, '登记报送')
+    await reportDialog.getByLabel('报送事项').selectOption('member_approval')
+    await reportDialog.getByLabel('报送党员（阶段已到该事项环节）').selectOption(transferMember.id)
+    await reportDialog.getByLabel('上级组织名称（受理备案 / 审批的党委、工委）').fill('合成院系党委')
+    await reportDialog.getByLabel('报送日期').fill(addDays(today, -200))
+    await reportDialog.getByLabel('办理依据 / 说明').fill('预备期满，报上级党委审批转正')
+    await click(page, '登记为已报送待批复')
+    await visible(page, '需向上级核实审批进度')
+    await visible(page, '不判定审批失效')
+    await page.getByRole('checkbox', { name: '只看已超过审批时限' }).check()
+    await visible(page, `已超过审批时限 ${200 - upperApprovalDays} 天`)
+    checks.push('审批类超期只提示向上级核实，不判定审批失效、也不改动阶段')
+
+    await click(page, '作废')
+    await revokeUpDialog.getByLabel('作废理由').fill('报送事项选错，重新登记')
+    await click(page, '确认作废')
+    await visible(page, '视同未发生')
+    assert.equal(state.upperReports.at(-1).status, 'revoked')
+    checks.push('报送记录可作废：视同未发生但记录保留可查')
+
+    await page.getByRole('checkbox', { name: '只看已超过审批时限' }).uncheck()
+    await visible(page, '已回填批复')
+
+    // 备案类细则未统一规定时限：如实写"按上级党委规定"，不编期限、也不显示倒计时
+    await click(page, '登记报送')
+    await reportDialog.getByLabel('报送事项').selectOption('activist_record')
+    // 阶段已到即可报送：入党积极分子本人也能报"确定入党积极分子"的备案
+    await candidateSelect.locator('option', { hasText: '陈见微' }).waitFor({ state: 'attached' })
+    await candidateSelect.selectOption(state.profile.id)
+    await reportDialog.getByLabel('上级组织名称（受理备案 / 审批的党委、工委）').fill('合成院系党委')
+    await reportDialog.getByLabel('报送日期').fill(today)
+    await reportDialog.getByLabel('办理依据 / 说明').fill('支委会研究确定入党积极分子，报上级党委备案')
+    await click(page, '登记为已报送待批复')
+    await visible(page, '已登记报送')
+    assert.equal(state.upperReports.at(-1).kind, 'record')
+    assert.equal(state.upperReports.at(-1).status, 'submitted')
+    const recordRow = page.locator('tr', { hasText: '确定入党积极分子（报上级党委备案）' })
+    await recordRow.getByText('按上级党委规定', { exact: true }).waitFor()
+    assert.equal(await recordRow.getByText('剩余', { exact: false }).count(), 0)
+    checks.push('备案类可报送且不显示审批倒计时，时限按上级党委规定而不是编一个期限')
+
+    // 临近审批时限要提前提示：不能等超期了才第一次提醒（配置的提前天数是真起作用的）
+    await click(page, '登记报送')
+    await reportDialog.getByLabel('报送事项').selectOption('member_approval')
+    await candidateSelect.selectOption(transferMember.id)
+    await reportDialog.getByLabel('上级组织名称（受理备案 / 审批的党委、工委）').fill('合成院系党委')
+    await reportDialog.getByLabel('报送日期').fill(addDays(today, -80))
+    await reportDialog.getByLabel('办理依据 / 说明').fill('预备期满，报上级党委审批转正')
+    await click(page, '登记为已报送待批复')
+    await visible(page, `剩余 ${upperApprovalDays - 80} 天，临近审批时限`)
+    checks.push('临近审批时限提前提示，不等到超期才第一次提醒')
+
+    await click(page, '导出台账')
+    await visible(page, '不含材料原件与政治审查材料内容')
+    assert.equal(state.exported, true)
+    await screenshot(page, 'members-upper-reports')
+    checks.push('导出台账只含报送要素与材料清单，不含材料原件与政审材料内容')
 
     await page.goto(`${BASE}/meeting`, { waitUntil: 'networkidle' })
     await click(page, '登记活动计划')

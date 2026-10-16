@@ -35,6 +35,7 @@ from app.models.member import (  # noqa: F401
     MemberReview,
     MemberStageHistory,
     MemberTransfer,
+    MemberUpperReport,
     MemberVote,
 )
 from app.models.org import OrgUnit  # noqa: F401
