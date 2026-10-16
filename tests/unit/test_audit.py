@@ -1,9 +1,15 @@
 """审计模块单元测试（统一接口 + 只追加约束）"""
+from datetime import datetime
+
 import pytest
 
 from app.core.audit import (
+    ANONYMOUS_TENANT,
+    AUDIT_VIEW_KEYS,
     AuditError,
+    AuditQuery,
     _prevent_audit_mutation,
+    audit_view,
     make_audit_log,
     query_audit_logs,
 )
@@ -95,3 +101,52 @@ class TestQueryBuilder:
         assert "audit_logs" in sql
         assert "tenant_id" in sql
         assert "action" in sql
+
+
+class TestAuditQuery:
+    def test_statement_carries_all_filters(self):
+        query = AuditQuery(
+            tenant_id="t1",
+            user_id="u1",
+            action="export",
+            resource_type="audit_log",
+            resource_id="a1",
+            data_level="sensitive",
+            result="success",
+        )
+        sql = str(query.statement())
+        for fragment in ("audit_logs", "tenant_id", "user_id", "action", "resource_type", "data_level", "result"):
+            assert fragment in sql
+
+    def test_count_statement_drops_ordering(self):
+        sql = str(AuditQuery(tenant_id="t1").count_statement()).lower()
+        assert "count" in sql
+        assert "order by" not in sql
+
+    def test_scope_note_lists_every_filter_in_beijing_time(self):
+        query = AuditQuery(
+            tenant_id="t1",
+            action="export",
+            data_level="sensitive",
+            start_at=datetime(2026, 10, 16, 2, 30),
+            end_at=datetime(2026, 10, 16, 3, 0),
+        )
+        note = query.scope_note()
+        assert "租户 t1" in note
+        assert "动作 export" in note
+        assert "数据级别 sensitive" in note
+        assert "起 2026-10-16 10:30" in note
+        assert "止 2026-10-16 11:00" in note
+
+    def test_anonymous_scope_note_avoids_tenant_wording(self):
+        note = AuditQuery(tenant_id=ANONYMOUS_TENANT).scope_note()
+        assert "匿名" in note
+        assert "租户 unauthenticated" not in note
+
+    def test_audit_view_exposes_iso_created_at(self):
+        log = _valid_log()
+        log.created_at = datetime(2026, 10, 16, 2, 30)
+        view = audit_view(log)
+        assert view["created_at"] == "2026-10-16T02:30:00"
+        assert set(view) == set(AUDIT_VIEW_KEYS) | {"created_at"}
+        assert view["action"] == "create"

@@ -11,14 +11,13 @@
 from __future__ import annotations
 
 import io
-from datetime import datetime
 from typing import Any, Iterable
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from app.services.qa_record_service import BEIJING, local_time
+from app.core.timeutil import local_now_text, local_time
 
 RECORD_SHEET = "问答记录"
 GUIDE_SHEET = "导出说明"
@@ -85,7 +84,7 @@ def build_qa_records(rows: Iterable[Any], *, scope_note: str = "", exported_by: 
     guide.column_dimensions["A"].width = 100
     lines = [
         "导出说明",
-        f"导出时间：{datetime.now(BEIJING).strftime('%Y-%m-%d %H:%M')}（北京时间）",
+        f"导出时间：{local_now_text()}（北京时间）",
         f"导出人：{exported_by or '未记录'}",
         f"导出条数：{len(items)}",
         f"筛选口径：{scope_note or '全部未删除的问答记录'}",

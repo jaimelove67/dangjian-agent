@@ -17,12 +17,12 @@ from app.services.qa_record_io import (
     build_qa_records,
     level_label,
 )
+from app.core.timeutil import local_time
 from app.services.qa_record_service import (
     UNKNOWN_ASKER,
     QaRecordFilters,
     QaRecordRow,
     build_qa_record_query,
-    local_time,
 )
 
 

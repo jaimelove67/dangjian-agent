@@ -14,12 +14,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timeutil import local_time
 from app.models.qa_session import QASession
 from app.models.user import User
 
@@ -27,17 +28,8 @@ from app.models.user import User
 MAX_EXPORT_ROWS = 5000
 #: 账号已注销或姓名缺失时的提问人显示，避免治理页出现空白单元格
 UNKNOWN_ASKER = "已注销账号"
-#: 展示用固定偏移（北京时间）
-BEIJING = timezone(timedelta(hours=8))
 
 _DELETED_LABELS = {True: "含本人已删除的记录", False: "不含本人已删除的记录"}
-
-
-def local_time(value: Optional[datetime]) -> str:
-    """UTC 朴素时间 → 北京时间文本（导出与筛选说明共用，避免两处口径不一）"""
-    if value is None:
-        return ""
-    return value.replace(tzinfo=timezone.utc).astimezone(BEIJING).strftime("%Y-%m-%d %H:%M")
 
 
 @dataclass(frozen=True)

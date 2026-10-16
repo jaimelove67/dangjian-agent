@@ -13,16 +13,18 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from sqlalchemy import Select, event, select
+from sqlalchemy import Select, event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.constants import AuditAction, AuditResult, DataLevel
 from app.core.redaction import redact
+from app.core.timeutil import local_time
 from app.models.audit import AuditLog
 
 logger = logging.getLogger(__name__)
@@ -178,6 +180,95 @@ def query_audit_logs(
     if end_at is not None:
         stmt = stmt.where(AuditLog.created_at <= end_at.replace(tzinfo=None))
     return stmt.order_by(AuditLog.created_at.desc())
+
+
+#: 对外输出的审计字段：列表与导出共用一份，避免两处各挑一遍字段而渐渐不一致
+AUDIT_VIEW_KEYS: tuple[str, ...] = (
+    "id",
+    "user_id",
+    "user_name",
+    "action",
+    "resource_type",
+    "resource_id",
+    "data_level",
+    "request_id",
+    "result",
+    "ip_address",
+    "old_value",
+    "new_value",
+)
+
+#: 未登录 / 匿名事件所在的分区租户
+ANONYMOUS_TENANT = "unauthenticated"
+
+
+def audit_view(row: AuditLog) -> dict[str, Any]:
+    """审计行的对外视图（``created_at`` 统一 ISO 文本），列表与导出都走这里"""
+    view: dict[str, Any] = {key: getattr(row, key) for key in AUDIT_VIEW_KEYS}
+    view["created_at"] = row.created_at.isoformat()
+    return view
+
+
+@dataclass(frozen=True)
+class AuditQuery:
+    """审计查询条件（租户边界与时间口径已由接口层解析）
+
+    ``tenant_id`` 必填且由调用方传：查询构造器不做权限判断，只按条件构造语句。
+    """
+
+    tenant_id: str
+    user_id: Optional[str] = None
+    action: Optional[str] = None
+    resource_type: Optional[str] = None
+    resource_id: Optional[str] = None
+    data_level: Optional[str] = None
+    result: Optional[str] = None
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+
+    def statement(self) -> Select:
+        """按本条件构造查询（只构造，不执行）"""
+        return query_audit_logs(
+            tenant_id=self.tenant_id,
+            user_id=self.user_id,
+            action=self.action,
+            resource_type=self.resource_type,
+            resource_id=self.resource_id,
+            data_level=self.data_level,
+            result=self.result,
+            start_at=self.start_at,
+            end_at=self.end_at,
+        )
+
+    def count_statement(self) -> Select:
+        """同一条件的计数语句（分页与导出上限判定共用，避免两套条件走偏）"""
+        return self.statement().with_only_columns(func.count()).select_from(AuditLog).order_by(None)
+
+    def scope_note(self) -> str:
+        """把筛选口径写成一句话：导出文件要能自证"按什么条件导出的"。
+
+        时间按北京时间写：使用者是在导出说明里读这句话的，不是对照 UTC 换算。
+        """
+        parts = [
+            "未登录 / 匿名事件" if self.tenant_id == ANONYMOUS_TENANT else f"租户 {self.tenant_id}"
+        ]
+        if self.user_id:
+            parts.append(f"仅用户 {self.user_id}")
+        if self.action:
+            parts.append(f"动作 {self.action}")
+        if self.resource_type:
+            parts.append(f"对象类型 {self.resource_type}")
+        if self.resource_id:
+            parts.append(f"对象编号 {self.resource_id}")
+        if self.data_level:
+            parts.append(f"数据级别 {self.data_level}")
+        if self.result:
+            parts.append(f"结果 {self.result}")
+        if self.start_at:
+            parts.append("起 " + local_time(self.start_at))
+        if self.end_at:
+            parts.append("止 " + local_time(self.end_at))
+        return "；".join(parts)
 
 
 # ==================== 只追加约束 ====================

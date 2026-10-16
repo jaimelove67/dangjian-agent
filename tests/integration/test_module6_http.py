@@ -5,6 +5,7 @@ import io
 import json
 import os
 import uuid
+import zipfile
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -15,6 +16,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 
 from app.api.v1.health import _readiness_details
+from app.core.audit import make_audit_log
 from app.core.cache import redis_manager
 from app.core.config import settings
 from app.core.constants import XLSX_MEDIA_TYPE
@@ -32,6 +34,7 @@ from app.models.study import StudyPlan, StudyPlanItem
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.services import job_service
+from app.services.audit_export import CSV_NAME, GUIDE_NAME, MANIFEST_NAME
 from app.services.member_service import _load_scoring_rules
 from app.services.qa_record_io import HEADERS, RECORD_SHEET
 from tests.integration import test_module6_governance as fixtures
@@ -805,6 +808,164 @@ async def test_qa_record_export_carries_its_scope_and_writes_audit(http_case, mo
     # 超过上限：提示分批导出，而不是生成一份打不开的大文件
     monkeypatch.setattr("app.api.v1.qa.MAX_EXPORT_ROWS", 1)
     oversized = await c["http"].get("/api/v1/qa/records/export", headers=authorization(c["admin"]))
+    assert oversized.status_code == 413, oversized.text
+    assert "分批导出" in oversized.json()["message"]
+
+
+async def seed_audit_logs(case):
+    """造审计记录：本租户 3 条（含 1 条拒绝）+ 另一租户 1 条同动作记录，用于验证跨租户边界。"""
+    rows = (
+        ("create", "user", "success", None, datetime(2026, 3, 1, 1, 0), case["school"].id),
+        ("delete", "member", "denied", "权限或业务校验未通过", datetime(2026, 3, 1, 2, 0), case["school"].id),
+        ("update", "member", "success", None, datetime(2026, 3, 1, 3, 0), case["school"].id),
+        ("delete", "member", "success", None, datetime(2026, 3, 2, 2, 0), case["other_school"].id),
+    )
+    async with case["maker"]() as db:
+        with bypass_tenant_filter():
+            for action, resource_type, result, error, created_at, tenant_id in rows:
+                row = make_audit_log(
+                    tenant_id=str(tenant_id),
+                    user_id=str(case["admin"].id),
+                    user_name="合成审计对象",
+                    action=action,
+                    resource_type=resource_type,
+                    resource_id="合成对象",
+                    request_id=uuid.uuid4().hex,
+                    result=result,
+                    data_level="sensitive",
+                    ip_address="10.1.2.3",
+                    new_value={"note": "合成审计"},
+                    error_message=error,
+                )
+                row.created_at = created_at
+                db.add(row)
+            await db.commit()
+
+
+async def test_audit_query_filters_and_cross_tenant_scope(http_case):
+    """T-SYS-05E：审计高级检索按动作 / 级别 / 时间可核对，跨租户仅平台管理员。"""
+    c = http_case
+    await seed_audit_logs(c)
+    page = await call(c, c["admin"], "GET", "/admin/audit-logs", params={"action": "delete"})
+    assert page["total"] == 1
+    assert page["items"][0]["resource_type"] == "member"
+    assert page["items"][0]["result"] == "denied"
+    assert page["items"][0]["user_name"] == "合成审计对象"
+    assert page["scope_note"] == "租户 " + c["school"].id + "；动作 delete"
+    # 数据级别筛选与动作叠加：中间件写的请求级审计不会伪装成我们的合成记录
+    assert (
+        await call(
+            c,
+            c["admin"],
+            "GET",
+            "/admin/audit-logs",
+            params={"action": "delete", "data_level": "sensitive"},
+        )
+    )["total"] == 1
+    assert (
+        await call(
+            c,
+            c["admin"],
+            "GET",
+            "/admin/audit-logs",
+            params={"action": "delete", "data_level": "public"},
+        )
+    )["total"] == 0
+    # 时间按北京时间传入：02:00 UTC 的记录用 09:00+08:00 起查命中，11:00+08:00 起查落空
+    assert (
+        await call(
+            c,
+            c["admin"],
+            "GET",
+            "/admin/audit-logs",
+            params={"action": "delete", "start_at": "2026-03-01T09:00:00+08:00"},
+        )
+    )["total"] == 1
+    assert (
+        await call(
+            c,
+            c["admin"],
+            "GET",
+            "/admin/audit-logs",
+            params={"action": "delete", "start_at": "2026-03-01T11:00:00+08:00"},
+        )
+    )["total"] == 0
+    await call(
+        c,
+        c["admin"],
+        "GET",
+        "/admin/audit-logs",
+        params={"start_at": "2026-03-02T00:00:00+08:00", "end_at": "2026-03-01T00:00:00+08:00"},
+        status=422,
+    )
+    # 跨租户检索只有真实平台管理员可用；外校管理员只看得到自己租户的记录
+    await call(
+        c,
+        c["admin"],
+        "GET",
+        "/admin/audit-logs",
+        params={"tenant_id": c["other_school"].id},
+        status=403,
+    )
+    foreign = await call(c, c["other_admin"], "GET", "/admin/audit-logs", params={"action": "delete"})
+    assert foreign["total"] == 1
+    assert foreign["items"][0]["request_id"] != page["items"][0]["request_id"]
+
+
+async def test_audit_export_package_is_self_documenting_and_capped(http_case, monkeypatch):
+    """T-SYS-05E / T-NFR-08：台账导出必须自证筛选口径、留审计、超限给可执行提示。"""
+    c = http_case
+    await seed_audit_logs(c)
+    denied = await c["http"].get(
+        "/api/v1/admin/audit-logs/export", headers=authorization(c["author"])
+    )
+    assert denied.status_code == 403
+    response = await c["http"].get(
+        "/api/v1/admin/audit-logs/export",
+        params={"action": "delete"},
+        headers=authorization(c["admin"]),
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("application/zip")
+    assert "audit-logs.zip" in response.headers["content-disposition"]
+    assert response.headers["cache-control"] == "no-store"
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert set(archive.namelist()) == {CSV_NAME, GUIDE_NAME, MANIFEST_NAME}
+        manifest = json.loads(archive.read(MANIFEST_NAME).decode("utf-8"))
+        csv_text = archive.read(CSV_NAME).decode("utf-8-sig")
+        guide = archive.read(GUIDE_NAME).decode("utf-8")
+    assert manifest["导出条数"] == 1
+    assert manifest["导出人"] == "测试审核人（" + c["admin"].username + "）"
+    assert manifest["筛选口径"] == "租户 " + c["school"].id + "；动作 delete"
+    assert "2026-03-01 10:00" in csv_text  # 02:00 UTC → 10:00 北京时间
+    assert "member" in csv_text and "权限或业务校验未通过" in csv_text
+    assert "导出条数：1" in guide
+    # 导出动作本身必须留痕：谁在什么时候按什么口径导了什么
+    async with c["maker"]() as db:
+        with bypass_tenant_filter():
+            logs = (
+                (
+                    await db.execute(
+                        select(AuditLog).where(
+                            AuditLog.action == "export", AuditLog.resource_type == "audit_log"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+    assert len(logs) == 1
+    assert logs[0].tenant_id == c["school"].id and logs[0].user_id == c["admin"].id
+    assert logs[0].data_level == "sensitive"
+    # 审计摘要口径：业务内容只留摘要（sha256 + 字节数），可核对但不可反查
+    assert logs[0].new_value["bytes"] > 0 and logs[0].new_value["sha256"]
+    # 超过上限：提示分批导出，而不是生成一份打不开的大文件
+    monkeypatch.setattr("app.api.v1.admin.MAX_EXPORT_ROWS", 1)
+    oversized = await c["http"].get(
+        "/api/v1/admin/audit-logs/export",
+        params={"resource_type": "member"},
+        headers=authorization(c["admin"]),
+    )
     assert oversized.status_code == 413, oversized.text
     assert "分批导出" in oversized.json()["message"]
 

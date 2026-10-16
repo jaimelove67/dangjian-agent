@@ -30,7 +30,9 @@ const form = reactive({name: '', username: '', password: '', role: 'member' as U
   year: new Date().getFullYear(), round: 1, opinion: '', decision: 'approved', kind: 'member_reminders',
   document_ids: '', dedup_key: '', evidence: '', enabled: false, tenant_type: 'school'})
 const configReason = ref(''), allowedHosts = ref(''), localHosts = ref('')
-const auditFilters = reactive({user_id: '', resource_id: '', action: '', result: '', start_at: '', end_at: ''})
+const auditFilters = reactive({user_id: '', resource_id: '', action: '', resource_type: '',
+  data_level: '', result: '', tenant_id: '', start_at: '', end_at: ''})
+const auditScope = ref('')
 // 问答记录集中查看（T-SYS-06）：本人档案口径之外，学校级按提问人/级别/结果/依据筛选并可导出
 const records = ref<QARecord[]>([]), recordPage = ref(1), recordTotal = ref(0), recordScope = ref('')
 const recordFilters = reactive({user_id: '', keyword: '', data_level: '', result: '', evidence: '', start_at: '', end_at: '', include_deleted: false})
@@ -158,6 +160,31 @@ function resetRecordFilters(): void {
   recordPage.value = 1
   void loadTab()
 }
+/** 审计查询与导出同样共用一个参数源：导出的必须是"当前看到的那一批" */
+function auditParams(): Record<string, string | number> {
+  const params: Record<string, string | number> = {}
+  for (const [key, value] of Object.entries(auditFilters)) {
+    if (key === 'start_at' || key === 'end_at') continue
+    if (value) params[key] = value
+  }
+  if (auditFilters.start_at) params.start_at = beijingIso(auditFilters.start_at)
+  if (auditFilters.end_at) params.end_at = beijingIso(auditFilters.end_at)
+  return params
+}
+function resetAuditFilters(): void {
+  Object.assign(auditFilters, {user_id:'', resource_id:'', action:'', resource_type:'',
+    data_level:'', result:'', tenant_id:'', start_at:'', end_at:''})
+  auditPage.value = 1
+  void loadTab()
+}
+async function exportAudit(): Promise<void> {
+  if (busy.value) return
+  busy.value = true; error.value = ''; notice.value = ''
+  try {
+    downloadBlob(await api.exportAudit(auditParams()), '审计日志-' + todayISO() + '.zip')
+    notice.value = '已导出当前筛选范围（' + (auditScope.value || '未筛选') + '）的审计对账包，导出动作已写入审计。'
+  } catch (err) { fail(err) } finally { busy.value = false }
+}
 async function loadRecords(): Promise<void> {
   const page = await qaApi.listQaRecords({...recordParams(), page: recordPage.value})
   records.value = page.items; recordTotal.value = page.total; recordScope.value = page.scope_note
@@ -187,10 +214,10 @@ async function loadTab(): Promise<void> {
       localHosts.value = loaded.values.model_policy.local_hosts.join('\n')
     }
     if (tab.value === 'operations') {
-      const params: Record<string, string|number> = {page:auditPage.value}
-      for (const [key,value] of Object.entries(auditFilters)) if (value) params[key] = value
+      const params = {...auditParams(), page: auditPage.value}
       const [stats, audit] = await Promise.all([api.getOperations(), api.listAudit(params), loadNotifications()])
       operations.value = stats; logs.value = audit.items; auditTotal.value = audit.total
+      auditScope.value = audit.scope_note ?? ''
     }
   } catch (err) { fail(err) } finally { loading.value = false }
 }
@@ -389,11 +416,16 @@ function formatDate(value: string | null): string {
         <p v-for="row in operations.model_usage" :key="row.type+row.result">{{ row.type }} · {{ statusText[row.result] }} {{ row.calls }} 次 · 平均 {{ row.mean_seconds.toFixed(2) }} 秒</p>
         <p v-for="row in operations.alerts" :key="row.action+row.result" class="wb-error">异常活动：{{ row.action }} / {{ statusText[row.result] }} {{ row.count }} 次，可按下方动作筛选追查。</p>
       </section>
-        <form class="wb-section wb-stack" @submit.prevent="auditPage=1; loadTab()"><h2>审计查询</h2><div class="wb-grid">
+        <form class="wb-section wb-stack" @submit.prevent="auditPage=1; loadTab()"><h2>审计查询</h2>
+          <p class="wb-note">按动作 / 对象 / 级别 / 结果 / 时间查看本租户审计记录；跨租户检索仅平台系统管理员，填租户编号即可。导出为对账包：台账 CSV + 导出说明（口径 / 条数 / 导出人 / 时区），导出的就是下方这批记录，导出动作同样写入审计。</p>
+          <div class="wb-grid">
           <label class="wb-field"><span>用户编号</span><input class="input" v-model="auditFilters.user_id" /></label><label class="wb-field"><span>对象编号</span><input class="input" v-model="auditFilters.resource_id" /></label>
-          <label class="wb-field"><span>动作</span><input class="input" v-model="auditFilters.action" placeholder="query、update、export…" /></label><label class="wb-field"><span>结果</span><select class="select" v-model="auditFilters.result"><option value="">全部结果</option><option value="success">成功</option><option value="denied">拒绝</option><option value="failed">失败</option></select></label>
-          <label class="wb-field"><span>开始时间（UTC）</span><input class="input" v-model="auditFilters.start_at" type="datetime-local" /></label><label class="wb-field"><span>结束时间（UTC）</span><input class="input" v-model="auditFilters.end_at" type="datetime-local" /></label>
-        </div><div><button class="btn btn--primary" type="submit">查询审计记录</button></div></form>
+          <label class="wb-field"><span>动作</span><input class="input" v-model="auditFilters.action" placeholder="query、update、export…" /></label><label class="wb-field"><span>对象类型</span><input class="input" v-model="auditFilters.resource_type" placeholder="user、member、knowledge_doc…" /></label>
+          <label class="wb-field"><span>数据级别</span><select class="select" v-model="auditFilters.data_level"><option value="">全部级别</option><option value="public">公开</option><option value="internal">内部</option><option value="sensitive">敏感</option><option value="classified">涉密</option></select></label><label class="wb-field"><span>结果</span><select class="select" v-model="auditFilters.result"><option value="">全部结果</option><option value="success">成功</option><option value="denied">拒绝</option><option value="failed">失败</option></select></label>
+          <label v-if="isPlatformAdmin" class="wb-field"><span>租户编号（跨租户）</span><input class="input" v-model="auditFilters.tenant_id" placeholder="留空查本租户" /></label>
+          <label class="wb-field"><span>开始时间（北京时间）</span><input class="input" v-model="auditFilters.start_at" type="datetime-local" /></label><label class="wb-field"><span>结束时间（北京时间）</span><input class="input" v-model="auditFilters.end_at" type="datetime-local" /></label>
+        </div><div class="wb-actions"><button class="btn btn--primary" type="submit">查询审计记录</button><button class="btn btn--quiet" type="button" @click="resetAuditFilters">清空条件</button><button class="btn btn--quiet" type="button" :disabled="busy || !logs.length" @click="exportAudit">{{ busy ? '导出中…' : '导出当前筛选（对账包）' }}</button></div></form>
+        <p v-if="auditScope" class="wb-note">当前口径：{{ auditScope }}。页面与导出用同一批条件；台账按北京时间正序排列，便于按时间轴对账。</p>
         <div v-if="logs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>用户编号</th><th>动作 / 对象</th><th>结果</th><th>请求编号</th></tr></thead><tbody>
           <tr v-for="row in logs" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td class="governance__id">{{ row.user_id }}</td><td>{{ row.action }} / {{ row.resource_type }}<small>{{ row.resource_id }}</small></td><td>{{ statusText[row.result] ?? row.result }}</td><td class="governance__id">{{ row.request_id }}</td></tr></tbody></table></div>
         <p v-else class="wb-empty">没有符合条件的审计记录。</p><div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="auditPage===1" @click="auditPage--; loadTab()">上一页</button><span>第 {{ auditPage }} 页 · 共 {{ auditTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="auditPage*40>=auditTotal" @click="auditPage++; loadTab()">下一页</button></div>

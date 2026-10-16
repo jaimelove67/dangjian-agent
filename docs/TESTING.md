@@ -191,6 +191,20 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 
 未覆盖：企业微信/邮件等外部渠道尚无实现与凭据，未做真实外发验收，也未做多副本投递协调。
 
+## 审计高级检索与对账包导出回归
+
+2026-10-16，`GET /admin/audit-logs` 补数据级别与跨租户筛选，新增 `GET /admin/audit-logs/export`（对账包：台账 CSV + 导出说明 + manifest），并把审计查询条件收口为 `app/core/audit.py::AuditQuery`（列表与导出共用同一份条件与字段清单）。
+
+- `tests/unit/test_audit.py`：15 项通过（原有 10 项 + 新增 `TestAuditQuery` 5 项：条件齐全、计数语句无排序、口径话术含北京时间与匿名口径、`audit_view` 字段与 ISO 时间）。
+- `tests/unit/test_audit_export.py`：9 项通过。台账列值与北京时间换算、JSON 与空值回落、说明含导出人 / 条数 / 筛选口径、zip 三件套、公式注入防护、空结果仍是可打开的文件。
+- `tests/integration/test_module6_http.py`：新增 2 项通过（一次性 PostgreSQL 库 + `alembic upgrade head`）。覆盖动作筛选与数据级别叠加、时间窗（北京时间 `+08:00` 入参）、跨租户 `tenant_id` 403 与外校管理员只见本租户、导出内容与口径说明、导出动作审计留痕（摘要口径 sha256 + 字节数）、超限 413 话术。
+- 与 `tests/unit/test_qa_records.py`、`tests/integration/test_selected_business_features.py`、`tests/security/test_permission.py` 一并执行：全部通过。
+- `node frontend/scripts/check-roles-ui.mjs`（7 个角色）通过：具备 `ops.query` 的角色在「运行审计」能看到对象类型 / 数据级别 / 北京时间筛选、导出当前筛选入口与「当前口径」说明，跨租户「租户编号」只对平台系统管理员出现；不具备的角色连标签都不出现。
+- 导出失败提示（新增）：`frontend/src/api/http.ts` 对 `responseType: 'blob'` 的错误体按内容类型解回 JSON，否则后端为导出准备的可执行提示会退化成「请求失败（HTTP 413）」。真机点"导出当前筛选"（当前 7599 条 > 上限 5000）确认界面显示完整提示与请求编号。
+- 开发库端到端手工核对：`GET /api/v1/admin/audit-logs/export?action=query` 返回可打开的 zip（台账 1684 行、manifest 写明导出人 / 条数 / 筛选口径 / 排序，行时间为北京时间并按正序），`branch-secretary` 访问审计查询为 403。
+
+未覆盖：导出件无数字签名与水印（复制件的二次传播不可控）；审计表只留操作摘要（`old_value` / `new_value` 为 sha256 与字节数），导出不含被操作对象原文；未做 5000 条以上大表的性能验收（超限直接 413 并提示分批）。
+
 ## 本地扩展证据与主分支区分
 
 文档分支所引用的 `admin-workspace-isolated.xml`（179项、0失败/错误/跳过）与 `admin-workspace-backend.xml`（205项、30项准备错误）属于未合入的本地管理员工作台扩展，不能套用到本次主分支合并结果；各范围有重复用例，不累加为通过总数。原先开户43项及相关91项记录保留其原始范围。

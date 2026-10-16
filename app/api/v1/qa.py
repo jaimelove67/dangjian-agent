@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -19,6 +19,7 @@ from app.core.cache import CacheService, redis_manager
 from app.core.config import settings, tenant_config
 from app.core.constants import XLSX_MEDIA_TYPE
 from app.core.security import Permission
+from app.core.timeutil import as_utc_naive
 from app.db.session import get_db
 from app.deps import get_current_tenant, require_permissions
 from app.llm.base import DataLevel
@@ -205,13 +206,6 @@ def _session_store(user: User) -> SessionStore:
     )
 
 
-def _as_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
-    """与审计查询同口径：带时区的输入换算成 UTC 朴素时间，避免边界比较错位"""
-    if value is None:
-        return None
-    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
-
-
 async def _qa_record_filters(
     user_id: Optional[str] = Query(None, max_length=36, description="按提问人编号筛选"),
     keyword: Optional[str] = Query(None, max_length=100, description="按问题或回答内容模糊匹配"),
@@ -228,8 +222,8 @@ async def _qa_record_filters(
     db: AsyncSession = Depends(get_db),
 ) -> QaRecordFilters:
     """集中查看的筛选条件：时间范围校验 + 租户边界收口在一处，两个接口共用"""
-    start = _as_utc_naive(start_at)
-    end = _as_utc_naive(end_at)
+    start = as_utc_naive(start_at)
+    end = as_utc_naive(end_at)
     if start and end and start > end:
         raise HTTPException(422, "开始时间不能晚于结束时间")
     # 跨租户查看仅平台管理员；其余账号一律锁在自己的租户内（复用身份管理口径）

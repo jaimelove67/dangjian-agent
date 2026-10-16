@@ -107,6 +107,28 @@ function normalizeError(err: AxiosError<Partial<ApiEnvelope<unknown>>>): ApiErro
 }
 
 /**
+ * 文件下载（`responseType: 'blob'`）失败时，响应体对 axios 是 Blob 而不是包裹体。
+ *
+ * 不还原的话，后端为导出准备的"超限请分批导出""越权"这类**可执行提示**会退化成
+ * "请求失败（HTTP 413）"，用户既不知道原因也不知道怎么办。这里按内容类型解回 JSON。
+ */
+async function readBlobError(
+  err: AxiosError<unknown>,
+): Promise<AxiosError<Partial<ApiEnvelope<unknown>>>> {
+  const data = err.response?.data
+  const isBlob = typeof Blob !== 'undefined' && data instanceof Blob
+  if (isBlob && (!data.type || data.type.includes('json'))) {
+    try {
+      const text = await data.text()
+      if (err.response) err.response.data = JSON.parse(text)
+    } catch {
+      // 解析失败就保留原始错误体，交给 normalizeError 回落到通用文案
+    }
+  }
+  return err as AxiosError<Partial<ApiEnvelope<unknown>>>
+}
+
+/**
  * 限流响应带上"还要等多久"。
  *
  * 后端在 429 时返回 Retry-After 秒数，用户看得到这个数字才不会反复
@@ -162,7 +184,7 @@ http.interceptors.response.use(
     return body as never
   },
   async (err: AxiosError<Partial<ApiEnvelope<unknown>>>) => {
-    const apiErr = normalizeError(err)
+    const apiErr = normalizeError(await readBlobError(err))
     const original = err.config as SessionRequest | undefined
     const authRequest = original?.url?.startsWith('/auth/') &&
       !['/auth/me', '/auth/codes'].includes(original.url)

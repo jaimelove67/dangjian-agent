@@ -1,6 +1,5 @@
 """考核业务闭环：权限、版本、可复核统计、人工审核、提醒及授权材料目录。"""
 
-import csv
 import io
 import json
 import zipfile
@@ -12,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.csv_io import csv_bytes
 from app.core.decision_boundary import (
     ASSISTED_REFERENCE_NOTE,
     evidence_note,
@@ -1248,21 +1248,3 @@ class AssessmentService:
             "task_count": len(tasks),
             "evidence_count": len(data["evidence"]),
         }
-
-
-def csv_bytes(headers: list[str], rows: list[list[Any]]) -> bytes:
-    """UTF-8 BOM供Excel打开，危险首字符转为文本，未知值保留待补标签。"""
-    output = io.StringIO(newline="")
-    writer = csv.writer(output)
-    writer.writerow(headers)
-    for row in rows:
-        cells = []
-        for value in row:
-            text = str(value)
-            if text.lstrip().startswith(("=", "+", "-", "@")) or text.startswith(
-                ("\t", "\r", "\n")
-            ):
-                text = "'" + text
-            cells.append(text)
-        writer.writerow(cells)
-    return output.getvalue().encode("utf-8-sig")

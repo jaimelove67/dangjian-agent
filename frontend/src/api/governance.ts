@@ -100,7 +100,9 @@ export const listJobs = () => http.get<never, {items: JobRecord[]}>('/admin/jobs
 export const queueJob = (body: {kind: string; dedup_key: string; document_ids: string[]}) =>
   http.post<never, JobRecord>('/admin/jobs', body)
 export const listAudit = (params: Record<string, string | number>) =>
-  http.get<never, {items: AuditRecord[]; total: number}>('/admin/audit-logs', {params})
+  http.get<never, {items: AuditRecord[]; total: number; scope_note: string}>('/admin/audit-logs', {params})
+export const exportAudit = (params: Record<string, string | number>): Promise<Blob> =>
+  http.get('/admin/audit-logs/export', {params, responseType: 'blob'})
 export const saveArchivePolicy = (body: {enabled: boolean; expected_revision: number; evidence: string}) =>
   http.patch('/admin/electronic-archive', body)
 export const listNotificationChannels = () =>

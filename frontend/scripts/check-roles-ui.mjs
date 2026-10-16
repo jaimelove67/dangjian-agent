@@ -220,7 +220,7 @@ async function checkRole(browser, spec) {
 
     await checkKnowledgeTools(page, spec)
     await checkGovernanceIdentity(page, spec)
-    await checkNotificationOps(page, spec)
+    await checkOperationsTab(page, spec)
     await checkQaRecordsAccess(page, spec)
   } finally {
     await context.close()
@@ -295,13 +295,14 @@ async function checkGovernanceIdentity(page, spec) {
 }
 
 /**
- * 「运行审计」页必须能看见通知渠道与投递台账。
+ * 「运行审计」页必须能看见通知渠道与投递台账，以及审计条件检索与对账包导出。
  *
  * 渠道抽象层只放在后端，运维就没有地方确认“配了哪些渠道、哪个渠道还没凭据、
- * 最近一次投递为什么失败”。这里断言具备 ops.query 的角色能看到出厂登记的站内渠道，
+ * 最近一次投递为什么失败”；审计导出同理——只开放后端导出、界面没有入口，
+ * 运维照样只能手工拼 SQL。这里一次断言具备 ops.query 的角色看得到这些入口，
  * 不具备的角色连标签都不该出现——运行审计不是普通业务页。
  */
-async function checkNotificationOps(page, spec) {
+async function checkOperationsTab(page, spec) {
   if (!spec.allow.includes('/governance')) return
   await page.goto(`${BASE}/governance`, { waitUntil: 'domcontentloaded' })
   await settle(page)
@@ -310,7 +311,7 @@ async function checkNotificationOps(page, spec) {
     if (await opsTab.count()) {
       fail(`${spec.username}: 不具备 ops.query 却出现「运行审计」标签`)
     } else {
-      notes.push(`${spec.username}: 无「运行审计」标签（不具备 ops.query），跳过通知渠道检查`)
+      notes.push(`${spec.username}: 无「运行审计」标签（不具备 ops.query），跳过运行审计检查`)
     }
     return
   }
@@ -333,6 +334,29 @@ async function checkNotificationOps(page, spec) {
   }
   if (!spec.confirmDispatch && selfTest) {
     fail(`${spec.username}: 不具备 config.manage 却能看到「发起渠道自检」按钮`)
+  }
+  for (const label of ['对象类型', '数据级别', '开始时间（北京时间）']) {
+    if (!(await page.getByText(label, { exact: true }).count())) {
+      fail(`${spec.username}: 审计查询缺少「${label}」筛选`)
+    }
+  }
+  if (!(await page.getByRole('button', { name: /导出当前筛选/ }).count())) {
+    fail(`${spec.username}: 审计查询缺少对账包导出入口`)
+  }
+  if (!(await page.getByText('当前口径：').count())) {
+    fail(`${spec.username}: 审计查询未渲染可核对的口径说明（列表未查到或接口报错）`)
+  }
+  // 跨租户检索入口只对平台系统管理员出现：其他角色显示了就是必然 403 的假入口
+  const tenantField = await page.getByText('租户编号（跨租户）', { exact: true }).count()
+  if (spec.role === 'system_admin' && !tenantField) {
+    fail(`${spec.username}: 平台系统管理员看不到跨租户检索入口`)
+  }
+  if (spec.role !== 'system_admin' && tenantField) {
+    fail(`${spec.username}: 非平台系统管理员却能看到跨租户检索入口`)
+  }
+  // 异常活动提示也用 wb-error（无 role），这里按真正的错误态（role=alert）判断
+  if (await page.getByRole('alert').count()) {
+    fail(`${spec.username}: 运行审计页出现错误态`)
   }
 }
 
