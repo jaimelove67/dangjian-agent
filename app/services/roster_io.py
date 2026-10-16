@@ -23,7 +23,6 @@ from openpyxl.utils import get_column_letter
 
 from app.rules.member_stages import STAGE_LABELS, MemberStage
 
-XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 TEMPLATE_SHEET = "名册"
 GUIDE_SHEET = "填写说明"
 HEADERS: tuple[str, ...] = (

@@ -122,6 +122,9 @@ class DocumentReviewStatus(str, Enum):
 REVIEW_CYCLE_MIN_DAYS = 30
 REVIEW_CYCLE_MAX_DAYS = 3650
 
+# Excel 导出/模板的 MIME（名册与问答记录等台账导出共用，避免各写一份）
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
 
 # 字段级敏感等级允许标注的文档元数据字段（T-DATA-05）
 SENSITIVE_FIELD_KEYS: tuple[str, ...] = (

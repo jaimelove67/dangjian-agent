@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.audit import audit_operation
 from app.chains.member_flow import MemberFlow
 from app.core.config import settings, tenant_config
+from app.core.constants import XLSX_MEDIA_TYPE
 from app.core.security import BS_ALL, Permission, get_role_profile
 from app.db.session import get_db
 from app.deps import require_permissions
@@ -58,7 +59,6 @@ from app.schemas.member import (
 from app.services.org_scope import accessible_org_units
 from app.services.roster_io import (
     MAX_EXPORT_ROWS,
-    XLSX_MEDIA_TYPE,
     RosterFormatError,
     build_roster,
     build_template,

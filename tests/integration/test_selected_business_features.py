@@ -31,10 +31,11 @@ from app.models.org import OrgUnit
 from app.models.qa_session import QASession
 from app.models.user import User, UserRole
 from app.rag.retrieval.access import knowledge_filters
+from app.core.constants import XLSX_MEDIA_TYPE
 from app.rag.retrieval.base import RetrievalResult
 from app.rag.retrieval.hybrid import HybridRetriever
 from app.rag.retrieval.keyword import KeywordRetriever
-from app.services.roster_io import GUIDE_SHEET, HEADERS, TEMPLATE_SHEET, XLSX_MEDIA_TYPE
+from app.services.roster_io import GUIDE_SHEET, HEADERS, TEMPLATE_SHEET
 from tests.integration import test_repaired_storage as storage_fixtures
 
 storage_url = storage_fixtures.storage_url

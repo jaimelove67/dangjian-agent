@@ -35,6 +35,7 @@ const EXPECTED = [
     managesKnowledge: true,
     opsQuery: true,
     confirmDispatch: true,
+    auditQuery: true,
     allow: ['/ask', '/knowledge', '/members', '/meeting', '/assessment', '/study', '/governance', '/accounts', '/system'],
     deny: ['/my-archive', '/my-materials'],
   },
@@ -44,6 +45,7 @@ const EXPECTED = [
     managesKnowledge: true,
     opsQuery: true,
     confirmDispatch: true,
+    auditQuery: true,
     allow: ['/ask', '/knowledge', '/members', '/meeting', '/assessment', '/study', '/governance'],
     deny: ['/accounts', '/system', '/my-archive', '/my-materials'],
   },
@@ -219,6 +221,7 @@ async function checkRole(browser, spec) {
     await checkKnowledgeTools(page, spec)
     await checkGovernanceIdentity(page, spec)
     await checkNotificationOps(page, spec)
+    await checkQaRecordsAccess(page, spec)
   } finally {
     await context.close()
   }
@@ -330,6 +333,42 @@ async function checkNotificationOps(page, spec) {
   }
   if (!spec.confirmDispatch && selfTest) {
     fail(`${spec.username}: 不具备 config.manage 却能看到「发起渠道自检」按钮`)
+  }
+}
+
+/**
+ * 「问答记录」集中查看必须与 admin.audit 一致。
+ *
+ * 本人档案口径（/qa/sessions）人人都有，集中查看却是治理与审计能力：不具备该权限的角色
+ * 连标签都不该出现；具备的角色要能看到按条件查询与导出入口，否则学校复核时无从查证。
+ */
+async function checkQaRecordsAccess(page, spec) {
+  if (!spec.allow.includes('/governance')) return
+  await page.goto(`${BASE}/governance`, { waitUntil: 'domcontentloaded' })
+  await settle(page)
+  const tab = page.getByRole('tab', { name: '问答记录' })
+  if (!spec.auditQuery) {
+    if (await tab.count()) {
+      fail(`${spec.username}: 不具备 admin.audit 却出现「问答记录」标签`)
+    } else {
+      notes.push(`${spec.username}: 无「问答记录」标签（不具备 admin.audit），跳过集中查看检查`)
+    }
+    return
+  }
+  if (!(await tab.count())) {
+    fail(`${spec.username}: 具备 admin.audit 却看不到「问答记录」标签`)
+    return
+  }
+  await tab.first().click()
+  await page.waitForTimeout(2000)
+  if (!(await page.getByRole('button', { name: '查询问答记录' }).count())) {
+    fail(`${spec.username}: 问答记录页缺少按条件查询入口`)
+  }
+  if (!(await page.getByRole('button', { name: /导出当前筛选|导出中/ }).count())) {
+    fail(`${spec.username}: 问答记录页缺少筛选结果导出入口`)
+  }
+  if (await page.locator('.wb-error').count()) {
+    fail(`${spec.username}: 问答记录页出现错误态`)
   }
 }
 

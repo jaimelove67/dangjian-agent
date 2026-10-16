@@ -1,20 +1,23 @@
 """Native governance HTTP acceptance with signed tokens, live identities and isolated data."""
 
 import base64
+import io
 import json
 import os
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import httpx
 import pytest
+from openpyxl import load_workbook
 from redis.asyncio import Redis
 from sqlalchemy import select
 
 from app.api.v1.health import _readiness_details
 from app.core.cache import redis_manager
 from app.core.config import settings
+from app.core.constants import XLSX_MEDIA_TYPE
 from app.core.encryption import filesystem_path
 from app.core.security import create_access_token
 from app.core.tenant import bypass_tenant_filter
@@ -24,11 +27,13 @@ from app.models.audit import AuditLog
 from app.models.governance import ModelUsage
 from app.models.meeting import MeetingRecord
 from app.models.member import MemberCultivation, MemberProfile
+from app.models.qa_session import QASession
 from app.models.study import StudyPlan, StudyPlanItem
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.services import job_service
 from app.services.member_service import _load_scoring_rules
+from app.services.qa_record_io import HEADERS, RECORD_SHEET
 from tests.integration import test_module6_governance as fixtures
 
 governance_url = fixtures.governance_url
@@ -80,15 +85,84 @@ def authorization(user, role=None):
     return {"Authorization": "Bearer " + token}
 
 
-async def call(case, actor, method, path, body=None, status=200, headers=None):
+async def call(case, actor, method, path, body=None, status=200, headers=None, params=None):
     result = await case["http"].request(
-        method, "/api/v1" + path, json=body, headers=headers or authorization(actor)
+        method,
+        "/api/v1" + path,
+        json=body,
+        params=params,
+        headers=headers or authorization(actor),
     )
     assert result.status_code == status, result.text
     if status == 200:
         assert result.json()["code"] == 0, result.text
         return result.json()["data"]
     return result
+
+
+async def seed_qa_records(case):
+    """造问答记录：本租户 3 条（1 条无依据拒答、1 条提问人已删除）+ 另一租户 1 条。"""
+    common = {
+        "citations": [],
+        "warnings": [],
+        "retrieved_count": 0,
+        "used_count": 0,
+        "session_id": uuid.uuid4().hex,
+    }
+    async with case["maker"]() as db:
+        with bypass_tenant_filter():
+            db.add_all(
+                [
+                    QASession(
+                        tenant_id=case["school"].id,
+                        user_id=case["author"].id,
+                        question="转正需要什么材料？",
+                        answer="需要提交转正申请等材料。",
+                        citations=[{"index": 1, "title": "合成转正规定"}],
+                        data_level="internal",
+                        has_sufficient_evidence=True,
+                        retrieved_count=3,
+                        used_count=2,
+                        warnings=[],
+                        refused=False,
+                        session_id=uuid.uuid4().hex,
+                        created_at=datetime(2026, 3, 1, 1, 0),
+                    ),
+                    QASession(
+                        tenant_id=case["school"].id,
+                        user_id=case["author"].id,
+                        question="合成拒答问题",
+                        answer="暂无依据，无法作答。",
+                        data_level="public",
+                        has_sufficient_evidence=False,
+                        refused=True,
+                        created_at=datetime(2026, 3, 2, 1, 0),
+                        **common,
+                    ),
+                    QASession(
+                        tenant_id=case["school"].id,
+                        user_id=case["author"].id,
+                        question="合成已删除问题",
+                        answer="提问人已在自己的记录里删除。",
+                        data_level="internal",
+                        has_sufficient_evidence=True,
+                        is_deleted=True,
+                        created_at=datetime(2026, 3, 3, 1, 0),
+                        **common,
+                    ),
+                    QASession(
+                        tenant_id=case["other_school"].id,
+                        user_id=case["other_admin"].id,
+                        question="外校合成问题",
+                        answer="另一租户的记录，不得跨租户看到。",
+                        data_level="internal",
+                        has_sufficient_evidence=True,
+                        created_at=datetime(2026, 3, 2, 1, 0),
+                        **common,
+                    ),
+                ]
+            )
+            await db.commit()
 
 
 async def test_school_admin_http_configuration_identity_conflicts_and_safe_responses(http_case):
@@ -634,6 +708,105 @@ async def test_governed_statistics_do_not_count_drafts_or_other_schools(http_cas
     )
     empty = await call(c, c["other_admin"], "GET", "/study/metrics?year=2026")
     assert empty["learning_count"]["value"] is None
+
+
+async def test_qa_records_central_view_is_permission_scoped_and_filterable(http_case):
+    """T-SYS-06：问答记录集中查看受 admin.audit 管辖、租户内可见、条件与时间都可核对。"""
+    c = http_case
+    await seed_qa_records(c)
+    # 支部书记没有 admin.audit：集中查看不对其开放（本人档案另有 /qa/sessions 口径）
+    await call(c, c["author"], "GET", "/qa/records", status=403)
+    page = await call(c, c["admin"], "GET", "/qa/records")
+    assert page["total"] == 2
+    assert page["scope_note"] == "不含本人已删除的记录"
+    assert {row["question"] for row in page["items"]} == {"转正需要什么材料？", "合成拒答问题"}
+    # 每条都要能自证：谁问的、什么级别、有没有依据、引用了几处
+    answered = next(row for row in page["items"] if row["question"] == "转正需要什么材料？")
+    assert answered["asker"] == "测试提交人" and answered["username"] == c["author"].username
+    assert answered["data_level"] == "internal" and answered["has_sufficient_evidence"] is True
+    assert answered["citation_count"] == 1 and answered["refused"] is False
+    assert answered["is_deleted"] is False
+    assert (
+        await call(c, c["admin"], "GET", "/qa/records?refused=true")
+    )["items"][0]["question"] == "合成拒答问题"
+    assert (
+        await call(c, c["admin"], "GET", "/qa/records?has_evidence=false")
+    )["total"] == 1
+    assert (await call(c, c["admin"], "GET", "/qa/records?keyword=转正"))["total"] == 1
+    assert (await call(c, c["admin"], "GET", "/qa/records?data_level=sensitive"))["items"] == []
+    assert (await call(c, c["admin"], "GET", "/qa/records?user_id=" + str(uuid.uuid4())))["total"] == 0
+    # 软删除只是不再显示；显式要求时仍能看到，否则删除就成了审计盲区
+    included = await call(c, c["admin"], "GET", "/qa/records?include_deleted=true")
+    assert included["total"] == 3
+    assert "含本人已删除的记录" in included["scope_note"]
+    # 时间按北京时间传入（+08:00）：09:00 正好命中那条 01:00 UTC 的记录，
+    # 若被当成本地/UTC 朴素时间就会漏掉它。
+    window = await call(
+        c,
+        c["admin"],
+        "GET",
+        "/qa/records",
+        params={"start_at": "2026-03-02T09:00:00+08:00"},
+    )
+    assert window["total"] == 1 and window["items"][0]["question"] == "合成拒答问题"
+    await call(
+        c,
+        c["admin"],
+        "GET",
+        "/qa/records",
+        params={"start_at": "2026-03-02T00:00:00+08:00", "end_at": "2026-03-01T00:00:00+08:00"},
+        status=422,
+    )
+    # 跨租户：本平台管理员之外的账号不得借 tenant_id 越界
+    await call(c, c["admin"], "GET", "/qa/records?tenant_id=" + c["other_school"].id, status=403)
+    foreign = await call(c, c["other_admin"], "GET", "/qa/records")
+    assert [row["question"] for row in foreign["items"]] == ["外校合成问题"]
+
+
+async def test_qa_record_export_carries_its_scope_and_writes_audit(http_case, monkeypatch):
+    """T-SYS-06：导出的 Excel 必须自证筛选口径，且导出动作留审计、超限给可执行提示。"""
+    c = http_case
+    await seed_qa_records(c)
+    denied = await c["http"].get(
+        "/api/v1/qa/records/export", headers=authorization(c["author"])
+    )
+    assert denied.status_code == 403
+    response = await c["http"].get(
+        "/api/v1/qa/records/export", params={"keyword": "转正"}, headers=authorization(c["admin"])
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith(XLSX_MEDIA_TYPE)
+    assert "qa-records.xlsx" in response.headers["content-disposition"]
+    assert response.headers["cache-control"] == "no-store"
+    workbook = load_workbook(io.BytesIO(response.content))
+    sheet = workbook[RECORD_SHEET]
+    assert [cell.value for cell in sheet[1]] == list(HEADERS)
+    assert sheet.max_row == 2
+    assert sheet.cell(row=2, column=11).value == "转正需要什么材料？"
+    guide = "\n".join(str(cell.value) for cell in workbook["导出说明"]["A"] if cell.value)
+    assert "导出人：测试审核人" in guide
+    assert "导出条数：1" in guide
+    assert "筛选口径：不含本人已删除的记录；问题或回答含「转正」" in guide
+    async with c["maker"]() as db:
+        with bypass_tenant_filter():
+            logs = (
+                (
+                    await db.execute(
+                        select(AuditLog).where(
+                            AuditLog.action == "export", AuditLog.resource_type == "qa_record"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+    assert len(logs) == 1
+    assert logs[0].tenant_id == c["school"].id and logs[0].user_id == c["admin"].id
+    # 超过上限：提示分批导出，而不是生成一份打不开的大文件
+    monkeypatch.setattr("app.api.v1.qa.MAX_EXPORT_ROWS", 1)
+    oversized = await c["http"].get("/api/v1/qa/records/export", headers=authorization(c["admin"]))
+    assert oversized.status_code == 413, oversized.text
+    assert "分批导出" in oversized.json()["message"]
 
 
 async def test_member_scheduler_repeats_without_duplicate_reminders_and_keeps_scope(

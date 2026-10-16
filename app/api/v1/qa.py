@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from app.chains.session import SessionStore
 from app.chains.workflow_interfaces import sensitive_check
 from app.core.cache import CacheService, redis_manager
 from app.core.config import settings, tenant_config
+from app.core.constants import XLSX_MEDIA_TYPE
 from app.core.security import Permission
 from app.db.session import get_db
 from app.deps import get_current_tenant, require_permissions
@@ -25,8 +26,17 @@ from app.models.qa_session import QASession
 from app.models.user import User
 from app.rag.rag_service import RAGService
 from app.rag.retrieval.access import knowledge_filters
-from app.schemas.common import APIResponse
+from app.schemas.common import APIResponse, ErrorCode
 from app.schemas.wf import SensitiveCheckRequest
+from app.services.identity_service import IdentityService
+from app.services.qa_record_io import build_qa_records
+from app.services.qa_record_service import (
+    MAX_EXPORT_ROWS,
+    QaRecordFilters,
+    QaRecordRow,
+    count_qa_records,
+    fetch_qa_records,
+)
 from app.services.qa_session_service import create_session, list_sessions, soft_delete_session
 
 router = APIRouter()
@@ -34,6 +44,8 @@ logger = logging.getLogger(__name__)
 
 # 问答需要基本的查询权限
 _require_query = require_permissions(Permission.QA_ASK)
+# 问答记录集中查看属治理与审计能力（T-SYS-06）：与"本人档案口径"分开授权
+_require_audit = require_permissions(Permission.AUDIT_QUERY)
 
 
 class QuestionRequest(BaseModel):
@@ -128,6 +140,58 @@ class QASessionListResponse(BaseModel):
     page_size: int
 
 
+class QARecordItem(BaseModel):
+    """治理与审计视图的一行问答记录（含提问人标识与依据情况）"""
+
+    id: str
+    user_id: str
+    asker: str
+    username: str
+    question: str
+    answer: str
+    data_level: str
+    refused: bool
+    has_sufficient_evidence: bool
+    retrieved_count: int
+    used_count: int
+    citation_count: int
+    warning_count: int
+    is_deleted: bool
+    created_at: datetime
+    session_id: Optional[str] = None
+
+    @classmethod
+    def from_record(cls, row: QaRecordRow) -> "QARecordItem":
+        """显式逐字段映射：新增行字段时不会静默漏出对外契约。"""
+        return cls(
+            id=row.id,
+            user_id=row.user_id,
+            asker=row.asker,
+            username=row.username,
+            question=row.question,
+            answer=row.answer,
+            data_level=row.data_level,
+            refused=row.refused,
+            has_sufficient_evidence=row.has_sufficient_evidence,
+            retrieved_count=row.retrieved_count,
+            used_count=row.used_count,
+            citation_count=row.citation_count,
+            warning_count=row.warning_count,
+            is_deleted=row.is_deleted,
+            created_at=row.created_at,
+            session_id=row.session_id,
+        )
+
+
+class QARecordListResponse(BaseModel):
+    items: list[QARecordItem]
+    total: int
+    page: int
+    page_size: int
+    #: 当前筛选口径（导出与列表共用一个说法，避免"导出了什么"说不清）
+    scope_note: str
+
+
 def _trace_id(request: Request) -> Optional[str]:
     return getattr(request.state, "trace_id", None)
 
@@ -138,6 +202,48 @@ def _session_store(user: User) -> SessionStore:
         owner_id=str(user.id),
         ttl_seconds=settings.SESSION_TTL_SECONDS,
         max_turns=settings.SESSION_MAX_TURNS,
+    )
+
+
+def _as_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
+    """与审计查询同口径：带时区的输入换算成 UTC 朴素时间，避免边界比较错位"""
+    if value is None:
+        return None
+    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+
+async def _qa_record_filters(
+    user_id: Optional[str] = Query(None, max_length=36, description="按提问人编号筛选"),
+    keyword: Optional[str] = Query(None, max_length=100, description="按问题或回答内容模糊匹配"),
+    data_level: Optional[DataLevel] = Query(None, description="按数据级别筛选"),
+    refused: Optional[bool] = Query(None, description="true 仅看无依据拒答"),
+    has_evidence: Optional[bool] = Query(None, description="false 仅看无足够依据"),
+    start_at: Optional[datetime] = Query(None, description="起始时间（含）"),
+    end_at: Optional[datetime] = Query(None, description="结束时间（含）"),
+    include_deleted: bool = Query(False, description="是否包含提问人已软删除的记录"),
+    tenant_id: Optional[str] = Query(
+        None, max_length=36, description="查看其他租户仅平台管理员可用"
+    ),
+    user: User = Depends(_require_audit),
+    db: AsyncSession = Depends(get_db),
+) -> QaRecordFilters:
+    """集中查看的筛选条件：时间范围校验 + 租户边界收口在一处，两个接口共用"""
+    start = _as_utc_naive(start_at)
+    end = _as_utc_naive(end_at)
+    if start and end and start > end:
+        raise HTTPException(422, "开始时间不能晚于结束时间")
+    # 跨租户查看仅平台管理员；其余账号一律锁在自己的租户内（复用身份管理口径）
+    target = await IdentityService(db, user).tenant(tenant_id)
+    return QaRecordFilters(
+        tenant_id=str(target.id),
+        user_id=user_id,
+        keyword=keyword.strip() if keyword and keyword.strip() else None,
+        data_level=data_level.value if data_level else None,
+        refused=refused,
+        has_evidence=has_evidence,
+        start_at=start,
+        end_at=end,
+        include_deleted=include_deleted,
     )
 
 
@@ -294,6 +400,93 @@ async def read_history(
 ) -> APIResponse[list[dict]]:
     history = await _session_store(user).get_history(str(user.tenant_id), session_id)
     return APIResponse(data=[asdict(turn) for turn in history], trace_id=_trace_id(request))
+
+
+@router.get(
+    "/qa/records",
+    response_model=APIResponse[QARecordListResponse],
+    summary="问答记录集中查看（治理与审计）",
+    description=(
+        "按提问人、关键词、数据级别、结果、依据与时间范围查看本租户问答记录；"
+        "默认不含提问人已软删除的记录，跨租户查看仅平台管理员可用。"
+    ),
+    tags=["知识问答"],
+)
+async def list_qa_records(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(40, ge=1, le=100),
+    filters: QaRecordFilters = Depends(_qa_record_filters),
+    user: User = Depends(_require_audit),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[QARecordListResponse]:
+    """学校治理视图：本人档案口径之外的集中查看（T-SYS-06）。"""
+    total = await count_qa_records(db, filters)
+    rows = await fetch_qa_records(db, filters, offset=(page - 1) * page_size, limit=page_size)
+    return APIResponse(
+        data=QARecordListResponse(
+            items=[QARecordItem.from_record(row) for row in rows],
+            total=total,
+            page=page,
+            page_size=page_size,
+            scope_note=filters.scope_note(),
+        ),
+        trace_id=_trace_id(request),
+    )
+
+
+@router.get(
+    "/qa/records/export",
+    response_model=None,
+    summary="导出问答记录（Excel）",
+    description=(
+        "按当前筛选导出问答记录台账，附导出说明（筛选口径 / 条数 / 导出人）；"
+        "导出动作写入审计，超出行数上限时提示分批导出。"
+    ),
+    tags=["知识问答"],
+)
+async def export_qa_records(
+    request: Request,
+    filters: QaRecordFilters = Depends(_qa_record_filters),
+    user: User = Depends(_require_audit),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    total = await count_qa_records(db, filters)
+    if total > MAX_EXPORT_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "code": ErrorCode.BUSINESS_ERROR,
+                "message": (
+                    f"当前条件共 {total} 条，超过单次导出上限 {MAX_EXPORT_ROWS} 条："
+                    "请缩小时间范围或按提问人分批导出，避免生成打不开的大文件。"
+                ),
+            },
+        )
+    rows = await fetch_qa_records(db, filters, offset=0, limit=MAX_EXPORT_ROWS)
+    content = build_qa_records(
+        rows,
+        scope_note=filters.scope_note(),
+        exported_by=f"{user.name}（{user.username}）",
+    )
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="export",
+        resource_type="qa_record",
+        data_level="internal",
+        new_value={"rows": len(rows), "scope": filters.scope_note()},
+    )
+    await db.commit()
+    return Response(
+        content=content,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": 'attachment; filename="qa-records.xlsx"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.delete(

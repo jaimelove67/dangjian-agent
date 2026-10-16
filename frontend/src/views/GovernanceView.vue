@@ -3,10 +3,12 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import * as api from '@/api/governance'
 import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, ReviewRecord, TenantRecord, UserRecord } from '@/api/governance'
 import { ApiError } from '@/api/http'
-import { DOC_AUTHORITY_LABELS, DOC_AUTHORITY_ORDER, PERM, ROLE_LABELS, type UserRole } from '@/api/types'
+import * as qaApi from '@/api/qa'
+import { DOC_AUTHORITY_LABELS, DOC_AUTHORITY_ORDER, PERM, ROLE_LABELS, type QARecord, type UserRole } from '@/api/types'
 import ActionDialog from '@/components/ActionDialog.vue'
 import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
 import { session } from '@/stores/session'
+import { downloadBlob, todayISO } from '@/utils/files'
 import { uuid } from '@/utils/uuid'
 import '@/styles/workbench.css'
 
@@ -29,6 +31,9 @@ const form = reactive({name: '', username: '', password: '', role: 'member' as U
   document_ids: '', dedup_key: '', evidence: '', enabled: false, tenant_type: 'school'})
 const configReason = ref(''), allowedHosts = ref(''), localHosts = ref('')
 const auditFilters = reactive({user_id: '', resource_id: '', action: '', result: '', start_at: '', end_at: ''})
+// 问答记录集中查看（T-SYS-06）：本人档案口径之外，学校级按提问人/级别/结果/依据筛选并可导出
+const records = ref<QARecord[]>([]), recordPage = ref(1), recordTotal = ref(0), recordScope = ref('')
+const recordFilters = reactive({user_id: '', keyword: '', data_level: '', result: '', evidence: '', start_at: '', end_at: '', include_deleted: false})
 const canManage = computed(() => session.can(PERM.IDENTITY_MANAGE))
 // 开户（POST /admin/users）与登记租户在服务端仅限平台系统管理员；学校管理员仍可
 // 维护组织与既有账号。按钮按同一口径隐藏，避免点出必然 403 的入口。
@@ -39,6 +44,7 @@ const tabs = computed(() => [
   ...(session.can(PERM.CONFIG_MANAGE) ? [{key:'config', label:'学校配置'}] : []),
   {key:'jobs', label:'任务台账'},
   ...(session.can(PERM.OPS_QUERY) ? [{key:'operations', label:'运行审计'}] : []),
+  ...(session.can(PERM.AUDIT_QUERY) ? [{key:'records', label:'问答记录'}] : []),
 ])
 const visibleOrgs = computed(() => organizations.value.filter(row =>
   row.name.includes(identitySearch.value) || row.path.includes(identitySearch.value)))
@@ -54,6 +60,8 @@ const kindText: Record<string,string> = {score:'辅助评分', vote:'选优汇�
   embedding:'文档向量化'}
 // 投递状态与事件名：运维要能一眼看懂“哪条提醒、走哪个渠道、发出去没有”。
 const deliveryText: Record<string,string> = {pending:'待投递', sent:'已投递', failed:'投递失败'}
+// 问答记录（T-SYS-06）：级别与结果必须中文化，否则治理页读起来像调试输出
+const levelText: Record<string,string> = {public:'公开', internal:'内部', sensitive:'敏感', classified:'涉密'}
 const eventText: Record<string,string> = {member_reminder:'发展党员提醒', assessment_reminder:'考核进度提醒',
   member_stage_transition:'党员阶段流转', meeting_archived:'组织生活归档', assessment_completed:'年度考核完成',
   channel_self_test:'渠道自检'}
@@ -123,6 +131,45 @@ async function selfTest(): Promise<void> {
     await loadNotifications()
   } catch (err) { fail(err) } finally { busy.value = false }
 }
+// 界面按北京时间填时间（与列表、导出显示同一口钟），传后端时显式带 +08:00，
+// 免得被当成本机时区或 UTC 解释，筛出差 8 小时的结果。
+function beijingIso(value: string): string {
+  if (!value) return ''
+  const [datePart, timePart = ''] = value.split('T')
+  const [hour, minute] = timePart.split(':')
+  return datePart + 'T' + (hour || '00') + ':' + (minute || '00') + ':00+08:00'
+}
+/** 列表与导出共用一个参数源：导出的必须是"当前看到的那一批"，不是另一次查询 */
+function recordParams(): Record<string, string|number|boolean> {
+  const params: Record<string, string|number|boolean> = {}
+  if (recordFilters.user_id.trim()) params.user_id = recordFilters.user_id.trim()
+  if (recordFilters.keyword.trim()) params.keyword = recordFilters.keyword.trim()
+  if (recordFilters.data_level) params.data_level = recordFilters.data_level
+  if (recordFilters.result) params.refused = recordFilters.result === 'refused'
+  if (recordFilters.evidence) params.has_evidence = recordFilters.evidence === 'with'
+  if (recordFilters.start_at) params.start_at = beijingIso(recordFilters.start_at)
+  if (recordFilters.end_at) params.end_at = beijingIso(recordFilters.end_at)
+  if (recordFilters.include_deleted) params.include_deleted = true
+  return params
+}
+function resetRecordFilters(): void {
+  Object.assign(recordFilters, {user_id:'', keyword:'', data_level:'', result:'', evidence:'',
+    start_at:'', end_at:'', include_deleted:false})
+  recordPage.value = 1
+  void loadTab()
+}
+async function loadRecords(): Promise<void> {
+  const page = await qaApi.listQaRecords({...recordParams(), page: recordPage.value})
+  records.value = page.items; recordTotal.value = page.total; recordScope.value = page.scope_note
+}
+async function exportRecords(): Promise<void> {
+  if (busy.value) return
+  busy.value = true; error.value = ''; notice.value = ''
+  try {
+    downloadBlob(await qaApi.exportQaRecords(recordParams()), '问答记录-' + todayISO() + '.xlsx')
+    notice.value = '已导出当前筛选范围（' + (recordScope.value || '未筛选') + '）的问答记录，导出动作已写入审计。'
+  } catch (err) { fail(err) } finally { busy.value = false }
+}
 async function loadTab(): Promise<void> {
   loading.value = true; error.value = ''
   try {
@@ -132,6 +179,7 @@ async function loadTab(): Promise<void> {
       reviews.value = page.items; reviewHasMore.value = page.has_more
     }
     if (tab.value === 'jobs') jobs.value = (await api.listJobs()).items
+    if (tab.value === 'records') await loadRecords()
     if (tab.value === 'config') {
       const loaded = useConfig(await api.getGovernance())
       config.value = loaded
@@ -359,6 +407,25 @@ function formatDate(value: string | null): string {
             <tr v-for="row in deliveries" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td>{{ eventText[row.event] ?? row.event }}</td><td>{{ row.channel }}</td><td>{{ deliveryText[row.status] ?? row.status }}</td><td>{{ row.attempts }}</td><td>{{ row.last_error ?? '—' }}</td></tr></tbody></table></div>
           <p v-else class="wb-empty">暂无投递记录。配置路由或发起自检后在此留痕。</p>
         </section>
+      </section>
+      <section v-else-if="tab === 'records'" class="wb-stack">
+        <div class="wb-toolbar"><div><h2 class="u-title-sub">问答记录</h2>
+          <p class="wb-note">集中查看本租户的问答记录：可核对谁在什么时候问了什么、是否拒答、有没有依据、用的是哪个级别的数据。提问人本人删除的记录默认不显示，勾选后可查看——删除只是不再显示，不是销毁证据。</p></div>
+          <button class="btn btn--quiet" type="button" :disabled="busy || !records.length" @click="exportRecords">{{ busy ? '导出中…' : '导出当前筛选（Excel）' }}</button></div>
+        <form class="wb-section wb-stack" @submit.prevent="recordPage=1; loadTab()"><div class="wb-grid">
+          <label class="wb-field"><span>提问人编号</span><input class="input" v-model="recordFilters.user_id" /></label><label class="wb-field"><span>问题或回答包含</span><input class="input" v-model="recordFilters.keyword" maxlength="100" placeholder="如：转正" /></label>
+          <label class="wb-field"><span>数据级别</span><select class="select" v-model="recordFilters.data_level"><option value="">全部级别</option><option v-for="level in ['public','internal','sensitive','classified']" :key="level" :value="level">{{ levelText[level] }}</option></select></label>
+          <label class="wb-field"><span>回答结果</span><select class="select" v-model="recordFilters.result"><option value="">全部结果</option><option value="answered">已作答</option><option value="refused">无依据拒答</option></select></label>
+          <label class="wb-field"><span>依据情况</span><select class="select" v-model="recordFilters.evidence"><option value="">全部</option><option value="with">有依据</option><option value="without">无依据</option></select></label>
+          <label class="wb-field"><span>开始时间（北京时间）</span><input class="input" v-model="recordFilters.start_at" type="datetime-local" /></label><label class="wb-field"><span>结束时间（北京时间）</span><input class="input" v-model="recordFilters.end_at" type="datetime-local" /></label>
+          <label class="wb-check"><input v-model="recordFilters.include_deleted" type="checkbox" />包含提问人已删除的记录</label>
+        </div><div class="wb-actions"><button class="btn btn--primary" type="submit">查询问答记录</button><button class="btn btn--quiet" type="button" @click="resetRecordFilters">清空条件</button></div></form>
+        <p class="wb-note">当前范围：{{ recordScope || '未筛选' }}。</p>
+        <div v-if="records.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>提问人</th><th>问题</th><th>数据级别</th><th>结果</th><th>依据</th><th>引用</th><th>状态</th></tr></thead><tbody>
+          <tr v-for="row in records" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td>{{ row.asker }}<small>{{ row.username }}</small></td><td>{{ row.question }}</td>
+            <td>{{ levelText[row.data_level] ?? row.data_level }}</td><td>{{ row.refused ? '无依据拒答' : '已作答' }}</td><td>{{ row.has_sufficient_evidence ? '有依据' : '无依据' }}</td><td>{{ row.citation_count }}</td><td>{{ row.is_deleted ? '提问人已删除' : '正常' }}</td></tr></tbody></table></div>
+        <p v-else class="wb-empty">当前范围没有问答记录。可清空条件或放宽时间范围再看；跨租户记录需平台管理员指定租户。</p>
+        <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="recordPage===1" @click="recordPage--; loadTab()">上一页</button><span>第 {{ recordPage }} 页 · 共 {{ recordTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="recordPage*40>=recordTotal" @click="recordPage++; loadTab()">下一页</button></div>
       </section>
     </WorkspaceTabs>
     <ActionDialog :open="Boolean(dialog)" :title="({organization:'维护组织',user:'维护用户',tenant:'登记或维护租户',submit:'提交人工审核',decision:'审核材料与结论',job:'创建任务',archive:'电子记录效力确认'} as Record<string,string>)[dialog] ?? '管理'" :busy="busy" wide @close="dialog=''">

@@ -255,6 +255,35 @@ export interface QASessionListResponse {
   page_size: number
 }
 
+/** app/api/v1/qa.py::GET /qa/records —— 治理与审计视图的一行（T-SYS-06） */
+export interface QARecord {
+  id: string
+  user_id: string
+  asker: string
+  username: string
+  question: string
+  answer: string
+  data_level: string
+  refused: boolean
+  has_sufficient_evidence: boolean
+  retrieved_count: number
+  used_count: number
+  citation_count: number
+  warning_count: number
+  is_deleted: boolean
+  created_at: string
+  session_id: string | null
+}
+
+export interface QARecordListResponse {
+  items: QARecord[]
+  total: number
+  page: number
+  page_size: number
+  /** 当前筛选口径：列表与导出用同一个说法 */
+  scope_note: string
+}
+
 /* ============================ 知识库 =================================== */
 
 export type DocLevel = 'central' | 'provincial' | 'school' | 'department'
