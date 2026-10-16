@@ -213,6 +213,9 @@ class MemberReviewService:
                         MemberProfile.org_unit_id == org_unit_id,
                         MemberProfile.current_stage.in_(REVIEW_STAGES),
                         MemberProfile.is_active.is_(True),
+                        # 组织关系已转出（T-MEM-14）的人不参加本组织民主评议：
+                        # 他已经不属于这个支部，不能一边显示"已转出"一边还在评他。
+                        MemberProfile.relation_status != "transferred_out",
                     )
                     .order_by(MemberProfile.name, MemberProfile.id)
                     .limit(MAX_TARGETS + 1)
@@ -401,6 +404,8 @@ class MemberReviewService:
                         MemberProfile.org_unit_id.in_(org_ids),
                         MemberProfile.current_stage.in_(REVIEW_STAGES),
                         MemberProfile.is_active.is_(True),
+                        # 与发起口径一致：已转出人员不进应评议名单（T-MEM-14）。
+                        MemberProfile.relation_status != "transferred_out",
                     )
                     .order_by(MemberProfile.org_unit_id, MemberProfile.name, MemberProfile.id)
                     .limit(MAX_TARGETS + 1)

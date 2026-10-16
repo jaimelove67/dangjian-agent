@@ -224,6 +224,7 @@ async function checkRole(browser, spec) {
     await checkQaRecordsAccess(page, spec)
     await checkMeetingFrequency(page, spec)
     await checkMemberReviews(page, spec)
+    await checkMemberTransfers(page, spec)
   } finally {
     await context.close()
   }
@@ -532,6 +533,71 @@ async function checkMemberReviews(page, spec) {
     }
     if (apiErrors.length) {
       fail(`${spec.username}: 民主评议接口报错 ${[...new Set(apiErrors)].join(', ')}`)
+    }
+  } finally {
+    page.off('response', listener)
+  }
+}
+
+/**
+ * 「组织关系接转」工作区必须真的挂载，且写入入口与权限一致（T-MEM-14）。
+ *
+ * 接转是独立台账：接口有了、页面没有，支部书记还是得线下记介绍信；反过来，若给
+ * 没有 member.stage_transition 的角色显示「登记转出/登记转入」，就是必然 403 的假入口。
+ * 这里钉住三件事：工作区挂载并给出「开了介绍信不等于转出完成」的口径、写入入口与
+ * 权限一致、以及接转接口没有报错（含迁移未执行导致的 500）。
+ */
+async function checkMemberTransfers(page, spec) {
+  if (!spec.allow.includes('/members')) return
+  const apiErrors = []
+  const listener = (response) => {
+    const path = new URL(response.url()).pathname
+    if (response.status() >= 400 && path.includes('/member-full/transfers')) {
+      apiErrors.push(`${response.status()} ${path}`)
+    }
+  }
+  page.on('response', listener)
+  try {
+    await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' })
+    await settle(page)
+    // 名册筛选在默认的「人员档案」工作区，先断言它，再切到接转工作区
+    const includeTransferred = page.getByRole('checkbox', { name: '含组织关系已转出人员' })
+    await includeTransferred.waitFor({ timeout: 15000 }).catch(() => {})
+    if (!(await includeTransferred.count())) {
+      fail(`${spec.username}: 名册没有「含组织关系已转出人员」筛选（已转出人员无从核对）`)
+    }
+    const transfersTab = page.getByRole('tab', { name: '组织关系接转' })
+    await transfersTab.first().waitFor({ timeout: 15000 }).catch(() => {})
+    if (!(await transfersTab.count())) {
+      fail(`${spec.username}: 人员档案页没有「组织关系接转」工作区（功能只在接口里，用户看不到）`)
+      return
+    }
+    await transfersTab.first().click()
+    await page.waitForTimeout(1500)
+    const panel = page.locator('.tr-summary')
+    await panel.waitFor({ timeout: 15000 }).catch(() => {})
+    if (!(await panel.count())) {
+      fail(`${spec.username}: 「组织关系接转」没有挂载台账（转出待回执/转入待核对汇总缺失）`)
+      return
+    }
+    const text = await page.locator('main').innerText()
+    if (!/转出开了介绍信不等于转出完成/.test(text)) {
+      fail(`${spec.username}: 接转未说明"开了介绍信不等于转出完成"的口径`)
+    }
+    if (!/已超过有效期|转出待回执/.test(text)) {
+      fail(`${spec.username}: 接转台账没有给出汇总口径`)
+    }
+    // 能看到 /members 的角色都具备 member.stage_transition，写入入口就该在
+    for (const entry of ['登记转出', '登记转入']) {
+      if (!(await page.getByRole('button', { name: entry, exact: true }).count())) {
+        fail(`${spec.username}: 具备 member.stage_transition 却看不到「${entry}」入口`)
+      }
+    }
+    if (apiErrors.length) {
+      fail(`${spec.username}: 接转接口报错 ${[...new Set(apiErrors)].join(', ')}`)
+    }
+    if (await page.getByRole('alert').count()) {
+      fail(`${spec.username}: 接转工作区出现错误态`)
     }
   } finally {
     page.off('response', listener)

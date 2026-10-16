@@ -87,6 +87,9 @@ class MemberRosterItem(BaseModel):
     days_in_stage: int
     materials: List[str] = Field(default_factory=list)
     pending: int = 0
+    # 组织关系状态（T-MEM-14）：in_place / out_pending / transferred_out。
+    # 名册默认不列已转出人员（他们已不属于本组织在册党员），带此标识便于显式查看。
+    relation_status: str = "in_place"
 
     year: Optional[int] = None
     batch_no: Optional[str] = None
@@ -104,6 +107,7 @@ class MemberRosterItem(BaseModel):
             days_in_stage=max(0, (date.today() - profile.stage_joined_on).days),
             materials=list(profile.materials or []),
             pending=profile.pending or 0,
+            relation_status=getattr(profile, "relation_status", None) or "in_place",
             year=profile.year,
             batch_no=profile.batch_no,
         )

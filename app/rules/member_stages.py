@@ -110,6 +110,15 @@ DEFAULT_TRANSITIONS: tuple[TransitionRule, ...] = (
     ),
 )
 
+# 发展阶段链：转入档案清单沿这条链累加既有材料要求（T-MEM-14）。
+_DEVELOPMENT_PATH: tuple[MemberStage, ...] = (
+    MemberStage.APPLICANT,
+    MemberStage.ACTIVIST,
+    MemberStage.CANDIDATE,
+    MemberStage.PROBATIONARY,
+    MemberStage.MEMBER,
+)
+
 # YAML 材料键 → (source, target)
 _MATERIAL_KEYS: dict[str, tuple[MemberStage, MemberStage]] = {
     "applicant_to_activist": (MemberStage.APPLICANT, MemberStage.ACTIVIST),
@@ -141,6 +150,27 @@ class StageRules:
 
     def next_targets(self, source: MemberStage) -> list[MemberStage]:
         return [rule.target for rule in self.transitions if rule.source == source]
+
+    def materials_for_stage(self, stage: MemberStage) -> tuple[str, ...]:
+        """转入档案清单：沿"入党申请人 → 当前阶段"累加既有材料要求。
+
+        组织关系转入时要核对本人档案（T-MEM-14），清单口径与阶段流转**同一来源**——
+        不另写一份"转入档案清单"，否则两处清单必然漂移（哪套算数就说不清了）。
+        预备党员按到"预备党员"为止累加，不把尚未发生的转正材料算成缺项：转入时还没
+        转正，清单要跟着人的实际阶段走。非发展阶段（如"退回"）返回空清单。
+        """
+        if stage not in _DEVELOPMENT_PATH:
+            return ()
+        names: list[str] = []
+        stop = _DEVELOPMENT_PATH.index(stage)
+        for index in range(stop):
+            rule = self.get_rule(_DEVELOPMENT_PATH[index], _DEVELOPMENT_PATH[index + 1])
+            if rule is None:
+                continue
+            for name in rule.required_materials:
+                if name not in names:
+                    names.append(name)
+        return tuple(names)
 
     @classmethod
     def default(cls) -> "StageRules":

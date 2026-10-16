@@ -20,7 +20,7 @@ import type {
  *
  */
 
-export function listMembers(params: { page?: number; page_size?: number; year?: number; batch_no?: string } = {}): Promise<MemberRosterResponse> {
+export function listMembers(params: { page?: number; page_size?: number; year?: number; batch_no?: string; include_transferred?: boolean } = {}): Promise<MemberRosterResponse> {
   return http.get('/member/roster', { params })
 }
 
@@ -59,7 +59,7 @@ export function downloadRosterTemplate(): Promise<Blob> {
   return http.get('/member/roster/template', { responseType: 'blob' })
 }
 
-export function downloadRoster(params: { year?: number; batch_no?: string } = {}): Promise<Blob> {
+export function downloadRoster(params: { year?: number; batch_no?: string; include_transferred?: boolean } = {}): Promise<Blob> {
   return http.get('/member/roster/export', { params, responseType: 'blob' })
 }
 

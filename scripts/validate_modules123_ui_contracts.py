@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.v1.embeddings import EmbedRequest  # noqa: E402
 from app.api.v1.knowledge import DocumentMetadataPatch  # noqa: E402
-from app.schemas import meeting, member_ext, member_review  # noqa: E402
+from app.schemas import meeting, member_ext, member_review, member_transfer  # noqa: E402
 
 CONTRACTS = [
     ("POST", r"/embeddings/embed", EmbedRequest),
@@ -41,6 +41,9 @@ CONTRACTS = [
     ("PATCH", r"/meeting/member-reviews/[^/]+", member_review.ReviewUpdate),
     ("POST", r"/meeting/member-reviews/[^/]+/submit", member_review.ReviewSubmit),
     ("POST", r"/meeting/member-reviews/[^/]+/review", member_review.ReviewDecision),
+    ("POST", r"/member-full/transfers", member_transfer.TransferCreate),
+    ("POST", r"/member-full/transfers/[^/]+/settle", member_transfer.TransferSettle),
+    ("POST", r"/member-full/transfers/[^/]+/revoke", member_transfer.TransferRevoke),
 ]
 
 

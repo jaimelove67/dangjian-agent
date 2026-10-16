@@ -41,6 +41,11 @@ class MemberProfile(Base):
     materials: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
     pending: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # 组织关系状态缓存（T-MEM-14）：in_place / out_pending / transferred_out。
+    # 唯一事实来源是 member_transfers 台账，本列只由 TransferService 从台账推导后写入，
+    # 供名册、名册统计与"应评议党员"直接过滤——三处口径必须一致，否则会出现
+    # "名册说已转出、民主评议里还在评"的互相打脸。无接转记录恒为 in_place。
+    relation_status: Mapped[str] = mapped_column(String(20), nullable=False, default="in_place")
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     batch_no: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
@@ -217,3 +222,47 @@ class MemberReview(Base):
     reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     review_comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class MemberTransfer(Base):
+    """党员组织关系接转台账（转入 / 转出与介绍信）。
+
+    依据《中国共产党党员教育管理工作条例》第五章"党员组织关系管理"：党员组织关系
+    介绍信是党员政治身份的证明，转移组织关系须办理转入 / 转出。一条记录 = 一次接转。
+
+    两条关键事实决定了表结构：**一是转出开介绍信不等于转出完成**——本人持介绍信到新
+    组织报到、新组织回执（``settled``）才算落地，中间是"待接收"（``pending``），所以
+    状态必须能停在中间，而不是一按就"已完成"；**二是接转不是阶段流转**——正式党员
+    转出后仍然是正式党员，把接转写进 ``member_stage_history`` 会让"阶段历史"混进
+    不是阶段流转的行，因此接转只指向 ``member_profiles``、不改发展阶段。
+
+    ``counterpart_org`` 只记对方组织名称与介绍信要素；接收单位联系人与电话**不落库**：
+    那是第三人信息，接转只需要组织名称与介绍信要素（编号 / 开具日期 / 有效期至）。
+    """
+
+    __tablename__ = "member_transfers"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        Index("ix_member_transfers_scope", "tenant_id", "org_unit_id", "direction", "status"),
+        Index("ix_member_transfers_profile", "tenant_id", "profile_id", "created_at"),
+    )
+
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # 接转发生时的姓名 / 组织 / 阶段快照：人员改名、流转或再次调动后历史行仍能读回去
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    counterpart_org: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    letter_no: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    issued_on: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_until: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    settled_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    receipt_no: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    revoked_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    revoke_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 操作版本：登记 / 回执 / 作废各留一版完整快照，编号只增不减
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

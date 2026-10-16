@@ -74,6 +74,21 @@ const profile = {
   stage_history: [],
   boundary: '阶段流转仅由人工操作完成，辅助结果不构成组织认定。',
 }
+// 组织关系接转（T-MEM-14）用到的在册正式党员：接转只面向预备党员与正式党员，
+// 上面的"陈见微"是培养对象（入党积极分子/发展对象），正好用来验证培养对象不出现在转出候选里。
+const transferMember = {
+  id: 'member-b',
+  name: '林舟',
+  org_name: org.name,
+  org_unit_id: org.id,
+  current_stage: 'member',
+  stage_joined_on: `${year - 3}-06-01`,
+  year,
+  batch_no: 'B1',
+  is_active: true,
+  pending: 0,
+  materials: [],
+}
 const source = {
   ...doc,
   excerpt: '界面验证样例正文，不作为业务依据。',
@@ -421,6 +436,7 @@ function fixture() {
       },
     ],
     votes: [],
+    transfers: [],
     records: [structuredClone(meeting)],
     memberReviews: structuredClone(memberReviewRows),
     revisions: [],
@@ -456,6 +472,63 @@ const pagination = (items, params) => ({
   page: Number(params.get('page') || 1),
   page_size: Number(params.get('page_size') || 20),
 })
+
+// ---------------------------- 组织关系接转（T-MEM-14） ----------------------------
+const transferDirections = { in: '转入', out: '转出' }
+const transferStatuses = { pending: '待接收', settled: '已接收', revoked: '已作废' }
+const transferStates = { in_place: '在册', out_pending: '转出待接收', transferred_out: '已转出' }
+const addDays = (iso, days) => {
+  const value = new Date(`${iso}T00:00:00Z`)
+  value.setUTCDate(value.getUTCDate() + days)
+  return value.toISOString().slice(0, 10)
+}
+/** 与后端 latest_transfer_states 同一口径：作废视同未发生，取最后一条有效记录。 */
+function transferState(transfers, profileId) {
+  let state = 'in_place'
+  for (const row of transfers.filter((item) => item.profile_id === profileId)) {
+    if (row.status === 'revoked') continue
+    state =
+      row.direction === 'out'
+        ? row.status === 'settled'
+          ? 'transferred_out'
+          : 'out_pending'
+        : 'in_place'
+  }
+  return state
+}
+function transferView(row, currentDay) {
+  const overdue = row.status === 'pending' && row.valid_until < currentDay
+  return {
+    ...row,
+    direction_label: transferDirections[row.direction],
+    status_label: transferStatuses[row.status],
+    state_label: transferStates[row.state ?? 'in_place'],
+    stage_label: row.stage === 'member' ? '正式党员' : '预备党员',
+    days_left: Math.round(
+      (Date.parse(`${row.valid_until}T00:00:00Z`) - Date.parse(`${currentDay}T00:00:00Z`)) / 86400000,
+    ),
+    overdue,
+    overdue_notice: overdue
+      ? `介绍信已超过有效期仍未回执（${row.counterpart_org}），请核实本人是否已到新组织报到并联系接收组织确认；系统不自动判定转出失败`
+      : '',
+  }
+}
+function transferSummary(transfers, currentDay) {
+  const pending = transfers.filter((row) => row.status === 'pending')
+  return {
+    pending_out: pending.filter((row) => row.direction === 'out').length,
+    pending_in: pending.filter((row) => row.direction === 'in').length,
+    overdue: pending.filter((row) => row.valid_until < currentDay).length,
+    settled_out: transfers.filter((row) => row.direction === 'out' && row.status === 'settled').length,
+    settled_in: transfers.filter((row) => row.direction === 'in' && row.status === 'settled').length,
+    revoked: transfers.filter((row) => row.status === 'revoked').length,
+    this_year_out: transfers.filter((row) => row.direction === 'out' && row.issued_on.startsWith(String(year))).length,
+    this_year_in: transfers.filter((row) => row.direction === 'in' && row.issued_on.startsWith(String(year))).length,
+    pending_total: pending.length,
+  }
+}
+const TRANSFER_NOTICE =
+  '接转只记录事实：转出须收到回执才算完成，转入须核对档案；系统不自动认定接收，也不因介绍信到期自动判定失败'
 
 function updateMissing(record) {
   record.missing = [
@@ -556,23 +629,207 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
           Number(url.searchParams.get('year')) === data.profile.year) &&
         (!url.searchParams.has('batch_no') ||
           url.searchParams.get('batch_no') === data.profile.batch_no)
+      const includeTransferred = url.searchParams.get('include_transferred') === 'true'
+      // 组织关系已转出的人不在默认名册里（T-MEM-14），与后端 include_transferred 口径一致
+      const rows = (data.empty || !match ? [] : [data.profile, transferMember])
+        .map((item) => {
+          const relationStatus = transferState(data.transfers, item.id)
+          return {
+            ...item,
+            materials: item.materials.map((entry) => entry.material_type),
+            stage: item.current_stage,
+            days_in_stage: 500,
+            relation_status: relationStatus,
+          }
+        })
+        .filter((item) => includeTransferred || item.relation_status !== 'transferred_out')
+      return route.fulfill(ok(pagination(rows, url.searchParams)))
+    }
+    // ---------------------------- 组织关系接转（T-MEM-14） ----------------------------
+    if (path === '/member-full/transfers' && method === 'GET') {
+      const rows = data.transfers
+        .filter(
+          (row) =>
+            !url.searchParams.has('direction') ||
+            row.direction === url.searchParams.get('direction'),
+        )
+        .filter(
+          (row) => !url.searchParams.has('status') || row.status === url.searchParams.get('status'),
+        )
+        .filter(
+          (row) =>
+            url.searchParams.get('overdue') !== 'true' ||
+            (row.status === 'pending' && row.valid_until < today),
+        )
+        // 列表不带留痕：留痕要走单条明细接口，避免"看起来看完了其实没查"
+        .map(({ history, ...row }) => {
+          void history
+          return transferView({ ...row, state: transferState(data.transfers, row.profile_id) }, today)
+        })
       return route.fulfill(
-        ok(
-          pagination(
-            data.empty || !match
-              ? []
-              : [
-                  {
-                    ...data.profile,
-                    materials: data.profile.materials.map((item) => item.material_type),
-                    stage: data.profile.current_stage,
-                    days_in_stage: 500,
-                  },
-                ],
-            url.searchParams,
-          ),
-        ),
+        ok({
+          items: rows,
+          total: rows.length,
+          page: 1,
+          page_size: 20,
+          summary: transferSummary(data.transfers, today),
+          notice: TRANSFER_NOTICE,
+        }),
       )
+    }
+    if (path === '/member-full/transfers' && method === 'POST') {
+      const base = [
+        '入党申请书',
+        '党组织谈话记录',
+        '思想汇报',
+        '培养考察记录',
+        '群众评议材料',
+        '党课培训证明',
+        '政治审查材料',
+        '公示情况报告',
+        '支部大会决议',
+        '上级审批意见',
+      ]
+      const row = {
+        id: `transfer-${data.transfers.length}`,
+        direction: body.direction,
+        profile_id: body.profile_id ?? `member-in-${data.transfers.length}`,
+        member_name: '',
+        stage: '',
+        org_unit_id: org.id,
+        org_name: org.name,
+        counterpart_org: body.counterpart_org,
+        letter_no: body.letter_no,
+        issued_on: body.issued_on,
+        valid_until: body.valid_until || addDays(body.issued_on, 90),
+        status: 'pending',
+        settled_on: null,
+        receipt_no: '',
+        note: body.note || '',
+        revoked_on: null,
+        revoke_reason: '',
+        revision: 1,
+        created_at: `${body.issued_on}T09:00:00`,
+        history: [],
+      }
+      let notice
+      let extra = {}
+      if (body.direction === 'out') {
+        assert.equal(
+          transferState(data.transfers, row.profile_id),
+          'in_place',
+          '只有在册党员可以办理转出',
+        )
+        const target = body.profile_id === data.profile.id ? data.profile : transferMember
+        assert.ok(
+          ['probationary', 'member'].includes(target.current_stage),
+          '培养对象不办组织关系接转',
+        )
+        Object.assign(row, { member_name: target.name, stage: target.current_stage })
+        notice =
+          '介绍信已登记为待接收：本人持介绍信到对方组织报到并回执后才算转出完成；到期未回执请核实是否已报到'
+      } else {
+        const target = body.profile_id
+          ? body.profile_id === data.profile.id
+            ? data.profile
+            : transferMember
+          : { name: body.name, current_stage: body.current_stage }
+        assert.ok(
+          ['probationary', 'member'].includes(target.current_stage),
+          '转入只面向预备党员与正式党员',
+        )
+        Object.assign(row, { member_name: target.name, stage: target.current_stage })
+        const required =
+          target.current_stage === 'member' ? [...base, '转正申请书', '预备期考察记录'] : base
+        extra = {
+          created_profile: !body.profile_id,
+          archive: { check_id: `check-${data.transfers.length}`, required, missing: required },
+        }
+        notice =
+          '转入已登记为待核对档案：请按档案清单逐项核对本人档案并回执；缺项不影响登记，核对完成后回执即可'
+      }
+      row.history.push({
+        revision: 1,
+        action: 'create',
+        actor_id: 'viewer-a',
+        reason: body.reason,
+        created_at: row.created_at,
+      })
+      data.transfers.push(row)
+      return route.fulfill(
+        ok({
+          ...transferView(
+            { ...row, state: transferState(data.transfers, row.profile_id) },
+            today,
+          ),
+          ...extra,
+          notice,
+        }),
+      )
+    }
+    if (path.startsWith('/member-full/transfers/')) {
+      const parts = path.split('/')
+      const row = data.transfers.find((item) => item.id === parts[3])
+      assert.ok(row, '接转记录必须存在')
+      if (parts[4] === 'settle') {
+        assert.equal(row.status, 'pending', '只有待接收的接转可以回执')
+        row.status = 'settled'
+        row.settled_on = body.settled_on || today
+        row.receipt_no = body.receipt_no || ''
+        row.revision += 1
+        row.history.push({
+          revision: row.revision,
+          action: 'settle',
+          actor_id: 'viewer-a',
+          reason: body.reason,
+          created_at: `${today}T10:00:00`,
+        })
+        const state = transferState(data.transfers, row.profile_id)
+        return route.fulfill(
+          ok({
+            ...transferView({ ...row, state }, today),
+            notice:
+              row.direction === 'out'
+                ? '已登记回执：本次转出完成，该党员不再计入本组织在册名单与应评议名单'
+                : '已登记回执：转入办结，档案缺项仍可在档案面板逐项补齐',
+          }),
+        )
+      }
+      if (parts[4] === 'revoke') {
+        assert.notEqual(row.status, 'revoked', '已作废的接转不能重复作废')
+        row.status = 'revoked'
+        row.revoked_on = today
+        row.revoke_reason = body.reason
+        row.revision += 1
+        row.history.push({
+          revision: row.revision,
+          action: 'revoke',
+          actor_id: 'viewer-a',
+          reason: body.reason,
+          created_at: `${today}T11:00:00`,
+        })
+        return route.fulfill(
+          ok({
+            ...transferView(
+              { ...row, state: transferState(data.transfers, row.profile_id) },
+              today,
+            ),
+            notice: '已作废：该次接转视同未发生，组织关系状态按其余有效记录重新推导；记录保留可查',
+          }),
+        )
+      }
+      if (method === 'GET') {
+        return route.fulfill(
+          ok({
+            ...transferView(
+              { ...row, state: transferState(data.transfers, row.profile_id) },
+              today,
+            ),
+            history: row.history,
+            notice: TRANSFER_NOTICE,
+          }),
+        )
+      }
     }
     if (path === '/member-full/batches') {
       if (method === 'POST') {
@@ -1178,6 +1435,90 @@ try {
       0,
     )
     checks.push('多轮投票的人工核对、汇总和重复提交门禁')
+
+    // ---------------------------- 组织关系接转（T-MEM-14） ----------------------------
+    await tab(page, '组织关系接转')
+    await visible(page, '转出开了介绍信不等于转出完成')
+    const outDialog = page.getByRole('dialog').filter({ has: page.getByLabel('接收组织名称（介绍信抬头）') })
+    const settleDialog = page.getByRole('dialog').filter({ has: page.getByLabel('回执日期') })
+    await click(page, '登记转出')
+    // 培养对象不是组织关系接转的对象：候选里不能出现"陈见微"（入党积极分子）
+    await outDialog.getByLabel('转出党员（预备党员 / 正式党员）').waitFor()
+    assert.equal(await outDialog.locator('option', { hasText: '陈见微' }).count(), 0)
+    await outDialog.getByLabel('转出党员（预备党员 / 正式党员）').selectOption(transferMember.id)
+    await outDialog.getByLabel('接收组织名称（介绍信抬头）').fill('合成外校党委')
+    await outDialog.getByLabel('介绍信编号').fill('转字2026-001')
+    await outDialog.getByLabel('开具日期').fill(today)
+    await outDialog.getByLabel('办理依据 / 说明').fill('本人申请转出，支委会研究同意')
+    await click(page, '登记为待接收')
+    await visible(page, '已登记转出')
+    await visible(page, '转出待接收')
+    assert.equal(state.transfers[0].status, 'pending')
+    checks.push('登记转出：状态停在待接收，且不改发展阶段')
+
+    await click(page, '留痕')
+    await visible(page, '本人申请转出，支委会研究同意')
+    await click(page, '登记回执（完成转出）')
+    await settleDialog.getByLabel('回执编号（可留空）').fill('回执2026-088')
+    await settleDialog.getByLabel('办理依据 / 说明').fill('收到接收组织回执')
+    await click(page, '确认登记回执')
+    await visible(page, '不再计入本组织在册名单')
+    assert.equal(state.transfers[0].status, 'settled')
+    await screenshot(page, 'members-transfers')
+    await click(page, '留痕')
+    await visible(page, '收到接收组织回执')
+    checks.push('收到回执才算转出完成，回执后移出在册名单，留痕可查办理理由')
+
+    await tab(page, '人员档案')
+    assert.equal(await page.locator('.roster__item', { hasText: '林舟' }).count(), 0)
+    await page.getByRole('checkbox', { name: '含组织关系已转出人员' }).check()
+    await visible(page, '林舟')
+    await visible(page, '已转出')
+    checks.push('已转出人员默认不出现在名册，显式勾选后可查且带标识')
+
+    await tab(page, '组织关系接转')
+    await click(page, '登记转入')
+    const inDialog = page.getByRole('dialog').filter({ has: page.getByLabel('接收组织（本组织侧）') })
+    await inDialog.getByLabel('关联的档案（预备党员 / 正式党员）').selectOption(transferMember.id)
+    await inDialog.getByLabel('原组织名称（介绍信来历）').fill('合成外校党委')
+    await inDialog.getByLabel('介绍信编号').fill('转入字2026-021')
+    await inDialog.getByLabel('开具日期').fill(today)
+    await inDialog.getByLabel('办理依据 / 说明').fill('本人持介绍信来校报到，关系转回本校')
+    await click(page, '登记转入并生成档案清单')
+    await visible(page, '转入登记结果')
+    await visible(page, '已关联现有档案')
+    await visible(page, '转正申请书')
+    await visible(page, '缺项不影响本次登记')
+    assert.equal(state.transfers[1].direction, 'in')
+    assert.equal(state.transfers[1].profile_id, transferMember.id)
+    await click(page, '登记回执（档案已核对）')
+    await settleDialog.getByLabel('办理依据 / 说明').fill('档案逐项核对完成')
+    await click(page, '确认登记回执')
+    await visible(page, '转入办结')
+    assert.equal(state.transfers[1].status, 'settled')
+    checks.push('转入按现有档案关联并列出档案缺项，回执后仍在册')
+
+    await click(page, '登记转出')
+    await outDialog.getByLabel('转出党员（预备党员 / 正式党员）').selectOption(transferMember.id)
+    await outDialog.getByLabel('接收组织名称（介绍信抬头）').fill('合成第四个单位党委')
+    await outDialog.getByLabel('介绍信编号').fill('转字2026-050')
+    await outDialog.getByLabel('开具日期').fill(addDays(today, -200))
+    await outDialog.getByLabel('办理依据 / 说明').fill('转往第四个单位')
+    await click(page, '登记为待接收')
+    await visible(page, '已登记转出')
+    await page.getByRole('checkbox', { name: '只看已超过有效期' }).check()
+    await visible(page, '需要人工核实')
+    await visible(page, '不自动判定转出失败')
+    checks.push('超过介绍信有效期只提示核实，不自动判定失败')
+
+    await click(page, '作废')
+    const revokeDialog = page.getByRole('dialog').filter({ has: page.getByLabel('作废理由') })
+    await revokeDialog.getByLabel('作废理由').fill('介绍信抬头写错，重新开具')
+    await click(page, '确认作废')
+    await visible(page, '记录保留可查')
+    assert.equal(state.transfers.at(-1).status, 'revoked')
+    await visible(page, '当前筛选下没有接转记录')
+    checks.push('接转可作废：视同未发生但记录保留')
 
     await page.goto(`${BASE}/meeting`, { waitUntil: 'networkidle' })
     await click(page, '登记活动计划')

@@ -32,7 +32,9 @@ from app.models.member import (  # noqa: F401
     MemberMaterial,
     MemberProfile,
     MemberReminder,
+    MemberReview,
     MemberStageHistory,
+    MemberTransfer,
     MemberVote,
 )
 from app.models.org import OrgUnit  # noqa: F401

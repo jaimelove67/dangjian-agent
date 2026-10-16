@@ -818,6 +818,9 @@ class MemberDevelopment:
         conditions = [
             *self._scope(MemberProfile),
             MemberProfile.is_active.is_(True),
+            # 名册统计与名册列表口径一致：组织关系已转出的人员不再计入在册
+            # （T-MEM-14），否则会出现"名册里 10 人、统计说 12 人"。
+            MemberProfile.relation_status != "transferred_out",
         ]
         if year:
             conditions.append(MemberProfile.year == year)

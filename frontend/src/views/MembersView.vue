@@ -24,7 +24,7 @@ import type {
   TodoSuggestionsResponse,
   TransitionSuggestion,
 } from '@/api/types'
-import { STAGE_LABELS, STAGE_ORDER, TODO_CATEGORY_LABELS } from '@/api/types'
+import { STAGE_LABELS, STAGE_ORDER, TODO_CATEGORY_LABELS, RELATION_STATUS_LABELS, RELATION_STATUS_TONE } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -33,6 +33,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
 import MemberFilePanel from '@/components/members/MemberFilePanel.vue'
 import MemberProcessWorkspace from '@/components/members/MemberProcessWorkspace.vue'
+import TransferPanel from '@/components/members/TransferPanel.vue'
 import { session } from '@/stores/session'
 import { downloadBlob, todayISO } from '@/utils/files'
 
@@ -60,7 +61,8 @@ const workspace = ref('profiles')
 const flowBusy = ref(false)
 const rosterYear = ref('')
 const rosterBatch = ref('')
-const workspaces = [{ key: 'profiles', label: '人员档案' }, { key: 'batches', label: '年度批次' }, { key: 'reminders', label: '提醒待办' }, { key: 'votes', label: '多轮选优' }]
+const rosterIncludeTransferred = ref(false)
+const workspaces = [{ key: 'profiles', label: '人员档案' }, { key: 'transfers', label: '组织关系接转' }, { key: 'batches', label: '年度批次' }, { key: 'reminders', label: '提醒待办' }, { key: 'votes', label: '多轮选优' }]
 const panelTab = ref<PanelTab>('qualification')
 
 const qualification = ref<QualificationResult | null>(null)
@@ -171,7 +173,7 @@ async function load(): Promise<void> {
   loading.value = true
   rosterError.value = null
   try {
-    const response = await listMembers({ page: page.value, page_size: pageSize, year: rosterYear.value ? Number(rosterYear.value) : undefined, batch_no: rosterBatch.value.trim() || undefined })
+    const response = await listMembers({ page: page.value, page_size: pageSize, year: rosterYear.value ? Number(rosterYear.value) : undefined, batch_no: rosterBatch.value.trim() || undefined, include_transferred: rosterIncludeTransferred.value || undefined })
     if (sequence !== rosterSequence) return
     members.value = response.items
     total.value = response.total
@@ -285,6 +287,7 @@ async function exportRoster(): Promise<void> {
     const blob = await downloadRoster({
       year: rosterYear.value ? Number(rosterYear.value) : undefined,
       batch_no: rosterBatch.value.trim() || undefined,
+      include_transferred: rosterIncludeTransferred.value || undefined,
     })
     const scope = rosterYear.value || rosterBatch.value ? '筛选范围' : '全部'
     downloadBlob(blob, `名册导出-${scope}-${todayISO()}.xlsx`)
@@ -463,8 +466,9 @@ const todoTone: Record<TodoItem['category'], string> = {
     <form class="wb-actions" @submit.prevent="page = 1; load()">
       <label class="wb-field"><span>名册年度</span><input v-model="rosterYear" class="input" type="number" min="2000" max="2100" placeholder="全部年度" /></label>
       <label class="wb-field"><span>批次号</span><input v-model="rosterBatch" class="input" maxlength="20" placeholder="全部批次" /></label>
+      <label class="wb-check"><input v-model="rosterIncludeTransferred" type="checkbox" :disabled="loading || flowBusy" @change="page = 1; load()" /><span>含组织关系已转出人员</span></label>
       <button class="btn btn--ghost" type="submit" :disabled="loading || flowBusy">查询名册</button>
-      <button v-if="rosterYear || rosterBatch" class="btn btn--quiet" type="button" :disabled="loading || flowBusy" @click="rosterYear = ''; rosterBatch = ''; page = 1; load()">清除筛选</button>
+      <button v-if="rosterYear || rosterBatch || rosterIncludeTransferred" class="btn btn--quiet" type="button" :disabled="loading || flowBusy" @click="rosterYear = ''; rosterBatch = ''; rosterIncludeTransferred = false; page = 1; load()">清除筛选</button>
     </form>
     <p v-if="rosterIoError" class="field__error is-preline" role="alert">{{ rosterIoError }}</p>
     <p v-if="createSuccess" role="status">{{ createSuccess }}</p>
@@ -569,6 +573,12 @@ const todoTone: Record<TodoItem['category'], string> = {
               <span class="roster__row">
                 <span class="roster__name">{{ m.name }}</span>
                 <span class="badge">{{ STAGE_LABELS[m.stage] }}</span>
+                <span
+                  v-if="m.relation_status && m.relation_status !== 'in_place'"
+                  class="badge"
+                  :class="RELATION_STATUS_TONE[m.relation_status] === 'quiet' ? '' : `badge--${RELATION_STATUS_TONE[m.relation_status]}`"
+                  :title="`组织关系：${RELATION_STATUS_LABELS[m.relation_status]}`"
+                >{{ RELATION_STATUS_LABELS[m.relation_status] }}</span>
               </span>
               <span class="roster__org">{{ m.org_name }}</span>
               <span class="roster__meta">
@@ -906,6 +916,9 @@ const todoTone: Record<TodoItem['category'], string> = {
         </template>
       </section>
     </div>
+    </div>
+    <div v-else-if="workspace === 'transfers'" class="wb-stack">
+      <TransferPanel :organizations="organizations" @busy="flowBusy = $event" @changed="load()" />
     </div>
     <MemberProcessWorkspace v-else :mode="workspace" :organizations="organizations" @select-batch="selectBatch" @busy="flowBusy = $event" />
     </WorkspaceTabs>

@@ -501,6 +501,21 @@ export const STAGE_ORDER: MemberStage[] = [
   'member',
 ]
 
+/** 组织关系状态（T-MEM-14）：唯一事实来源是接转台账，档案上只是推导后的缓存 */
+export type RelationStatus = 'in_place' | 'out_pending' | 'transferred_out'
+
+export const RELATION_STATUS_LABELS: Record<RelationStatus, string> = {
+  in_place: '在册',
+  out_pending: '转出待接收',
+  transferred_out: '已转出',
+}
+
+export const RELATION_STATUS_TONE: Record<RelationStatus, 'ok' | 'warn' | 'quiet'> = {
+  in_place: 'ok',
+  out_pending: 'warn',
+  transferred_out: 'quiet',
+}
+
 export interface MemberRosterItem {
   user_id?: string | null
   id: string
@@ -512,6 +527,8 @@ export interface MemberRosterItem {
   days_in_stage: number
   materials: string[]
   pending: number
+  // 组织关系状态：名册默认不列已转出人员，带上标识才能解释"为什么他不在名单里"
+  relation_status?: RelationStatus
   year?: number | null
   batch_no?: string | null
 }

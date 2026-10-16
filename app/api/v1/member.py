@@ -118,9 +118,18 @@ async def member_org_units(
 
 
 async def _roster_conditions(
-    db: AsyncSession, user: User, *, year: int | None, batch_no: str | None
+    db: AsyncSession,
+    user: User,
+    *,
+    year: int | None,
+    batch_no: str | None,
+    include_transferred: bool = False,
 ) -> list[Any]:
-    """名册筛选条件：租户 + 有效台账 + 年度/批次 + 组织权限范围（列表与导出共用）。"""
+    """名册筛选条件：租户 + 有效台账 + 年度/批次 + 组织权限范围（列表与导出共用）。
+
+    默认不列组织关系已转出的人员（T-MEM-14）：他们已经不属于本组织在册党员，
+    但台账与接转记录仍在——需要查历史时显式勾选"含已转出"。
+    """
     conditions: list[Any] = [
         MemberProfile.tenant_id == str(user.tenant_id),
         MemberProfile.is_deleted.is_(False),
@@ -130,6 +139,8 @@ async def _roster_conditions(
         conditions.append(MemberProfile.year == year)
     if batch_no is not None:
         conditions.append(MemberProfile.batch_no == batch_no)
+    if not include_transferred:
+        conditions.append(MemberProfile.relation_status != "transferred_out")
     if get_role_profile(user.role).business_scope != BS_ALL:
         organizations = await accessible_org_units(db, user)
         conditions.append(MemberProfile.org_unit_id.in_([org.id for org in organizations]))
@@ -148,10 +159,15 @@ async def member_roster(
     page_size: int = Query(40, ge=1, le=100),
     year: int | None = Query(None, ge=2000, le=2100),
     batch_no: str | None = Query(None, min_length=1, max_length=20),
+    include_transferred: bool = Query(
+        False, description="是否包含组织关系已转出的人员（默认不含）"
+    ),
     user: User = Depends(_require_member),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[MemberRosterResponse]:
-    conditions = await _roster_conditions(db, user, year=year, batch_no=batch_no)
+    conditions = await _roster_conditions(
+        db, user, year=year, batch_no=batch_no, include_transferred=include_transferred
+    )
     total = (await db.execute(select(func.count(MemberProfile.id)).where(*conditions))).scalar_one()
     statement = (
         select(MemberProfile)
@@ -270,10 +286,15 @@ async def member_roster_export(
     request: Request,
     year: int | None = Query(None, ge=2000, le=2100),
     batch_no: str | None = Query(None, min_length=1, max_length=20),
+    include_transferred: bool = Query(
+        False, description="是否包含组织关系已转出的人员（默认不含）"
+    ),
     user: User = Depends(_require_member),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    conditions = await _roster_conditions(db, user, year=year, batch_no=batch_no)
+    conditions = await _roster_conditions(
+        db, user, year=year, batch_no=batch_no, include_transferred=include_transferred
+    )
     total = (await db.execute(select(func.count(MemberProfile.id)).where(*conditions))).scalar_one()
     if total > MAX_EXPORT_ROWS:
         raise HTTPException(
@@ -301,6 +322,11 @@ async def member_roster_export(
         "全组织范围"
         if get_role_profile(user.role).business_scope == BS_ALL
         else "当前账号权限范围内的组织"
+    )
+    scope_note += (
+        "（含组织关系已转出人员）"
+        if include_transferred
+        else "（默认不含组织关系已转出人员，如需可勾选含已转出后重新导出）"
     )
     content = build_roster(
         [

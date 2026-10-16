@@ -36,7 +36,21 @@ node frontend\scripts\check-roles-ui.mjs
 元数据修正表单，只读角色仍能刷新处理状态与下载原件。
 默认连接 `http://127.0.0.1:5666`、密码 `Test123456`，可用 `PARTY_BASE_URL`、
 `PARTY_PASSWORD` 覆盖；Playwright 自带浏览器版本不匹配时用 `PARTY_CHROMIUM` 指定
-本机 Chromium 可执行文件。脚本会自行等待登录/接口限流窗口，无需手工调整频率。
+本机 Chromium 可执行文件。脚本会自行等待登录限流窗口。
+
+**跑之前把本地后端的接口限流放宽**：`RATE_LIMIT_PER_MINUTE` 默认 120 且**按 IP 计**
+（`app/core/rate_limit.py`），7 个角色顺序跑很容易在同一个 60 秒窗口里超额。超额（429）
+时脚本只会对「逐路由」那一段重试，而工作区检查（组织生活频次、民主评议、组织关系接转
+等）在 429 下拿到的是没渲染完的页面，会报成"某项没挂载"的**假失败**，且每次失败的角色
+不固定。用 `set RATE_LIMIT_PER_MINUTE=5000` 启动后端再跑，7 个角色可稳定通过：
+
+```powershell
+# 另开一个窗口启动后端（示例端口 18000）
+set RATE_LIMIT_PER_MINUTE=5000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 18000
+$env:VITE_API_TARGET = 'http://127.0.0.1:18000'   # 前端 dev 代理指向它
+node frontend\scripts\check-roles-ui.mjs
+```
 
 该检查已接入 CI（`.github/workflows/role-ui.yml`）：用隔离的 PostgreSQL/Redis 服务容器
 跑迁移与合成账号初始化，起后端与前端后执行同一脚本，报告作为构建产物上传。
@@ -260,6 +274,19 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 - 开发库端到端手工核对（`TEST_TENANT` / `TEST_BRANCH`，2 名应评议党员）：工作区 200 只列正式党员与预备党员、给出 4 个等次选项与两条边界口径；按年度发起新建 2 条草稿（再点返回 `created: 0`、`skipped: 2`）；录入后 `missing: []`、`advisories: ["未登记党员互评意见"]`；送审 `pending` → 另一位审核 `approved`、生效等次「合格」，留痕 `v1 launch / v2 revise / v3 submit / v4 review`；`GET /admin/reviews?status=pending` 能列出 `source_kind = member_review` 并由另一名同租户成员审核通过；组织生活会从登记 → 生成议程（含会前谈心谈话）→ 纪要只出「查摆问题 / 批评意见 / 整改方向」（未选政策依据时如实列「政策依据待补」）→ 提交 → 他人审核通过，`GET /meeting/frequency` 随之把该支部 2026 年度组织生活会从「还差 1 次」变成达标。
 
 未覆盖：不自动生成 / 不按票数排名等次、不自动生成不合格处置意见、不自动限制优秀比例（只在页面写明「按上级规定执行、系统不自动截断」）；不产生组织生活会与民主评议的个体通知与待办；评议结果不自动写入档案正文（本人经「本人档案」看自己的结果，归档正文仍走既有流程）；**年度考核 `source: meetings` 的会议计数会把组织生活会一并计入 `LIFE_001` / `LIFE_002`**（`assessment_sources.py` 只排除中心组学习，未按活动类型拆分——计数口径如此，未改）；民主测评只存汇总票数、不存逐人票向（不可回溯到人）；本人查看只返回本人 `approved` 的年度结果，测试账号未与名册档案关联时为空列表（关联后的可见性由集成用例覆盖）；未做多支部大批量发起的性能验证。
+
+## 党员组织关系接转回归（T-MEM-14）
+
+2026-10-16，党员组织关系接转落在**独立台账** `member_transfers`（迁移 `018_member_transfers`，接转不是阶段流转：转出不动 `current_stage`、不删档案），登记转入 / 转出与介绍信要素（编号 / 开具日期 / 有效期至）、对方组织名称与回执；组织关系状态由台账唯一推导并同步到 `member_profiles.relation_status` 缓存列，供名册列表 / 名册统计 / 民主评议应评议名单三处共用。「党员发展」新增「组织关系接转」工作区（汇总、筛选、登记转出 / 登记转入 / 登记回执 / 作废 / 逐行留痕），名册新增「含组织关系已转出人员」筛选与状态标识。
+
+- `tests/unit/test_member_transfer.py`：10 项通过（无需数据库）。覆盖介绍信有效期换算与配置回落（默认 +90 天、配置改了跟着改、`issued_on` 晚于 `valid_until` 时 `valid_until` 优先）、逾期只对「待接收」成立（已回执 / 已作废不算逾期）、`days_left` 正负号与端点、**状态推导**（同一档案多条记录时取最新有效记录；作废一条不能把另一条仍然有效的转出关掉；只有作废与已回执记录时回到「在册」）、阶段与方向标签、受访组织 / 阶段为空时的兜底文案、接转只适用于预备党员与正式党员、`StageRules.materials_for_stage` 与既有 `material_requirements` 逐阶一致（申请人 0 / 积极分子 2 / 预备党员 10 / 正式党员 12，非发展阶段为空）、以及转出 / 转入 / 回执 / 作废四类输入契约（转入必须给接收组织、姓名与档案编号不能同填、理由不得为空或只有空格、日期不得为未来、`revision` 必须为正）。
+- `tests/integration/test_member_transfer_workflow.py`：4 项通过（一次性 PostgreSQL 库 + `alembic upgrade head`）。钉住转出 → 待接收 → 回执 → 已转出并**移出名册与民主评议应评议名单**（可显式 `include_transferred` 查回，带 `relation_status`）；转入可关联既有档案（校内支部之间调动，只改档案归属、不新建档案）或按姓名 / 阶段 / 进入阶段日期新建档案，并按阶段给出档案清单与缺项 `member_archive_checks`；以及越权组织 403、培养对象 422、同一档案重复未办结 409、已转出再转出 409、重复回执 409、已作废再回执 409、作废后状态回推、超过有效期只标记 `overdue` 不判定失败。
+- `node frontend/scripts/verify-modules123.mjs`：32 组接口契约与界面检查通过。新增 6 项：登记转出后状态停在「转出待接收」且不改发展阶段（转出候选里不出现入党积极分子）、收到回执才算转出完成并移出在册名单、已转出人员默认不在名册但勾选后可查且带标识、转入关联既有档案并当场列出档案缺项、超过介绍信有效期只提示核实不自动判定失败、接转可作废（视同未发生但记录保留）。
+- `python scripts/validate_modules123_ui_contracts.py tmp/modules123-ui/contract-requests.json`：35 个请求体经后端输入模型校验通过（新增 3 个 `/member-full/transfers*` 契约：登记 / 回执 / 作废）。
+- `node frontend/scripts/check-roles-ui.mjs`（7 个角色，本地后端 `RATE_LIMIT_PER_MINUTE=5000`）通过并新增「接转工作区必须挂载」检查：可访问党员发展的角色在「组织关系接转」必须看到台账汇总与「转出开了介绍信不等于转出完成」的口径、「登记转出 / 登记转入」写入入口（这些角色都具备 `member.stage_transition`），名册必须有「含组织关系已转出人员」筛选，`/member-full/transfers*` 不得出现 4xx、工作区不得出现错误态。
+- 开发库端到端手工核对（`TEST_TENANT` / 支部秘书账号，`合成周砚青` 正式党员）：名册带出 `relation_status: in_place`；登记转出 → 状态「待接收」；紧接着重复转出 → 409「该党员已有一次未办结的接转（转出介绍信 手工核对转字2026-001），请先回执或作废后再发起」；回执 → 「已转出」且名册默认查询不再包含该党员；重复回执 → 409「本次接转已回执，无需重复登记」；明细留痕 `create` / `settle` 两条且各带办理理由；再开一封 200 天前的介绍信走转入 → `overdue: true`、`days_left: -110`、档案清单 12 项（正式党员）；作废 → 「已作废」且组织关系状态回推到「已转出」（更早那条已回执的转出仍然有效，作废只让本次视同未发生）；汇总计数随之为 `settled_out: 1 / revoked: 1`。
+
+未覆盖：不做上级党组织审批 / 备案与报送导出（`T-MEM-11`）；**不采集接收单位联系人与电话**（第三人信息，`T-MEM-12` 范畴）；不自动认定接收、不自动判定转出失败、不自动改发展阶段；不产生个体通知与待办；不写党员档案正文（只落既有档案检查的缺项提示，且缺项只提示不阻断登记）；对方组织只记名称文本，不做跨租户 / 跨学校机构字典比对；介绍信有效期是**可配置默认值**（`member_transfer.letter_valid_days`，注释写明按上级党组织规定填写，不编造国家规定天数）；**年度考核 `source: members` 等既有统计未同步排除已转出人员，阶段提醒（`member_scheduler`）也仍会按原档案产生**——本次只统一了名册列表 / 名册统计 / 民主评议三处口径。
 
 ## 本地扩展证据与主分支区分
 
