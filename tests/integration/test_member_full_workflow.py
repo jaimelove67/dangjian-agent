@@ -285,6 +285,9 @@ async def test_scoring_requires_evidence_and_flags_risks(member_url):
         assert result["dimensions"]["theory_test"]["evidence"][0]["source_id"].startswith(
             "member_cultivation:"
         )
+        # T-SEC-13：评分必须强制标注辅助性质，并说明依据保留在哪里
+        assert "辅助参考" in result["disclaimer"] and "人工终审" in result["disclaimer"]
+        assert "evidence" in result["disclaimer"]
 
 
 @pytest.mark.asyncio
@@ -321,6 +324,8 @@ async def test_votes_deduplicate_and_summarize(member_url):
         summary = await ok(client, "GET", "/member-full/votes/summary?batch_no=B1&round_no=1")
         assert summary["voter_count"] == 2
         assert summary["tally"][first["id"]]["agree"] == 2
+        # 选优汇总同样强制标注，且指向可逐条核对的投票明细分
+        assert "辅助参考" in summary["note"] and "投票明细" in summary["note"]
 
 
 @pytest.mark.asyncio
@@ -397,6 +402,8 @@ async def test_archive_check_lists_missing_and_risk(member_url):
         )
         assert "党组织谈话记录" in result["result"]["missing"]
         assert result["result"]["missing"]
+        # 档案检查结论必须标注辅助性质与依据位置
+        assert "辅助参考" in result["note"] and "材料记录与阶段历史" in result["note"]
         # 无法识别签字/盖章/日期标记时给出风险提示
         result2 = await ok(
             client,

@@ -490,6 +490,31 @@ async def test_plan_versions_reminder_processing_and_csv_export_are_audited(case
         )
         assert plan2.status_code == 200 and plan2.json()["data"]["version"] == 2
         assert plan2.json()["data"]["review_status"] == "pending"
+        # T-SEC-13：导出即流转，未经人工终审的归集不得导出，且提示必须给出下一步
+        blocked = await http.post(f"/api/v1/assessment/runs/{run['id']}/export")
+        assert blocked.status_code == 409, blocked.text
+        assert "人工终审" in blocked.json()["message"]
+        assert "待人工审核" in blocked.json()["message"]
+        assert "考核工作台" in blocked.json()["message"]
+        assert (
+            await db.scalar(
+                select(func.count(AuditLog.id)).where(
+                    AuditLog.action == "assessment_export_manifest"
+                )
+            )
+            == 0
+        )
+    async with client(case, "reviewer") as (http, _):
+        reviewed = await http.post(
+            f"/api/v1/assessment/runs/{run['id']}/review",
+            json={
+                "status": "approved",
+                "opinion": "核查合成来源与规则版本",
+                "expected_revision": 1,
+            },
+        )
+        assert reviewed.status_code == 200, reviewed.text
+    async with client(case, "branch") as (http, db):
         exported = await http.post(f"/api/v1/assessment/runs/{run['id']}/export")
         assert exported.status_code == 200 and exported.headers["cache-control"] == "no-store"
         with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
@@ -501,7 +526,15 @@ async def test_plan_versions_reminder_processing_and_csv_export_are_audited(case
                 "plan.txt",
             } <= set(archive.namelist())
             assert "'=HYPERLINK" in archive.read("indicators.csv").decode("utf-8-sig")
-            assert "待人工审核" in archive.read("assessment.json").decode()
+            # 材料脱离页面后也必须自带决策边界与依据位置，不能只靠界面提示
+            manifest = json.loads(archive.read("assessment.json").decode())
+            assert manifest["label"] == "已人工审核"
+            assert "辅助参考" in manifest["decision_boundary"]
+            assert "未经人工终审不得流转" in manifest["decision_boundary"]
+            assert "sources" in manifest["basis"]
+            plan_text = archive.read("plan.txt").decode()
+            assert "计划v2；审核状态：待人工审核" in plan_text
+            assert "辅助参考" in plan_text
         assert (
             await db.scalar(
                 select(func.count(AuditLog.id)).where(
@@ -510,6 +543,23 @@ async def test_plan_versions_reminder_processing_and_csv_export_are_audited(case
             )
             == 1
         )
+
+
+async def test_missing_evidence_blocks_both_human_review_and_export(case):
+    """缺项归集既不能被批准，也不能导出：人工终审守的是“有依据”而非“点过按钮”。"""
+    await add_rule(case, required_evidence=["合成佐证材料"])
+    run = await recalculate(case)
+    async with client(case, "reviewer") as (http, _):
+        blocked = await http.post(
+            f"/api/v1/assessment/runs/{run['id']}/review",
+            json={"status": "approved", "opinion": "合成核查", "expected_revision": 1},
+        )
+        assert blocked.status_code == 409, blocked.text
+        assert "缺项" in blocked.json()["message"]
+    async with client(case, "branch") as (http, _):
+        exported = await http.post(f"/api/v1/assessment/runs/{run['id']}/export")
+        assert exported.status_code == 409, exported.text
+        assert "缺项" in exported.json()["message"]
 
 
 async def test_archiving_requires_shared_school_confirmation_and_human_review(case):

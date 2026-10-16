@@ -11,12 +11,10 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.decision_boundary import STAGE_TRANSITION_NOTE
 from app.rules.member_stages import MemberStage
 
-DECISION_BOUNDARY_NOTE = (
-    "阶段流转仅可通过人工接口，由具备权限的组织人员依规操作；"
-    "本结果不构成任何组织认定或选拔结论。"
-)
+DECISION_BOUNDARY_NOTE = STAGE_TRANSITION_NOTE
 
 
 class QualificationCheckRequest(BaseModel):

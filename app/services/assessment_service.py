@@ -12,6 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.decision_boundary import (
+    ASSISTED_REFERENCE_NOTE,
+    evidence_note,
+    pending_review_message,
+)
 from app.core.security import Permission, has_permission
 from app.models.assessment import (
     AssessmentArchive,
@@ -53,6 +58,13 @@ from app.services.assessment_sources import (
     load_source,
 )
 from app.services.org_scope import accessible_org_units, can_access_org_unit
+
+#: 归集审核状态的中文标注（人工终审门禁提示用，与前端 reviewLabels 同口径）
+REVIEW_STATUS_LABELS = {
+    "pending": "待人工审核",
+    "approved": "人工审核通过",
+    "returned": "已退回补充",
+}
 
 
 def utc_now() -> datetime:
@@ -1122,14 +1134,25 @@ class AssessmentService:
         return record
 
     async def export(self, run_id: str) -> tuple[bytes, dict[str, Any]]:
-        """当前权限下导出表和来源目录；草稿/缺项明示，CSV防公式注入。"""
-        run, data = await self.fresh_run(run_id)
+        """只导出已人工终审且不缺项的归集；CSV 防公式注入，未审核草案不得流转。"""
+        run, data = await self.fresh_run(run_id, lock=True)
+        if run.review_status != "approved" or any(result["missing"] for result in data["results"]):
+            raise HTTPException(
+                409,
+                pending_review_message(
+                    "考核归集",
+                    REVIEW_STATUS_LABELS.get(run.review_status, run.review_status),
+                    "请在考核工作台由另一位授权人员完成归集人工审核并补齐缺项后重试",
+                ),
+            )
         payload = {
             "run": run_view(run),
             "results": data["results"],
             "tasks": data["tasks"],
             "evidence": data["evidence"],
-            "label": "已人工审核" if run.review_status == "approved" else "待人工审核的考核草案",
+            "label": "已人工审核",
+            "decision_boundary": ASSISTED_REFERENCE_NOTE,
+            "basis": evidence_note("assessment.json 的 results[].sources 与 evidence 列表"),
             "as_of": date.today().isoformat(),
             "scope": run.org_unit_id,
             "notice": "仅含授权数据和佐证目录；真实指标、组织人工台账对照待验收。原文件下载与加密存储依赖知识库/安全模块。",
@@ -1214,7 +1237,9 @@ class AssessmentService:
             if plan and plan.run_id == run.id:
                 package.writestr(
                     "plan.txt",
-                    f"计划v{plan.version}；审核状态：{plan.review_status}\n{plan.content}",
+                    f"计划v{plan.version}；审核状态："
+                    f"{REVIEW_STATUS_LABELS.get(plan.review_status, plan.review_status)}\n"
+                    f"{ASSISTED_REFERENCE_NOTE}\n{plan.content}",
                 )
         return buffer.getvalue(), {
             "run_id": run_id,

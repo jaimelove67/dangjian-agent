@@ -7,8 +7,10 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-# 统一响应内置文案
-DEFAULT_DISCLAIMER = "本回答仅供参考，具体以组织部门确认为准。"
+from app.core.decision_boundary import QA_DISCLAIMER
+
+# 统一响应内置文案（标注口径见 app/core/decision_boundary.py，禁止在本模块自拟）
+DEFAULT_DISCLAIMER = QA_DISCLAIMER
 REFUSAL_ANSWER = "知识库中未找到直接依据，建议向上一级党组织确认。"
 
 

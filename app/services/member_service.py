@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import tenant_config
+from app.core.decision_boundary import ASSISTED_REFERENCE_NOTE, STAGE_TRANSITION_NOTE, evidence_note
 from app.models.meeting import ContentRevision
 from app.models.member import (
     MemberArchiveCheck,
@@ -42,7 +43,7 @@ from app.schemas.member_ext import (
 from app.services.org_scope import visible_org_units
 from app.utils.snapshot import record_snapshot as row_data
 
-DECISION_BOUNDARY = "阶段流转仅由人工操作完成；辅助结果不构成组织认定或选拔结论。"
+DECISION_BOUNDARY = STAGE_TRANSITION_NOTE
 BATCH_RULES_PATH = "config/business_rules.yaml"
 
 
@@ -647,7 +648,10 @@ class MemberDevelopment:
             "round_no": round_no,
             "voter_count": len(voters),
             "tally": tally,
-            "note": "汇总仅为过程记录；排序与结果由组织人员依规认定，不自动决定入选。",
+            "note": (
+                f"{ASSISTED_REFERENCE_NOTE}；本汇总仅为过程记录，排序与入选由组织人员依规认定。"
+                + evidence_note("投票明细")
+            ),
         }
 
     # ==================== 有证据的辅助评分 ====================
@@ -741,7 +745,10 @@ class MemberDevelopment:
             "risks": risks,
             "risk_items_hint": catalog["risk_items"],
             "missing": [key for key, value in output.items() if value["status"] == "no_evidence"],
-            "disclaimer": "无证据维度不打分；评分与排序不自动形成组织认定，须经人工审核。",
+            "disclaimer": (
+                f"{ASSISTED_REFERENCE_NOTE}；无证据维度不打分，"
+                + evidence_note("各维度 evidence 字段")
+            ),
         }
 
     # ==================== 接续发展与档案检查 ====================
@@ -794,7 +801,10 @@ class MemberDevelopment:
             "checked_at": jsonable_encoder(check.checked_at),
             "rule_version": check.rule_version,
             "result": check.result,
-            "note": "档案检查结果仅为提示，组织认定由授权人员完成。",
+            "note": (
+                f"{ASSISTED_REFERENCE_NOTE}；档案检查结果仅为提示，组织认定由授权人员完成。"
+                + evidence_note("材料记录与阶段历史")
+            ),
         }
 
     @staticmethod

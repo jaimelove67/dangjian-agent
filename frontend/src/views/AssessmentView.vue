@@ -30,6 +30,15 @@ const canConfigure = computed(() => session.can('assessment.configure') && filte
 const currentRun = computed(() => workspace.value?.runs.find((run) => run.fingerprint === workspace.value?.fingerprint) ?? null)
 const activeRules = computed(() => workspace.value?.indicators.filter((rule) => rule.active) ?? [])
 const missingCount = computed(() => workspace.value?.results.filter((result) => result.missing.length).length ?? 0)
+/** T-SEC-13：未人工终审或缺项的归集不得导出，导出按钮在此明示原因而不是点完才报错 */
+const exportBlockedReason = computed(() => {
+  if (!currentRun.value) return '尚无与当前数据一致的归集，请先重新归集。'
+  if (missingCount.value) return `仍有 ${missingCount.value} 项缺项，补齐后导出才是完整评价。`
+  if (currentRun.value.review_status !== 'approved') {
+    return `归集${reviewLabels[currentRun.value.review_status] ?? '未审核'}，未经人工终审不得流转。`
+  }
+  return ''
+})
 /**
  * 归集状态徽标。
  *
@@ -203,7 +212,7 @@ async function download(): Promise<void> {
     anchor.download = `党建考核-${filters.year}-${filters.org}.zip`
     anchor.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
-    success.value = '已导出授权指标表、任务统计及佐证目录，审核与缺项状态保留在材料中。'
+    success.value = '已导出人工终审通过的指标表、任务统计及佐证目录；材料内含“辅助参考”标注与依据位置。'
   } catch (err) { actionError.value = err instanceof Error ? err.message : '导出失败' }
   finally { busy.value = false }
 }
@@ -213,13 +222,13 @@ function evidenceReview(item: AssessmentEvidence, status: 'approved' | 'returned
 <template>
   <div class="assessment">
     <PageHeader title="党建考核与年度规划" description="按年度和组织归集一次登记的业务数据，核查缺项与佐证，形成可人工修订的计划草案。" />
-    <div class="notice">真实学校指标与人工台账对照待验收。统计与计划供组织人员研究；正式评价须经人工审核。</div>
+    <div class="notice">真实学校指标与人工台账对照待验收。统计与计划供组织人员研究；评分与归集为辅助参考，未经人工终审不得导出或流转。</div>
     <div class="toolbar">
       <label>年度 <input v-model.number="filters.year" aria-label="考核年度" type="number" min="2000" max="2100" :disabled="busy" @change="load" /></label>
       <label>组织 <select v-model="filters.org" aria-label="考核组织" :disabled="busy" @change="load"><option v-for="org in orgs" :key="org.id" :value="org.id">{{ org.name }}</option></select></label>
       <button class="btn btn--ghost" :disabled="busy || loading || !filters.org" @click="load">刷新状态</button>
       <button v-if="canManage" class="btn btn--primary" :disabled="busy || loading || !activeRules.length" @click="recalculate">重新归集</button>
-      <button v-if="session.can('assessment.export')" class="btn btn--ghost" :disabled="busy || !currentRun" @click="download">导出材料目录</button>
+      <button v-if="session.can('assessment.export')" class="btn btn--ghost" :disabled="busy || !!exportBlockedReason" :title="exportBlockedReason || '导出已人工终审的指标表、任务统计及佐证目录'" @click="download">导出材料目录</button>
     </div>
     <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
     <p v-if="success" class="success" role="status">{{ success }}</p>
