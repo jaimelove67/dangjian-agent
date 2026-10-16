@@ -152,3 +152,25 @@ class MemberOrgOption(BaseModel):
     id: str
     name: str
     org_type: str
+
+
+class RosterImportRow(BaseModel):
+    """一行导入结果；逐行给状态与原因，导入结果可核对（T-DATA-06）。"""
+
+    row: int = Field(..., description="Excel 行号（表头为第 1 行）")
+    name: str = ""
+    status: str = Field(..., description="created（预检时应为“可登记”）/ skipped / error")
+    message: str = ""
+
+
+class RosterImportReport(BaseModel):
+    """名册导入报告；`dry_run=true` 时只预检，不写库。"""
+
+    dry_run: bool = False
+    source_note: str = ""
+    total_rows: int = 0
+    created: int = 0
+    skipped: int = 0
+    failed: int = 0
+    rows: List[RosterImportRow] = Field(default_factory=list)
+    note: str = DECISION_BOUNDARY_NOTE

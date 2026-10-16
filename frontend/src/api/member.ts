@@ -8,6 +8,7 @@ import type {
   MemberOrgOption,
   MemberRosterItem,
   MemberRosterResponse,
+  RosterImportReport,
 } from './types'
 
 /**
@@ -47,4 +48,31 @@ export function getTodoSuggestions(payload: {
   days_in_stage?: number
 }): Promise<TodoSuggestionsResponse> {
   return http.post('/member/todo-suggestions', payload)
+}
+
+/**
+ * 名册模板 / 导出 / 导入（T-DATA-06）：
+ * 模板与导出按当前账号的组织权限生成；导入先 dry_run=true 预检，
+ * 由使用者确认报告后再 dry_run=false 落库，避免"点一下就批量写台账"。
+ */
+export function downloadRosterTemplate(): Promise<Blob> {
+  return http.get('/member/roster/template', { responseType: 'blob' })
+}
+
+export function downloadRoster(params: { year?: number; batch_no?: string } = {}): Promise<Blob> {
+  return http.get('/member/roster/export', { params, responseType: 'blob' })
+}
+
+export function importRoster(
+  file: File,
+  sourceNote: string,
+  dryRun: boolean,
+): Promise<RosterImportReport> {
+  const data = new FormData()
+  data.append('file', file)
+  data.append('source_note', sourceNote)
+  data.append('dry_run', dryRun ? 'true' : 'false')
+  return http.post('/member/roster/import', data, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
 }

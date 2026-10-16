@@ -497,6 +497,27 @@ export interface MemberOrgOption {
   org_type: string
 }
 
+/** app/schemas/member.py::RosterImportRow —— 逐行结果，导入后可逐条核对 */
+export interface RosterImportRow {
+  row: number
+  name: string
+  /** created：dry_run 时含义为"可登记" */
+  status: 'created' | 'skipped' | 'error'
+  message: string
+}
+
+/** app/schemas/member.py::RosterImportReport */
+export interface RosterImportReport {
+  dry_run: boolean
+  source_note: string
+  total_rows: number
+  created: number
+  skipped: number
+  failed: number
+  rows: RosterImportRow[]
+  note: string
+}
+
 /** app/schemas/member.py::QualificationCheckRequest */
 export interface QualificationCheckRequest {
   current_stage: MemberStage

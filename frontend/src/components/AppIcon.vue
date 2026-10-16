@@ -33,6 +33,7 @@ export type IconName =
   | 'chevron-down'
   | 'plus'
   | 'upload'
+  | 'download'
   | 'external'
   | 'copy'
   | 'info'
@@ -135,6 +136,13 @@ withDefaults(defineProps<{ name: IconName; size?: number }>(), { size: 16 })
     <template v-else-if="name === 'upload'">
       <path d="M12 16V4.5" />
       <path d="m7.5 9 4.5-4.5L16.5 9" />
+      <path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15" />
+    </template>
+
+    <!-- 下载（模板 / 导出）：语义=把数据带出系统，与"上传"严格区分 -->
+    <template v-else-if="name === 'download'">
+      <path d="M12 4.5V16" />
+      <path d="m7.5 11.5 4.5 4.5 4.5-4.5" />
       <path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15" />
     </template>
 

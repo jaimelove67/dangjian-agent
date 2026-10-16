@@ -1,6 +1,7 @@
 """隔离 PostgreSQL 库验证移植功能的权限、事务、迁移和正式 HTTP 接口。"""
 
 import asyncio
+import io
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -13,6 +14,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -32,6 +34,7 @@ from app.rag.retrieval.access import knowledge_filters
 from app.rag.retrieval.base import RetrievalResult
 from app.rag.retrieval.hybrid import HybridRetriever
 from app.rag.retrieval.keyword import KeywordRetriever
+from app.services.roster_io import GUIDE_SHEET, HEADERS, TEMPLATE_SHEET, XLSX_MEDIA_TYPE
 from tests.integration import test_repaired_storage as storage_fixtures
 
 storage_url = storage_fixtures.storage_url
@@ -546,3 +549,175 @@ async def test_real_qa_preserves_complete_history_or_recovers_from_failed_flush(
             for key, value in data.items():
                 assert stored[key] == value
             assert stored["session_id"] == "persisted-session"
+
+
+# ---------------------------------------------------------------- T-DATA-06 名册导入 / 导出
+
+
+def roster_xlsx(rows) -> bytes:
+    """按模板列顺序造一份名册 Excel（导入用例用）。"""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = TEMPLATE_SHEET
+    sheet.append(list(HEADERS))
+    for row in rows:
+        sheet.append(list(row))
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def roster_file(content: bytes, file_name: str = "roster.xlsx") -> dict:
+    return {"file": (file_name, content, XLSX_MEDIA_TYPE)}
+
+
+IMPORT_FORM = {"source_note": "12371 导出 2026-10-16"}
+
+
+def guide_text(workbook) -> str:
+    return "\n".join(
+        str(cell.value) for row in workbook[GUIDE_SHEET].iter_rows() for cell in row if cell.value
+    )
+
+
+async def test_roster_template_and_export_are_readable_xlsx(business_url):
+    async with client_for(business_url, user()) as (client, db):
+        template = await client.get("/api/v1/member/roster/template")
+        assert template.status_code == 200
+        assert template.headers["content-type"].startswith(XLSX_MEDIA_TYPE)
+        assert "roster-template.xlsx" in template.headers["content-disposition"]
+        workbook = load_workbook(io.BytesIO(template.content))
+        assert [cell.value for cell in workbook[TEMPLATE_SHEET][1]] == list(HEADERS)
+        # 说明页只列当前账号权限范围内的组织，避免填了却导不进来
+        guide = guide_text(workbook)
+        assert "组织-branch-a" in guide and "组织-dept-b" not in guide
+
+        exported = await client.get("/api/v1/member/roster/export")
+        assert exported.status_code == 200
+        assert "roster-export.xlsx" in exported.headers["content-disposition"]
+        rows = [
+            [cell.value for cell in row]
+            for row in load_workbook(io.BytesIO(exported.content))[TEMPLATE_SHEET].iter_rows(min_row=2)
+        ]
+        assert [row[0] for row in rows] == ["合成人员-a"]
+        assert rows[0][1] == "合成组织" and rows[0][2] == "入党积极分子"
+        audits = (
+            (await db.execute(select(AuditLog).where(AuditLog.action == "export_roster"))).scalars().all()
+        )
+        assert len(audits) == 1 and audits[0].data_level == "sensitive"
+
+
+@pytest.mark.parametrize("role", [UserRole.MEMBER, UserRole.APPLICANT])
+async def test_roster_io_endpoints_require_manage_permission(business_url, role):
+    async with client_for(business_url, user(role)) as (client, _):
+        assert (await client.get("/api/v1/member/roster/template")).status_code == 403
+        assert (await client.get("/api/v1/member/roster/export")).status_code == 403
+        assert (
+            await client.post(
+                "/api/v1/member/roster/import",
+                data=IMPORT_FORM,
+                files=roster_file(roster_xlsx([])),
+            )
+        ).status_code == 403
+
+
+async def test_roster_import_previews_then_commits_with_per_row_report(business_url):
+    content = roster_xlsx(
+        [
+            ["名册导入-甲", "组织-branch-a", "入党积极分子", "2025-09-01", "2025", "2025-2", "1"],
+            ["名册导入-乙", "组织-dept-b", "入党积极分子", "2025-09-01", "", "", ""],
+            ["名册导入-甲", "组织-branch-a", "正式党员", "2025-09-01", "", "", ""],
+            ["合成人员-a", "组织-branch-a", "发展对象", "2025-09-01", "", "", ""],
+        ]
+    )
+    async with client_for(business_url, user()) as (client, db):
+        before = await db.scalar(select(func.count(MemberProfile.id)))
+
+        preview = await client.post(
+            "/api/v1/member/roster/import",
+            data={**IMPORT_FORM, "dry_run": "true"},
+            files=roster_file(content),
+        )
+        assert preview.status_code == 200
+        report = preview.json()["data"]
+        assert report["dry_run"] is True
+        assert report["source_note"] == "12371 导出 2026-10-16"
+        assert (report["total_rows"], report["created"], report["skipped"], report["failed"]) == (
+            4,
+            1,
+            1,
+            2,
+        )
+        by_row = {row["row"]: row for row in report["rows"]}
+        assert by_row[2]["status"] == "created"
+        assert "不在你的权限范围内" in by_row[3]["message"]
+        assert "重复" in by_row[4]["message"]
+        # 台账里已有的人不因导入改阶段：必须走人工流转
+        assert by_row[5]["status"] == "skipped" and "人工流转" in by_row[5]["message"]
+        assert "发展对象" in by_row[5]["message"] and "入党积极分子" in by_row[5]["message"]
+        # 预检不落库
+        assert await db.scalar(select(func.count(MemberProfile.id))) == before
+
+        committed = await client.post(
+            "/api/v1/member/roster/import",
+            data={**IMPORT_FORM, "dry_run": "false"},
+            files=roster_file(content),
+        )
+        assert committed.status_code == 200
+        assert committed.json()["data"]["created"] == 1
+        profile = (
+            await db.execute(select(MemberProfile).where(MemberProfile.name == "名册导入-甲"))
+        ).scalar_one()
+        assert profile.org_unit_id == "branch-a" and profile.org_name == "组织-branch-a"
+        assert profile.current_stage == "activist" and profile.stage_joined_on == date(2025, 9, 1)
+        assert (profile.year, profile.batch_no, profile.pending) == (2025, "2025-2", 1)
+        audits = (
+            (await db.execute(select(AuditLog).where(AuditLog.action == "import_roster"))).scalars().all()
+        )
+        assert len(audits) == 2
+        assert audits[-1].data_level == "sensitive"
+        # 审计按仓库口径只留摘要（业务内容不可读），来源说明因此被绑定进不可篡改的摘要
+        assert set(audits[-1].new_value) == {"sha256", "bytes"}
+
+        # 再导一次：已存在的人全部跳过，不会重复建账
+        again = await client.post(
+            "/api/v1/member/roster/import",
+            data={**IMPORT_FORM, "dry_run": "false"},
+            files=roster_file(content),
+        )
+        assert again.status_code == 200
+        assert again.json()["data"]["created"] == 0
+        assert await db.scalar(
+            select(func.count(MemberProfile.id)).where(MemberProfile.name == "名册导入-甲")
+        ) == 1
+
+        # 清理：本用例新增的台账不影响同库其他用例的固定名册预期
+        profile.is_deleted = True
+        await db.commit()
+
+
+async def test_roster_import_rejects_bad_files_with_actionable_message(business_url):
+    async with client_for(business_url, user()) as (client, _):
+        short_note = await client.post(
+            "/api/v1/member/roster/import",
+            data={"source_note": "x"},
+            files=roster_file(roster_xlsx([])),
+        )
+        assert short_note.status_code == 422
+        assert "来源说明" in short_note.json()["message"]
+
+        junk = await client.post(
+            "/api/v1/member/roster/import",
+            data=IMPORT_FORM,
+            files=roster_file(b"not an xlsx at all"),
+        )
+        assert junk.status_code == 422
+        assert ".xlsx" in junk.json()["message"] and "另存" in junk.json()["message"]
+
+        headers_only = await client.post(
+            "/api/v1/member/roster/import",
+            data=IMPORT_FORM,
+            files=roster_file(roster_xlsx([])),
+        )
+        assert headers_only.status_code == 422
+        assert "没有数据行" in headers_only.json()["message"]

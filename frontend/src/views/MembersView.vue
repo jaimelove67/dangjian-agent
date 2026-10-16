@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 
-import { checkQualification, createMember, getTodoSuggestions, getTransitionSuggestion, listMembers, listMemberOrganizations } from '@/api/member'
+import {
+  checkQualification,
+  createMember,
+  downloadRoster,
+  downloadRosterTemplate,
+  getTodoSuggestions,
+  getTransitionSuggestion,
+  importRoster,
+  listMembers,
+  listMemberOrganizations,
+} from '@/api/member'
 import { ApiError } from '@/api/http'
 import { linkMemberAccount, listSubmittedMaterials, downloadMaterial, MATERIAL_CATEGORIES, type MaterialList, type PersonalMaterial } from '@/api/member-self'
 import type {
@@ -9,6 +19,7 @@ import type {
   MemberRosterItem,
   MemberOrgOption,
   QualificationResult,
+  RosterImportReport,
   TodoItem,
   TodoSuggestionsResponse,
   TransitionSuggestion,
@@ -23,6 +34,7 @@ import WorkspaceTabs from '@/components/WorkspaceTabs.vue'
 import MemberFilePanel from '@/components/members/MemberFilePanel.vue'
 import MemberProcessWorkspace from '@/components/members/MemberProcessWorkspace.vue'
 import { session } from '@/stores/session'
+import { downloadBlob, todayISO } from '@/utils/files'
 
 /**
  * 党员发展。
@@ -227,6 +239,89 @@ async function registerMember(): Promise<void> {
   }
 }
 
+/* ---------- 名册模板 / 导入 / 导出（T-DATA-06） ---------- */
+
+const rosterIoBusy = ref<'' | 'template' | 'export'>('')
+const rosterIoError = ref('')
+const importOpen = ref(false)
+const importFile = ref<File | null>(null)
+const importNote = ref('')
+const importing = ref(false)
+const importError = ref('')
+const importReport = ref<RosterImportReport | null>(null)
+const importDone = ref('')
+
+/** 逐行报告最多展示 200 行，其余只计入合计：避免一次导入上千行把页面拖死 */
+const REPORT_ROWS = 200
+const importVisibleRows = computed(() => (importReport.value ? importReport.value.rows.slice(0, REPORT_ROWS) : []))
+const importHiddenRows = computed(() => Math.max(0, (importReport.value?.rows.length ?? 0) - REPORT_ROWS))
+const importValid = computed(() => Boolean(importFile.value) && importNote.value.trim().length >= 4)
+const canConfirmImport = computed(() => Boolean(importReport.value?.dry_run && importReport.value.created > 0 && !importing.value))
+
+function importStatusLabel(status: RosterImportReport['rows'][number]['status'], dryRun: boolean): string {
+  if (status === 'created') return dryRun ? '可登记' : '已登记'
+  if (status === 'skipped') return '已存在'
+  return '不能导入'
+}
+
+async function fetchTemplate(): Promise<void> {
+  if (rosterIoBusy.value) return
+  rosterIoBusy.value = 'template'
+  rosterIoError.value = ''
+  try {
+    downloadBlob(await downloadRosterTemplate(), '名册导入模板.xlsx')
+  } catch (error) {
+    rosterIoError.value = error instanceof ApiError ? error.message : '模板下载失败，请重试'
+  } finally {
+    rosterIoBusy.value = ''
+  }
+}
+
+async function exportRoster(): Promise<void> {
+  if (rosterIoBusy.value) return
+  rosterIoBusy.value = 'export'
+  rosterIoError.value = ''
+  try {
+    const blob = await downloadRoster({
+      year: rosterYear.value ? Number(rosterYear.value) : undefined,
+      batch_no: rosterBatch.value.trim() || undefined,
+    })
+    const scope = rosterYear.value || rosterBatch.value ? '筛选范围' : '全部'
+    downloadBlob(blob, `名册导出-${scope}-${todayISO()}.xlsx`)
+  } catch (error) {
+    rosterIoError.value = error instanceof ApiError ? error.message : '导出失败，请重试'
+  } finally {
+    rosterIoBusy.value = ''
+  }
+}
+
+function chooseImportFile(event: Event): void {
+  importFile.value = (event.target as HTMLInputElement).files?.[0] ?? null
+  importReport.value = null
+  importError.value = ''
+  importDone.value = ''
+}
+
+async function runImport(dryRun: boolean): Promise<void> {
+  if (!importValid.value || importing.value) return
+  importing.value = true
+  importError.value = ''
+  importDone.value = ''
+  try {
+    const report = await importRoster(importFile.value!, importNote.value.trim(), dryRun)
+    importReport.value = report
+    if (!dryRun) {
+      importDone.value = `本次登记 ${report.created} 人，已存在 ${report.skipped} 人，未导入 ${report.failed} 行。`
+      page.value = 1
+      await load()
+    }
+  } catch (error) {
+    importError.value = error instanceof ApiError ? error.message : '导入失败，请重试'
+  } finally {
+    importing.value = false
+  }
+}
+
 function select(id: string): void {
   personalOpen.value = false
   personalError.value = null
@@ -336,6 +431,15 @@ const todoTone: Record<TodoItem['category'], string> = {
         <button v-if="canCreate" class="btn btn--primary" type="button" :disabled="creating || busy !== null" @click="createOpen = !createOpen">
           <AppIcon name="plus" :size="14" /><span>登记培养对象</span>
         </button>
+        <button v-if="canCreate" class="btn btn--quiet" type="button" :disabled="rosterIoBusy !== '' || loading || creating || busy !== null" @click="fetchTemplate">
+          <AppIcon name="download" :size="14" /><span>{{ rosterIoBusy === 'template' ? '下载中' : '下载模板' }}</span>
+        </button>
+        <button v-if="canCreate" class="btn btn--quiet" type="button" :disabled="rosterIoBusy !== '' || loading || creating || busy !== null" @click="exportRoster">
+          <AppIcon name="download" :size="14" /><span>{{ rosterIoBusy === 'export' ? '导出中' : '导出名册' }}</span>
+        </button>
+        <button v-if="canCreate" class="btn btn--quiet" type="button" :disabled="creating || busy !== null" @click="importOpen = !importOpen">
+          <AppIcon name="upload" :size="14" /><span>导入名册</span>
+        </button>
         <button class="btn btn--quiet" type="button" :disabled="loading || creating || busy !== null" @click="load">
           <AppIcon name="pulse" :size="14" />
           <span>刷新</span>
@@ -362,6 +466,7 @@ const todoTone: Record<TodoItem['category'], string> = {
       <button class="btn btn--ghost" type="submit" :disabled="loading || flowBusy">查询名册</button>
       <button v-if="rosterYear || rosterBatch" class="btn btn--quiet" type="button" :disabled="loading || flowBusy" @click="rosterYear = ''; rosterBatch = ''; page = 1; load()">清除筛选</button>
     </form>
+    <p v-if="rosterIoError" class="field__error is-preline" role="alert">{{ rosterIoError }}</p>
     <p v-if="createSuccess" role="status">{{ createSuccess }}</p>
     <section v-if="createOpen && canCreate" class="u-card registration">
       <header class="u-panel-head"><h2 class="roster__title">人工登记培养对象</h2></header>
@@ -383,6 +488,55 @@ const todoTone: Record<TodoItem['category'], string> = {
         <p v-else-if="!organizationsLoading && !organizations.length" role="status">账号没有可登记的有效组织，请联系管理员绑定组织。</p>
         <p v-if="createError" class="field__error" role="alert">{{ createError }}</p>
         <button class="btn btn--primary" type="submit" :disabled="!registrationValid || creating">{{ creating ? '保存中' : '保存登记' }}</button>
+      </form>
+    </section>
+
+    <!-- 名册批量导入（T-DATA-06）：先预检、再确认落库 -->
+    <section v-if="importOpen && canCreate" class="u-card registration">
+      <header class="u-panel-head"><h2 class="roster__title">按模板批量导入名册</h2></header>
+      <form class="registration__body" @submit.prevent="runImport(true)">
+        <p class="u-meta">
+          先「下载模板」按列填写，再在这里上传预检：系统逐行报告“可登记 / 已存在 / 不能导入（原因）”，
+          确认无误后再落库。导入只登记台账，<strong>不改动已有人员的当前阶段</strong>；阶段变更仍须走人工流转。
+        </p>
+        <div class="form-grid">
+          <div class="field">
+            <label for="import-file" class="field__label">名册文件（.xlsx）</label>
+            <input id="import-file" class="input" type="file" accept=".xlsx" :disabled="importing" @change="chooseImportFile" />
+          </div>
+          <div class="field">
+            <label for="import-note" class="field__label">名册来源说明（4–200 字，会写入审计记录）</label>
+            <input id="import-note" v-model="importNote" class="input" maxlength="200" placeholder="例如：12371 导出 2026-10-16" />
+          </div>
+        </div>
+        <p v-if="importError" class="field__error is-preline" role="alert">{{ importError }}</p>
+        <p v-if="importDone" role="status">{{ importDone }}</p>
+        <div class="registration__actions">
+          <button class="btn btn--ghost" type="submit" :disabled="!importValid || importing">{{ importing ? '处理中' : '预检（不写库）' }}</button>
+          <button v-if="canConfirmImport" class="btn btn--primary" type="button" :disabled="!importValid || importing" @click="runImport(false)">
+            确认导入 {{ importReport?.created ?? 0 }} 人
+          </button>
+        </div>
+        <div v-if="importReport" class="import-report">
+          <p role="status">
+            共 {{ importReport.total_rows }} 行：{{ importReport.dry_run ? '可登记' : '已登记' }} {{ importReport.created }}，已存在 {{ importReport.skipped }}，不能导入 {{ importReport.failed }}
+          </p>
+          <div class="import-report__scroll">
+            <table class="import-report__table">
+              <thead><tr><th>行</th><th>姓名</th><th>结果</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr v-for="row in importVisibleRows" :key="row.row">
+                  <td>{{ row.row }}</td>
+                  <td>{{ row.name || '—' }}</td>
+                  <td>{{ importStatusLabel(row.status, importReport.dry_run) }}</td>
+                  <td class="import-report__message">{{ row.message || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-if="importHiddenRows" class="u-meta">另有 {{ importHiddenRows }} 行未逐行显示，已计入上方合计。</p>
+          <p class="u-meta">{{ importReport.note }}</p>
+        </div>
       </form>
     </section>
 
@@ -1367,6 +1521,52 @@ const todoTone: Record<TodoItem['category'], string> = {
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
   color: var(--ink-muted);
+}
+
+/* ---------------------------- 名册导入报告（T-DATA-06） ---------------------------- */
+.registration__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.import-report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.import-report__scroll {
+  max-height: 22rem;
+  overflow: auto;
+  border: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.import-report__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.import-report__table th,
+.import-report__table td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.import-report__table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2, #fff);
+}
+
+/* 逐行说明可能含“①②③”式多行提示，必须按行显示 */
+.import-report__message,
+.field__error.is-preline {
+  white-space: pre-line;
 }
 
 /* ---------------------------- 响应式 ------------------------------ */
