@@ -878,7 +878,9 @@ class MemberDevelopment:
 
     # ==================== 名册延伸统计 ====================
 
-    async def roster_stats(self, *, year: int | None, batch_no: str | None) -> dict[str, Any]:
+    async def roster_stats(
+        self, *, year: int | None, batch_no: str | None, org_unit_id: str | None = None
+    ) -> dict[str, Any]:
         conditions = [
             *self._scope(MemberProfile),
             MemberProfile.is_active.is_(True),
@@ -890,6 +892,12 @@ class MemberDevelopment:
             conditions.append(MemberProfile.year == year)
         if batch_no:
             conditions.append(MemberProfile.batch_no == batch_no)
+        if org_unit_id:
+            # 组织筛选只接受权限范围内的组织（T-MEM-02）：传范围外的组织直接 403，
+            # 不静默忽略——否则"某个支部的统计"看起来有效，数字其实是整个院系的
+            if org_unit_id not in self.org_ids:
+                raise HTTPException(403, "该组织不在你的权限范围内，不能按它统计名册")
+            conditions.append(MemberProfile.org_unit_id == org_unit_id)
         stages = (
             await self.db.execute(
                 select(MemberProfile.current_stage, func.count(MemberProfile.id))
@@ -900,6 +908,7 @@ class MemberDevelopment:
         return {
             "year": year,
             "batch_no": batch_no,
+            "org_unit_id": org_unit_id,
             "by_stage": {stage: count for stage, count in stages},
             "total": await self.db.scalar(select(func.count(MemberProfile.id)).where(*conditions)),
         }

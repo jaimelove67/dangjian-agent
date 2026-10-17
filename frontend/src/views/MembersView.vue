@@ -13,6 +13,7 @@ import {
   listMemberOrganizations,
 } from '@/api/member'
 import { ApiError } from '@/api/http'
+import { memberDevelopmentApi, type RosterStats } from '@/api/member-development'
 import { linkMemberAccount, listSubmittedMaterials, downloadMaterial, MATERIAL_CATEGORIES, type MaterialList, type PersonalMaterial } from '@/api/member-self'
 import type {
   MemberStage,
@@ -62,7 +63,10 @@ const workspace = ref('profiles')
 const flowBusy = ref(false)
 const rosterYear = ref('')
 const rosterBatch = ref('')
+const rosterOrg = ref('')
 const rosterIncludeTransferred = ref(false)
+const rosterStats = ref<RosterStats | null>(null)
+const rosterStatsError = ref('')
 const workspaces = [{ key: 'profiles', label: '人员档案' }, { key: 'transfers', label: '组织关系接转' }, { key: 'upper-reports', label: '上级审批备案' }, { key: 'batches', label: '年度批次' }, { key: 'reminders', label: '提醒待办' }, { key: 'votes', label: '多轮选优' }]
 const panelTab = ref<PanelTab>('qualification')
 
@@ -169,18 +173,45 @@ const targetOptions = computed(() => {
 })
 
 let rosterSequence = 0
+
+/** 名册统计：与名册列表同一组筛选（年度 / 批次 / 组织）——两处口径必须一致 */
+async function loadStats(): Promise<void> {
+  rosterStatsError.value = ''
+  try {
+    rosterStats.value = await memberDevelopmentApi.stats({
+      year: rosterYear.value ? Number(rosterYear.value) : undefined,
+      batch_no: rosterBatch.value.trim() || undefined,
+      org_unit_id: rosterOrg.value || undefined,
+    })
+  } catch (error) {
+    rosterStats.value = null
+    rosterStatsError.value = error instanceof ApiError ? error.message : '名册统计暂时取不到，请稍后重试'
+  }
+}
+
+const statsStageText = computed(() => {
+  const stats = rosterStats.value
+  if (!stats) return ''
+  const order: MemberStage[] = [...STAGE_ORDER, 'rejected']
+  return order
+    .filter((stage) => (stats.by_stage[stage] ?? 0) > 0)
+    .map((stage) => `${STAGE_LABELS[stage]} ${stats.by_stage[stage]}`)
+    .join(' · ')
+})
+
 async function load(): Promise<void> {
   const sequence = ++rosterSequence
   loading.value = true
   rosterError.value = null
   try {
-    const response = await listMembers({ page: page.value, page_size: pageSize, year: rosterYear.value ? Number(rosterYear.value) : undefined, batch_no: rosterBatch.value.trim() || undefined, include_transferred: rosterIncludeTransferred.value || undefined })
+    const response = await listMembers({ page: page.value, page_size: pageSize, year: rosterYear.value ? Number(rosterYear.value) : undefined, batch_no: rosterBatch.value.trim() || undefined, org_unit_id: rosterOrg.value || undefined, include_transferred: rosterIncludeTransferred.value || undefined })
     if (sequence !== rosterSequence) return
     members.value = response.items
     total.value = response.total
     const current = members.value.find((member) => member.id === selectedId.value) ?? members.value[0]
     if (current) select(current.id)
     else selectedId.value = null
+    void loadStats()
   } catch (error) {
     if (sequence === rosterSequence) rosterError.value = error
   } finally {
@@ -288,9 +319,10 @@ async function exportRoster(): Promise<void> {
     const blob = await downloadRoster({
       year: rosterYear.value ? Number(rosterYear.value) : undefined,
       batch_no: rosterBatch.value.trim() || undefined,
+      org_unit_id: rosterOrg.value || undefined,
       include_transferred: rosterIncludeTransferred.value || undefined,
     })
-    const scope = rosterYear.value || rosterBatch.value ? '筛选范围' : '全部'
+    const scope = rosterOrg.value || rosterYear.value || rosterBatch.value ? '筛选范围' : '全部'
     downloadBlob(blob, `名册导出-${scope}-${todayISO()}.xlsx`)
   } catch (error) {
     rosterIoError.value = error instanceof ApiError ? error.message : '导出失败，请重试'
@@ -465,12 +497,15 @@ const todoTone: Record<TodoItem['category'], string> = {
     <WorkspaceTabs v-model="workspace" :items="workspaces" label="党员发展工作区" :disabled="flowBusy || creating || busy !== null">
     <div v-if="workspace === 'profiles'" class="wb-stack">
     <form class="wb-actions" @submit.prevent="page = 1; load()">
+      <label class="wb-field"><span id="roster-org-label">支部</span><select id="roster-org" aria-labelledby="roster-org-label" v-model="rosterOrg" class="select" :disabled="organizationsLoading || loading || flowBusy" @change="page = 1; load()"><option value="">全部支部（权限范围内）</option><option v-for="org in organizations" :key="org.id" :value="org.id">{{ org.name }}</option></select></label>
       <label class="wb-field"><span>名册年度</span><input v-model="rosterYear" class="input" type="number" min="2000" max="2100" placeholder="全部年度" /></label>
       <label class="wb-field"><span>批次号</span><input v-model="rosterBatch" class="input" maxlength="20" placeholder="全部批次" /></label>
       <label class="wb-check"><input v-model="rosterIncludeTransferred" type="checkbox" :disabled="loading || flowBusy" @change="page = 1; load()" /><span>含组织关系已转出人员</span></label>
       <button class="btn btn--ghost" type="submit" :disabled="loading || flowBusy">查询名册</button>
-      <button v-if="rosterYear || rosterBatch || rosterIncludeTransferred" class="btn btn--quiet" type="button" :disabled="loading || flowBusy" @click="rosterYear = ''; rosterBatch = ''; rosterIncludeTransferred = false; page = 1; load()">清除筛选</button>
+      <button v-if="rosterOrg || rosterYear || rosterBatch || rosterIncludeTransferred" class="btn btn--quiet" type="button" :disabled="loading || flowBusy" @click="rosterOrg = ''; rosterYear = ''; rosterBatch = ''; rosterIncludeTransferred = false; page = 1; load()">清除筛选</button>
     </form>
+    <p v-if="rosterStats" class="u-meta" role="status">当前筛选共 <strong>{{ rosterStats.total }}</strong> 人<template v-if="statsStageText">：{{ statsStageText }}</template><template v-if="rosterIncludeTransferred">（含组织关系已转出人员）</template></p>
+    <p v-else-if="rosterStatsError" class="field__error" role="alert">{{ rosterStatsError }}</p>
     <p v-if="rosterIoError" class="field__error is-preline" role="alert">{{ rosterIoError }}</p>
     <p v-if="createSuccess" role="status">{{ createSuccess }}</p>
     <section v-if="createOpen && canCreate" class="u-card registration">

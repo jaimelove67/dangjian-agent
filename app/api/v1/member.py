@@ -124,11 +124,16 @@ async def _roster_conditions(
     year: int | None,
     batch_no: str | None,
     include_transferred: bool = False,
+    org_unit_id: str | None = None,
 ) -> list[Any]:
-    """名册筛选条件：租户 + 有效台账 + 年度/批次 + 组织权限范围（列表与导出共用）。
+    """名册筛选条件：租户 + 有效台账 + 年度/批次/组织 + 组织权限范围（列表与导出共用）。
 
     默认不列组织关系已转出的人员（T-MEM-14）：他们已经不属于本组织在册党员，
     但台账与接转记录仍在——需要查历史时显式勾选"含已转出"。
+
+    组织筛选（T-MEM-02）只接受**权限范围内**的组织：院系 / 学校管理员能看到多个支部时，
+    名册要能只按某一个支部看。传了范围外的组织一律 403，不静默忽略——"筛不筛都一样"
+    会让用户以为已经筛过（假筛选比没有筛选更糟）。
     """
     conditions: list[Any] = [
         MemberProfile.tenant_id == str(user.tenant_id),
@@ -141,9 +146,14 @@ async def _roster_conditions(
         conditions.append(MemberProfile.batch_no == batch_no)
     if not include_transferred:
         conditions.append(MemberProfile.relation_status != "transferred_out")
-    if get_role_profile(user.role).business_scope != BS_ALL:
-        organizations = await accessible_org_units(db, user)
-        conditions.append(MemberProfile.org_unit_id.in_([org.id for org in organizations]))
+    if org_unit_id or get_role_profile(user.role).business_scope != BS_ALL:
+        allowed = [str(org.id) for org in await accessible_org_units(db, user)]
+        if org_unit_id:
+            if org_unit_id not in allowed:
+                raise HTTPException(403, "该组织不在你的权限范围内，不能按它筛选名册")
+            conditions.append(MemberProfile.org_unit_id == org_unit_id)
+        else:
+            conditions.append(MemberProfile.org_unit_id.in_(allowed))
     return conditions
 
 
@@ -159,6 +169,9 @@ async def member_roster(
     page_size: int = Query(40, ge=1, le=100),
     year: int | None = Query(None, ge=2000, le=2100),
     batch_no: str | None = Query(None, min_length=1, max_length=20),
+    org_unit_id: str | None = Query(
+        None, max_length=36, description="按单个组织（支部）筛选；须在权限范围内，否则 403"
+    ),
     include_transferred: bool = Query(
         False, description="是否包含组织关系已转出的人员（默认不含）"
     ),
@@ -166,7 +179,12 @@ async def member_roster(
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[MemberRosterResponse]:
     conditions = await _roster_conditions(
-        db, user, year=year, batch_no=batch_no, include_transferred=include_transferred
+        db,
+        user,
+        year=year,
+        batch_no=batch_no,
+        include_transferred=include_transferred,
+        org_unit_id=org_unit_id,
     )
     total = (await db.execute(select(func.count(MemberProfile.id)).where(*conditions))).scalar_one()
     statement = (
@@ -184,7 +202,7 @@ async def member_roster(
         action="read_roster",
         resource_type="member",
         data_level="sensitive",
-        new_value={"total": total, "page": page},
+        new_value={"total": total, "page": page, "org_unit_id": org_unit_id},
     )
     await db.commit()
     return APIResponse(
@@ -286,6 +304,9 @@ async def member_roster_export(
     request: Request,
     year: int | None = Query(None, ge=2000, le=2100),
     batch_no: str | None = Query(None, min_length=1, max_length=20),
+    org_unit_id: str | None = Query(
+        None, max_length=36, description="按单个组织（支部）筛选；须在权限范围内，否则 403"
+    ),
     include_transferred: bool = Query(
         False, description="是否包含组织关系已转出的人员（默认不含）"
     ),
@@ -293,7 +314,12 @@ async def member_roster_export(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     conditions = await _roster_conditions(
-        db, user, year=year, batch_no=batch_no, include_transferred=include_transferred
+        db,
+        user,
+        year=year,
+        batch_no=batch_no,
+        include_transferred=include_transferred,
+        org_unit_id=org_unit_id,
     )
     total = (await db.execute(select(func.count(MemberProfile.id)).where(*conditions))).scalar_one()
     if total > MAX_EXPORT_ROWS:
@@ -303,7 +329,7 @@ async def member_roster_export(
                 "code": ErrorCode.BUSINESS_ERROR,
                 "message": (
                     f"当前范围共 {total} 条，超过单次导出上限 {MAX_EXPORT_ROWS} 条："
-                    "请按年度或批次分批导出，避免生成打不开的大文件。"
+                    "请按支部、年度或批次分批导出，避免生成打不开的大文件。"
                 ),
             },
         )
@@ -323,6 +349,16 @@ async def member_roster_export(
         if get_role_profile(user.role).business_scope == BS_ALL
         else "当前账号权限范围内的组织"
     )
+    if org_unit_id:
+        org_name = next(
+            (
+                org.name
+                for org in await accessible_org_units(db, user)
+                if str(org.id) == org_unit_id
+            ),
+            org_unit_id,
+        )
+        scope_note = f"仅限「{org_name}」"
     scope_note += (
         "（含组织关系已转出人员）"
         if include_transferred
@@ -352,7 +388,13 @@ async def member_roster_export(
         action="export_roster",
         resource_type="member",
         data_level="sensitive",
-        new_value={"count": total, "year": year, "batch_no": batch_no, "scope": scope_note},
+        new_value={
+            "count": total,
+            "year": year,
+            "batch_no": batch_no,
+            "org_unit_id": org_unit_id,
+            "scope": scope_note,
+        },
     )
     await db.commit()
     return Response(

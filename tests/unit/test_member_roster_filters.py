@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from starlette.requests import Request
@@ -73,6 +74,10 @@ async def test_roster_year_and_batch_preserve_org_scope(monkeypatch, year, batch
             page_size=100,
             year=year,
             batch_no=batch,
+            # 直接调用端点函数时不会走 FastAPI 的默认值解析：这里显式传入解析后的默认值，
+            # 否则 include_transferred / org_unit_id 会是 Query 对象（真值），把默认口径测歪。
+            include_transferred=False,
+            org_unit_id=None,
             user=user,
             db=RosterSession(db),
         )
@@ -87,9 +92,76 @@ async def test_roster_year_and_batch_preserve_org_scope(monkeypatch, year, batch
             page_size=1,
             year=year,
             batch_no=batch,
+            include_transferred=False,
+            org_unit_id=None,
             user=user,
             db=RosterSession(db),
         )
         assert page.data.total == len(expected)
         assert len(page.data.items) == 1
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_roster_org_filter_narrows_within_scope_and_rejects_outside(monkeypatch):
+    """T-MEM-02：组织筛选只在权限范围内收窄；范围外 / 不存在一律 403，不静默忽略。"""
+    engine = create_engine("sqlite:///:memory:")
+    MemberProfile.__table__.create(engine)
+    monkeypatch.setattr(member, "audit_operation", AsyncMock())
+    monkeypatch.setattr(
+        member,
+        "accessible_org_units",
+        AsyncMock(
+            return_value=[SimpleNamespace(id="branch-a"), SimpleNamespace(id="branch-b")]
+        ),
+    )
+    with Session(engine, expire_on_commit=False) as db, tenant_context("roster-test"):
+        for identifier, org_id in [
+            ("a-1", "branch-a"),
+            ("b-1", "branch-b"),
+            ("c-1", "branch-c"),
+        ]:
+            db.add(
+                MemberProfile(
+                    id=identifier,
+                    tenant_id="roster-test",
+                    name=identifier,
+                    org_name=org_id,
+                    org_unit_id=org_id,
+                    year=2026,
+                    batch_no="B1",
+                    current_stage="activist",
+                    stage_joined_on=date(2025, 1, 12),
+                )
+            )
+        db.commit()
+        user = User(tenant_id="roster-test", role=UserRole.BRANCH_SECRETARY)
+        only_b = await member.member_roster(
+            Request({"type": "http"}),
+            page=1,
+            page_size=100,
+            year=None,
+            batch_no=None,
+            include_transferred=False,
+            org_unit_id="branch-b",
+            user=user,
+            db=RosterSession(db),
+        )
+        # 权限范围内的显式组织只回该组织人员（"c-1" 不在范围内，本来就看不到）
+        assert {item.id for item in only_b.data.items} == {"b-1"}
+        assert only_b.data.total == 1
+        with pytest.raises(HTTPException) as rejected:
+            await member.member_roster(
+                Request({"type": "http"}),
+                page=1,
+                page_size=100,
+                year=None,
+                batch_no=None,
+                include_transferred=False,
+                org_unit_id="branch-c",
+                user=user,
+                db=RosterSession(db),
+            )
+        # 传了范围外的组织：403 而不是"忽略参数后返回全量"
+        assert rejected.value.status_code == 403
     engine.dispose()

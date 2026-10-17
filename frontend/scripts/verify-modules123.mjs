@@ -468,6 +468,10 @@ function fixture() {
     restricted: false,
     empty: false,
     failList: false,
+    // 名册按支部筛选（T-MEM-02）：记下名册列表与名册统计两处收到的 org_unit_id，
+    // 用来钉住"两个入口用同一组筛选"（只看列表、统计其实是全院系＝假筛选）
+    rosterOrgCalls: [],
+    statsOrgCalls: [],
   }
 }
 // ----- 选优结论与团组织推优（T-MEM-13、T-MEM-06）：界面验证用的样例视图 -----
@@ -932,11 +936,14 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
       })
     if (path === '/member/org-units') return route.fulfill(ok([org]))
     if (path === '/member/roster') {
+      data.rosterOrgCalls.push(url.searchParams.get('org_unit_id') ?? '')
       const match =
         (!url.searchParams.has('year') ||
           Number(url.searchParams.get('year')) === data.profile.year) &&
         (!url.searchParams.has('batch_no') ||
-          url.searchParams.get('batch_no') === data.profile.batch_no)
+          url.searchParams.get('batch_no') === data.profile.batch_no) &&
+        (!url.searchParams.has('org_unit_id') ||
+          url.searchParams.get('org_unit_id') === data.profile.org_unit_id)
       const includeTransferred = url.searchParams.get('include_transferred') === 'true'
       // 组织关系已转出的人不在默认名册里（T-MEM-14），与后端 include_transferred 口径一致
       const rows = (data.empty || !match ? [] : [data.profile, transferMember])
@@ -1276,6 +1283,28 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
           ok({ ...upperReportView(row, today), history: row.history, notice: UPPER_NOTICE }),
         )
       }
+    }
+    if (path === '/member-full/stats') {
+      data.statsOrgCalls.push(url.searchParams.get('org_unit_id') ?? '')
+      const rows = (data.empty ? [] : [data.profile, transferMember]).filter(
+        (item) =>
+          (!url.searchParams.has('year') || Number(url.searchParams.get('year')) === item.year) &&
+          (!url.searchParams.has('batch_no') ||
+            url.searchParams.get('batch_no') === item.batch_no) &&
+          (!url.searchParams.has('org_unit_id') ||
+            url.searchParams.get('org_unit_id') === item.org_unit_id),
+      )
+      const byStage = {}
+      for (const item of rows) byStage[item.current_stage] = (byStage[item.current_stage] ?? 0) + 1
+      return route.fulfill(
+        ok({
+          year: url.searchParams.has('year') ? Number(url.searchParams.get('year')) : null,
+          batch_no: url.searchParams.get('batch_no'),
+          org_unit_id: url.searchParams.get('org_unit_id'),
+          by_stage: byStage,
+          total: rows.length,
+        }),
+      )
     }
     if (path === '/member-full/batches') {
       if (method === 'POST') {
@@ -2066,6 +2095,22 @@ try {
     await page.getByRole('button', { name: '查看批次人员', exact: true }).first().click()
     await visible(page, '陈见微的办理档案')
     assert.equal(await page.getByLabel('名册年度', { exact: true }).inputValue(), String(year))
+    // 名册按支部筛选（T-MEM-02）：选项来自权限范围内的组织；选中后名册列表与名册统计
+    // 必须带同一个 org_unit_id——只看列表筛、统计还是整个院系，就是"假筛选"
+    const selOrgFilter = page.locator('#roster-org')
+    assert.equal(await selOrgFilter.locator('option').count(), 2, '支部筛选应为「全部支部」+ 1 个本支部')
+    assert.equal(
+      await page.locator('label.wb-field').filter({ hasText: '支部' }).count(),
+      1,
+      '支部筛选要有可见的「支部」标签',
+    )
+    await selOrgFilter.selectOption(org.id)
+    await visible(page, '当前筛选共')
+    assert.equal(await page.getByLabel('名册年度', { exact: true }).inputValue(), String(year))
+    assert.ok(state.rosterOrgCalls.includes(org.id), '名册列表请求必须带上支部筛选')
+    assert.ok(state.statsOrgCalls.includes(org.id), '名册统计必须与名册列表用同一个支部筛选')
+    await selOrgFilter.selectOption('')
+    await visible(page, '当前筛选共')
     checks.push('建立批次与完整名册筛选')
     await screenshot(page, 'members-desktop')
     await tab(page, '提醒待办')

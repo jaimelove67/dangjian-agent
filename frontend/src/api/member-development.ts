@@ -254,9 +254,23 @@ export interface LeagueRecommendationList extends MemberPage<LeagueRecommendatio
   age_notice: string
   notice: string
 }
+export interface RosterStats {
+  year: number | null
+  batch_no: string | null
+  org_unit_id: string | null
+  by_stage: Partial<Record<MemberStage, number>>
+  total: number
+}
 const profileURL = (id: string) => `/member-full/profiles/${encodeURIComponent(id)}`
 
 export const memberDevelopmentApi = {
+  stats(params: {
+    year?: number
+    batch_no?: string
+    org_unit_id?: string
+  }): Promise<RosterStats> {
+    return http.get('/member-full/stats', { params })
+  },
   batches(params: {
     year?: number
     page?: number

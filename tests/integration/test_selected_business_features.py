@@ -215,6 +215,36 @@ async def test_roster_pagination_and_org_selector_use_same_scope(business_url):
         assert (await client.get("/api/v1/member/roster?page=0")).status_code == 422
 
 
+async def test_roster_filters_by_one_org_within_scope(business_url):
+    """T-MEM-02：能看到多个支部的账号，名册要能只按某一个支部看。
+
+    列表、导出、名册统计三处必须用**同一组**筛选（同一权限范围内）；否则会出现
+    "支部名册 1 人、支部统计 3 人"这种自相矛盾的口径。
+    """
+    async with client_for(business_url, user(UserRole.SCHOOL_ADMIN, "school-a")) as (client, _):
+        everything = (await client.get("/api/v1/member/roster")).json()["data"]
+        only_a = (await client.get("/api/v1/member/roster?org_unit_id=branch-a")).json()["data"]
+        assert {item["id"] for item in only_a["items"]} == {"a"}
+        assert only_a["total"] == 1 < everything["total"]
+        stats_all = (await client.get("/api/v1/member-full/stats")).json()["data"]
+        stats_a = (await client.get("/api/v1/member-full/stats?org_unit_id=branch-a")).json()["data"]
+        assert stats_all["total"] == everything["total"]
+        assert stats_a["total"] == only_a["total"] == 1
+        assert stats_a["org_unit_id"] == "branch-a"
+        # 导出与列表共用同一组筛选条件：范围外的组织同样 403，不生成文件
+        assert (
+            await client.get("/api/v1/member/roster/export?org_unit_id=foreign")
+        ).status_code == 403
+
+
+@pytest.mark.parametrize("org_id", ["foreign", "deleted-branch", "missing", "unbound"])
+@pytest.mark.parametrize("path", ["/api/v1/member/roster", "/api/v1/member-full/stats"])
+async def test_roster_org_filter_rejects_out_of_scope_org(business_url, path, org_id):
+    """范围外 / 已删除 / 不存在 / 没有组织的 id 都不能当筛选条件：一律 403，不回退成全量。"""
+    async with client_for(business_url, user(UserRole.SCHOOL_ADMIN, "school-a")) as (client, _):
+        assert (await client.get(path, params={"org_unit_id": org_id})).status_code == 403
+
+
 @pytest.mark.parametrize("org_id", ["branch-b", "foreign", "deleted-branch", "missing"])
 async def test_roster_creation_rejects_out_of_scope_org(business_url, org_id):
     async with client_for(business_url, user()) as (client, db):

@@ -57,7 +57,11 @@ async def respond(
         resource_type=resource_type,
         resource_id=resource_id,
         data_level="sensitive",
-        new_value={key: data[key] for key in ("total", "year", "stage", "batch_no") if key in data},
+        new_value={
+            key: data[key]
+            for key in ("total", "year", "stage", "batch_no", "org_unit_id")
+            if key in data
+        },
     )
     await service.db.commit()
     return APIResponse(data=data, trace_id=getattr(request.state, "trace_id", None))
@@ -72,12 +76,15 @@ async def roster_stats(
     request: Request,
     year: int | None = Query(None, ge=2000, le=2100),
     batch_no: str | None = Query(None, max_length=20),
+    org_unit_id: str | None = Query(
+        None, max_length=36, description="按单个组织（支部）筛选；须在权限范围内，否则 403"
+    ),
     service: MemberDevelopment = Depends(member_service),
 ) -> APIResponse[dict]:
     return await respond(
         request,
         service,
-        await service.roster_stats(year=year, batch_no=batch_no),
+        await service.roster_stats(year=year, batch_no=batch_no, org_unit_id=org_unit_id),
         "read_roster_stats",
     )
 

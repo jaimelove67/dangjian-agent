@@ -225,6 +225,7 @@ async function checkRole(browser, spec) {
     await checkMeetingFrequency(page, spec)
     await checkMemberReviews(page, spec)
     await checkMemberTransfers(page, spec)
+    await checkRosterOrgFilter(page, spec)
     await checkUpperReports(page, spec)
     await checkMemberSelection(page, spec)
   } finally {
@@ -600,6 +601,65 @@ async function checkMemberTransfers(page, spec) {
     }
     if (await page.getByRole('alert').count()) {
       fail(`${spec.username}: 接转工作区出现错误态`)
+    }
+  } finally {
+    page.off('response', listener)
+  }
+}
+
+/**
+ * 名册要能按支部看，名册统计要真的挂在页面上（T-MEM-02）。
+ *
+ * 这一屏最容易出现两种"假功能"：① 只按年度 / 批次筛，能看到多个支部的账号只能把几个
+ * 支部的人混在一张表里翻；② `/member-full/stats` 接口早就实现了，但页面从不引用，
+ * 用户拿不到名册统计。这里钉住：支部筛选挂载、选了支部后名册列表与名册统计带**同一个**
+ * org_unit_id（只看列表筛、统计还是整个院系就是假筛选）、统计口径文案可见且接口不报错。
+ */
+async function checkRosterOrgFilter(page, spec) {
+  if (!spec.allow.includes('/members')) return
+  const apiErrors = []
+  const calls = []
+  const listener = (response) => {
+    const url = new URL(response.url())
+    if (!/\/member\/roster$|\/member-full\/stats$/.test(url.pathname)) return
+    calls.push({ path: url.pathname, org: url.searchParams.get('org_unit_id') })
+    if (response.status() >= 400) apiErrors.push(`${response.status()} ${url.pathname}`)
+  }
+  page.on('response', listener)
+  try {
+    await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' })
+    await settle(page)
+    const select = page.locator('#roster-org')
+    await select.waitFor({ timeout: 15000 }).catch(() => {})
+    if (!(await select.count())) {
+      fail(`${spec.username}: 名册没有支部筛选（能看到多个支部时只能混在一张表里翻）`)
+      return
+    }
+    const statsLine = page.getByText('当前筛选共')
+    await statsLine.first().waitFor({ timeout: 8000 }).catch(() => {})
+    if (!(await statsLine.count())) {
+      fail(`${spec.username}: 名册统计没有挂到页面上（接口有、用户看不到）`)
+    }
+    const options = await select.locator('option').count()
+    if (options > 1) {
+      const value = await select.locator('option').nth(1).getAttribute('value')
+      calls.length = 0
+      await select.selectOption(value)
+      await page.waitForTimeout(1500)
+      if (!calls.some((call) => call.path.endsWith('/member/roster') && call.org === value)) {
+        fail(`${spec.username}: 选了支部但名册请求没带 org_unit_id（筛了等于没筛）`)
+      }
+      if (!calls.some((call) => call.path.endsWith('/member-full/stats') && call.org === value)) {
+        fail(`${spec.username}: 名册统计没有跟着支部筛选走（列表按支部、统计整个院系）`)
+      }
+      await select.selectOption('')
+      await page.waitForTimeout(1000)
+    }
+    if (apiErrors.length) {
+      fail(`${spec.username}: 名册/名册统计接口报错 ${[...new Set(apiErrors)].join(', ')}`)
+    }
+    if (await page.getByRole('alert').count()) {
+      fail(`${spec.username}: 名册页出现错误态`)
     }
   } finally {
     page.off('response', listener)
