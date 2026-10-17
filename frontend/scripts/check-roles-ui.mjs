@@ -226,6 +226,7 @@ async function checkRole(browser, spec) {
     await checkMemberReviews(page, spec)
     await checkMemberTransfers(page, spec)
     await checkUpperReports(page, spec)
+    await checkMemberSelection(page, spec)
   } finally {
     await context.close()
   }
@@ -670,6 +671,97 @@ async function checkUpperReports(page, spec) {
       () => document.documentElement.scrollWidth > window.innerWidth + 1,
     )
     if (overflow) fail(`${spec.username}: 上级审批备案工作区出现页面级横向溢出`)
+  } finally {
+    page.off('response', listener)
+  }
+}
+
+/**
+ * 「选优结论（拟推荐名单）+ 团组织推优」必须真的挂载，且不出现假入口（T-MEM-13、T-MEM-06）。
+ *
+ * 选优这一屏最容易变成反人类设计的地方有三种：**一是"按票数自动生成名单"**（把组织结论
+ * 交给系统算）、**二是"谁登记谁点通过"**（自审没拦住）、**三是"用年龄规则编数据"**
+ * （名册里根本没有出生年月，却做一个 28 周岁校验，只会逼人编生日）。这里钉住：面板挂载
+ * 并给出三条口径、没有"系统自动生成名单"的入口、没有年龄判定字段，且接口不报错
+ * （含迁移未执行导致的 500）。
+ */
+async function checkMemberSelection(page, spec) {
+  if (!spec.allow.includes('/members')) return
+  const apiErrors = []
+  const listener = (response) => {
+    const path = new URL(response.url()).pathname
+    if (response.status() >= 400 && path.includes('/member-full/selections')) {
+      apiErrors.push(`${response.status()} ${path}`)
+    }
+  }
+  page.on('response', listener)
+  try {
+    await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' })
+    await settle(page)
+    const votesTab = page.getByRole('tab', { name: '多轮选优' })
+    await votesTab.first().waitFor({ timeout: 15000 }).catch(() => {})
+    if (!(await votesTab.count())) {
+      fail(`${spec.username}: 人员档案页没有「多轮选优」工作区`)
+      return
+    }
+    await votesTab.first().click()
+    await page.waitForTimeout(1200)
+    // 结论面板按批次归集：先选一个真实存在的年度批次，面板才会挂载
+    const batch = page.getByLabel('本年度批次')
+    await batch.waitFor({ timeout: 15000 }).catch(() => {})
+    if (!(await batch.count())) {
+      fail(`${spec.username}: 「多轮选优」没有批次选择器（选优结论按批次与轮次归集）`)
+      return
+    }
+    const options = await (async () => {
+      // 批次列表是异步拉的：第一个角色（开发服务器刚起）可能还没回来，
+      // 这里等一会儿而不是把"还没加载完"当成"没有批次"。
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const values = await batch
+          .locator('option')
+          .evaluateAll((nodes) =>
+            nodes.map((node) => node.getAttribute('value')).filter((value) => value),
+          )
+        if (values.length) return values
+        await page.waitForTimeout(1000)
+      }
+      return []
+    })()
+    if (!options.length) {
+      notes.push(`${spec.username}: 当前没有年度批次，选优结论面板未参与本次检查`)
+      return
+    }
+    await batch.selectOption(options[0])
+    await page.waitForTimeout(1500)
+    const panel = page.locator('.sp-panel')
+    await panel.first().waitFor({ timeout: 15000 }).catch(() => {})
+    if (!(await panel.count())) {
+      fail(`${spec.username}: 「多轮选优」没有挂载选优结论 / 团组织推优面板（功能只在接口里，用户看不到）`)
+      return
+    }
+    const text = await panel.first().innerText()
+    if (!/不按票数自动排序、不自动产生名单、不自动定等次/.test(text)) {
+      fail(`${spec.username}: 选优结论未说明"系统不按票数自动出结论"的边界`)
+    }
+    if (!/第二位组织人员审核/.test(text)) {
+      fail(`${spec.username}: 选优结论未说明必须由第二位组织人员审核（不许自审）`)
+    }
+    if (!/系统不判断年龄|系统判不了 28 周岁/.test(text)) {
+      fail(`${spec.username}: 团组织推优未把年龄判定交回组织核对`)
+    }
+    if (await page.getByRole('button', { name: /自动生成|一键生成|系统推荐|按票数/ }).count()) {
+      fail(`${spec.username}: 选优结论出现"系统自动生成名单"的入口`)
+    }
+    if (await page.getByRole('checkbox', { name: /28 周岁|出生年月|年龄/ }).count()) {
+      fail(`${spec.username}: 团组织推优出现年龄判定字段（名册里没有出生年月，系统判不了年龄）`)
+    }
+    if (apiErrors.length) {
+      fail(`${spec.username}: 选优结论接口报错 ${[...new Set(apiErrors)].join(', ')}`)
+    }
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    )
+    if (overflow) fail(`${spec.username}: 选优结论面板出现页面级横向溢出`)
   } finally {
     page.off('response', listener)
   }

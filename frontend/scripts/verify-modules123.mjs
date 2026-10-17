@@ -457,6 +457,8 @@ function fixture() {
       },
     ],
     votes: [],
+    selections: [],
+    leagueRecommendations: [],
     transfers: [],
     upperReports: [],
     records: [structuredClone(meeting)],
@@ -468,6 +470,158 @@ function fixture() {
     failList: false,
   }
 }
+// ----- 选优结论与团组织推优（T-MEM-13、T-MEM-06）：界面验证用的样例视图 -----
+const stageLabels = {
+  applicant: '入党申请人',
+  activist: '入党积极分子',
+  candidate: '发展对象',
+  probationary: '预备党员',
+  member: '正式党员',
+  rejected: '退回',
+}
+const selectionStatusLabels = {
+  draft: '草稿',
+  pending: '待审核',
+  approved: '已通过',
+  rejected: '已退回',
+}
+const researchMethodLabels = { committee: '支委会', member_meeting: '党员大会' }
+const ageNotice =
+  '系统不判断年龄（名册里没有出生年月）：是否属 28 周岁以下青年请组织核对，缺推优记录不阻断选优与阶段流转'
+const selectionNotice =
+  '结论由组织人员填写、第二位组织人员审核；投票汇总与评分只是辅助材料，系统不按票数排序、不自动产生名单、不自动定等次'
+const selectionBoundary =
+  '生效结论是组织认定依据：阶段流转仍由授权人员按程序人工办理，系统不自动改阶段，也不自动向上级党组织报送'
+const selectionHints = {
+  activist: '确定入党积极分子后须报上级党委备案（细则第八条）：请在「上级审批 / 备案报送台账」登记',
+  candidate: '列为发展对象后须报上级党委备案（细则第十三条）：请在「上级审批 / 备案报送台账」登记',
+  probationary:
+    '接收预备党员须报上级党委审批（细则第二十一 / 二十二条）：请在「上级审批 / 备案报送台账」登记',
+  member: '预备党员转正须报上级党委审批：请在「上级审批 / 备案报送台账」登记',
+}
+const recommendationNotice =
+  '团组织推优只登记事实：推荐团组织、推荐日期与推优说明；推优记录不自动写进选优结论'
+
+function rosterRows() {
+  return [state.profile, transferMember]
+}
+
+function memberName(profileId) {
+  const row = rosterRows().find((item) => item.id === profileId)
+  return row ? row.name : `对象 ${String(profileId).slice(0, 8)}`
+}
+
+function memberStage(profileId) {
+  const row = rosterRows().find((item) => item.id === profileId)
+  return row ? row.current_stage : 'activist'
+}
+
+function selectionTally(batchNo, roundNo, candidateIds) {
+  const tally = {}
+  for (const id of candidateIds) {
+    const rows = state.votes.filter(
+      (item) => item.profile_id === id && item.batch_no === batchNo && item.round_no === roundNo,
+    )
+    if (!rows.length) continue
+    tally[id] = { agree: 0, disagree: 0, abstain: 0 }
+    for (const row of rows) tally[id][row.vote] += 1
+  }
+  return tally
+}
+
+function selectionView(row, viewer, detail = false) {
+  const view = {
+    id: row.id,
+    batch_no: row.batch_no,
+    round_no: row.round_no,
+    org_unit_id: org.id,
+    org_name: org.name,
+    target_stage: row.target_stage,
+    target_stage_label: stageLabels[row.target_stage] || row.target_stage,
+    candidates: row.candidate_ids.map((profileId) => ({
+      profile_id: profileId,
+      member_name: memberName(profileId),
+      stage: memberStage(profileId),
+      stage_label: stageLabels[memberStage(profileId)] || memberStage(profileId),
+    })),
+    candidate_count: row.candidate_ids.length,
+    basis: row.basis,
+    evidence: row.evidence,
+    research_on: row.research_on,
+    research_method: row.research_method,
+    research_method_label: researchMethodLabels[row.research_method] || row.research_method,
+    review_status: row.review_status,
+    review_status_label: selectionStatusLabels[row.review_status],
+    submitted_by: row.submitted_by,
+    reviewed_by: row.reviewed_by,
+    reviewed_at: row.reviewed_at,
+    review_comment: row.review_comment,
+    revision: row.revision,
+    effective: row.review_status === 'approved',
+    // 与后端同一条规则：待审核 + 不是自己送审的，才给审核入口
+    can_review: row.review_status === 'pending' && row.submitted_by !== viewer,
+    next_step_hint: selectionHints[row.target_stage] || '',
+    notice: selectionNotice,
+    boundary: selectionBoundary,
+    data_level: 'sensitive',
+    data_level_label: '敏感',
+    cloud_allowed: false,
+    embedding_allowed: true,
+    redacted_fields: [],
+  }
+  if (!detail) return view
+  const pending = row.candidate_ids.filter(
+    (profileId) =>
+      !state.leagueRecommendations.some((item) => item.profile_id === profileId && !item.revoked_on),
+  )
+  return {
+    ...view,
+    missing: [],
+    advisories: pending.length
+      ? [`${pending.length} 名拟推荐对象尚无团组织推优记录：${ageNotice}`]
+      : [],
+    revisions: row.revisions.map((item) => ({ ...item })),
+  }
+}
+
+function recommendationStatusList() {
+  return rosterRows().map((row) => {
+    const active = state.leagueRecommendations.filter(
+      (item) => item.profile_id === row.id && !item.revoked_on,
+    )
+    const latest = active[active.length - 1]
+    return {
+      profile_id: row.id,
+      member_name: row.name,
+      has_record: active.length > 0,
+      active_count: active.length,
+      latest_on: latest ? latest.recommended_on : null,
+      latest_org: latest ? latest.league_org : '',
+      age_notice: ageNotice,
+    }
+  })
+}
+
+function recommendationView(row) {
+  return {
+    ...row,
+    member_name: memberName(row.profile_id),
+    stage: memberStage(row.profile_id),
+    stage_label: stageLabels[memberStage(row.profile_id)] || memberStage(row.profile_id),
+    org_unit_id: org.id,
+    org_name: org.name,
+    revoke_reason: row.revoke_reason || '',
+    active: !row.revoked_on,
+    age_notice: ageNotice,
+    notice: '推优记录只登记事实：系统不判断年龄、不替代支部研究，也不阻断选优与阶段流转',
+    data_level: 'sensitive',
+    data_level_label: '敏感',
+    cloud_allowed: false,
+    embedding_allowed: true,
+    redacted_fields: [],
+  }
+}
+
 const requests = []
 const errors = []
 const checks = []
@@ -1200,6 +1354,205 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
       )
       return route.fulfill(ok({ recorded: body.votes.length }))
     }
+    // 选优结论（拟推荐名单）：登记 → 送审 → 另一位组织人员审核（T-MEM-13）
+    if (path === '/member-full/selections' && method === 'GET') {
+      const rows = data.selections.filter(
+        (row) =>
+          (!url.searchParams.has('batch_no') ||
+            row.batch_no === url.searchParams.get('batch_no')) &&
+          (!url.searchParams.has('round_no') ||
+            row.round_no === Number(url.searchParams.get('round_no'))),
+      )
+      const summary = { draft: 0, pending: 0, approved: 0, rejected: 0 }
+      for (const row of rows) summary[row.review_status] += 1
+      return route.fulfill(
+        ok({
+          ...pagination(rows.map((row) => selectionView(row, viewer)), url.searchParams),
+          summary,
+          notice: selectionNotice,
+          boundary: selectionBoundary,
+        }),
+      )
+    }
+    if (path === '/member-full/selections' && method === 'POST') {
+      const row = {
+        id: `selection-${data.selections.length + 1}`,
+        batch_no: body.batch_no,
+        round_no: body.round_no,
+        target_stage: body.target_stage,
+        candidate_ids: body.candidate_ids,
+        basis: body.basis,
+        research_on: body.research_on,
+        research_method: body.research_method,
+        review_status: 'draft',
+        revision: 1,
+        submitted_by: null,
+        reviewed_by: null,
+        reviewed_at: null,
+        review_comment: '',
+        // 依据快照是"本轮无记名汇总按拟推荐名单裁剪"，不含投票人身份，也不替组织排序
+        evidence: {
+          batch_no: body.batch_no,
+          round_no: body.round_no,
+          voter_count: new Set(
+            data.votes
+              .filter(
+                (item) =>
+                  item.batch_no === body.batch_no && item.round_no === body.round_no,
+              )
+              .map((item) => item.voter_id),
+          ).size,
+          tally: selectionTally(body.batch_no, body.round_no, body.candidate_ids),
+          evidence_note:
+            '依据位置：本轮选优投票的无记名汇总（按拟推荐名单裁剪），只含票数与投票人数、不含投票人身份；票数不构成结论',
+        },
+        revisions: [
+          {
+            revision: 1,
+            action: 'create',
+            actor_id: viewer,
+            reason: body.reason,
+            created_at: `${today}T09:00:00`,
+          },
+        ],
+      }
+      data.selections.push(row)
+      return route.fulfill(ok(selectionView(row, viewer, true)))
+    }
+    const selectionMatch = path.match(/^\/member-full\/selections\/([^/]+)(\/submit|\/review)?$/)
+    if (selectionMatch) {
+      const row = data.selections.find((item) => item.id === selectionMatch[1])
+      if (!row) return route.fulfill(failed(404, '选优结论不存在'))
+      if (!selectionMatch[2] && method === 'GET') {
+        return route.fulfill(ok(selectionView(row, viewer, true)))
+      }
+      if (!selectionMatch[2] && method === 'PATCH') {
+        assert.equal(body.expected_revision, row.revision, '过期版本号不得覆盖已改内容')
+        Object.assign(row, {
+          target_stage: body.target_stage ?? row.target_stage,
+          candidate_ids: body.candidate_ids ?? row.candidate_ids,
+          basis: body.basis ?? row.basis,
+          research_on: body.research_on ?? row.research_on,
+          research_method: body.research_method ?? row.research_method,
+          // 修订即回到草稿：必须重新送审
+          review_status: 'draft',
+          submitted_by: null,
+          reviewed_by: null,
+          reviewed_at: null,
+          review_comment: '',
+          revision: row.revision + 1,
+          evidence: {
+            ...row.evidence,
+            voter_count: new Set(
+              data.votes
+                .filter(
+                  (item) =>
+                    item.batch_no === row.batch_no && item.round_no === row.round_no,
+                )
+                .map((item) => item.voter_id),
+            ).size,
+            tally: selectionTally(row.batch_no, row.round_no, row.candidate_ids),
+          },
+        })
+        row.revisions.push({
+          revision: row.revision,
+          action: 'revise',
+          actor_id: viewer,
+          reason: body.reason,
+          created_at: `${today}T09:30:00`,
+        })
+        return route.fulfill(ok(selectionView(row, viewer, true)))
+      }
+      if (selectionMatch[2] === '/submit') {
+        if (row.review_status !== 'draft' && row.review_status !== 'rejected') {
+          return route.fulfill(failed(409, '当前内容不在可送审状态'))
+        }
+        assert.equal(body.expected_revision, row.revision, '过期版本号不得覆盖已改内容')
+        row.review_status = 'pending'
+        row.submitted_by = viewer
+        row.revision += 1
+        row.revisions.push({
+          revision: row.revision,
+          action: 'submit',
+          actor_id: viewer,
+          reason: body.reason,
+          created_at: `${today}T10:00:00`,
+        })
+        return route.fulfill(ok(selectionView(row, viewer, true)))
+      }
+      if (selectionMatch[2] === '/review') {
+        if (row.review_status !== 'pending') {
+          return route.fulfill(failed(409, '当前内容不在待审核状态'))
+        }
+        if (row.submitted_by === viewer) {
+          return route.fulfill(failed(403, '请由另一位有权限的组织人员审核'))
+        }
+        assert.equal(body.expected_revision, row.revision, '过期版本号不得覆盖已改内容')
+        row.review_status = body.decision
+        row.reviewed_by = viewer
+        row.reviewed_at = `${today}T11:00:00`
+        row.review_comment = body.reason
+        row.revision += 1
+        row.revisions.push({
+          revision: row.revision,
+          action: 'review',
+          actor_id: viewer,
+          reason: body.reason,
+          created_at: `${today}T11:00:00`,
+        })
+        return route.fulfill(ok(selectionView(row, viewer, true)))
+      }
+      return route.fulfill(failed(404, `验证未覆盖接口：${method} ${path}`))
+    }
+    // 团组织推优：只登记与该人的事实，不判断年龄、不阻断业务（T-MEM-06）
+    if (path === '/member-full/league-recommendations' && method === 'GET') {
+      const wanted = url.searchParams.get('profile_ids')
+        ? url.searchParams.get('profile_ids').split(',')
+        : url.searchParams.has('profile_id')
+          ? [url.searchParams.get('profile_id')]
+          : null
+      const rows = data.leagueRecommendations.filter(
+        (row) => !wanted || wanted.includes(row.profile_id),
+      )
+      const active = rows.filter((row) => !row.revoked_on).length
+      return route.fulfill(
+        ok({
+          ...pagination(rows.map((row) => recommendationView(row)), url.searchParams),
+          summary: { total: rows.length, active, revoked: rows.length - active },
+          status: recommendationStatusList().filter(
+            (item) => !wanted || wanted.includes(item.profile_id),
+          ),
+          age_notice: ageNotice,
+          notice: '推优记录只登记事实：系统不判断年龄、不替代支部研究，也不阻断选优与阶段流转',
+        }),
+      )
+    }
+    if (path === '/member-full/league-recommendations' && method === 'POST') {
+      const row = {
+        id: `recommendation-${data.leagueRecommendations.length + 1}`,
+        profile_id: body.profile_id,
+        league_org: body.league_org,
+        recommended_on: body.recommended_on,
+        note: body.note,
+        revoked_on: null,
+        revoke_reason: '',
+        revision: 1,
+      }
+      data.leagueRecommendations.push(row)
+      return route.fulfill(ok(recommendationView(row)))
+    }
+    const recommendationMatch = path.match(
+      /^\/member-full\/league-recommendations\/([^/]+)\/revoke$/,
+    )
+    if (recommendationMatch) {
+      const row = data.leagueRecommendations.find((item) => item.id === recommendationMatch[1])
+      if (!row) return route.fulfill(failed(404, '推优记录不存在'))
+      if (row.revoked_on) return route.fulfill(failed(409, '该推优记录已作废'))
+      row.revoked_on = today
+      row.revoke_reason = body.reason
+      row.revision += 1
+      return route.fulfill(ok(recommendationView(row)))
+    }
     if (path === '/member-full/scoring')
       return route.fulfill(
         ok({
@@ -1735,6 +2088,157 @@ try {
       0,
     )
     checks.push('多轮投票的人工核对、汇总和重复提交门禁')
+
+    // --------------- 选优结论与团组织推优（T-MEM-13、T-MEM-06） ---------------
+    await visible(page, '登记本轮拟推荐名单')
+    // 记下结论生效前的档案阶段：结论生效不等于阶段流转，这里用前后对比来验证
+    const selStageBefore = state.profile.current_stage
+    assert.equal(selStageBefore, 'candidate')
+    // 名单必须由人勾选：系统不按票数自动生成名单、不自动定等次
+    assert.equal(
+      await page.getByRole('button', { name: /自动生成|一键生成|系统推荐|按票数/ }).count(),
+      0,
+    )
+    const selChenRow = page.getByRole('row').filter({ hasText: '陈见微' })
+    const selLinRow = page.getByRole('row').filter({ hasText: '林舟' })
+    // 前面的"人工流转"已把陈见微登记为发展对象：这里按"拟推荐接收为预备党员"登记
+    await page.getByLabel('拟推进阶段').selectOption('probationary')
+    // 陈见微是发展对象，可登记为"预备党员"；林舟已是正式党员，勾不上（与后端"只能向前"同一条规则）
+    assert.equal(await selChenRow.getByLabel('陈见微纳入拟推荐名单').isDisabled(), false)
+    assert.equal(await selLinRow.getByLabel('林舟纳入拟推荐名单').isDisabled(), true)
+    checks.push('选优结论名单只由人勾选，阶段不到不给勾')
+
+    // 团组织推优：只登记事实，系统不判断年龄；缺记录不阻断
+    await selChenRow.getByRole('button', { name: '登记推优', exact: true }).click()
+    const selRecDialog = page
+      .getByRole('dialog')
+      .filter({ has: page.getByLabel('推荐团组织') })
+    await visible(page, '系统不判断年龄')
+    await selRecDialog.getByLabel('推荐团组织').fill('合成学院团委')
+    await selRecDialog.getByLabel('推荐日期').fill(today)
+    await selRecDialog
+      .getByLabel('推优说明（团组织意见，第三人信息按密级收敛）')
+      .fill('团支书反映该同志在校表现积极')
+    await selRecDialog.getByLabel('办理依据 / 说明').fill('收到团支部推优材料，登记台账')
+    await click(page, '登记推优记录')
+    await visible(page, '已登记团组织推优')
+    assert.equal(state.leagueRecommendations.length, 1)
+    assert.equal(state.leagueRecommendations[0].profile_id, profile.id)
+    // 名册里没有出生年月：界面不能出现任何"系统判定年龄"的结论
+    assert.equal(await page.getByText('系统判定为 28 周岁以下', { exact: false }).count(), 0)
+    checks.push('团组织推优只登记事实并提示组织核对年龄')
+
+    // 登记拟推荐名单：名单与依据都由人填写，投票汇总只是摊开给审核人核对的辅助材料
+    await selChenRow.getByLabel('陈见微纳入拟推荐名单').check()
+    await visible(page, '本轮辅助材料')
+    await page
+      .getByLabel('结论依据（必须写清引用了哪一轮投票 / 哪份材料 / 哪条培养记录）')
+      .fill('依据第 1 轮选优投票汇总与培养考察记录，经支委会研究（细则第十三条）')
+    await page.getByLabel('办理依据 / 说明').fill('支委会研究登记拟推荐名单')
+    await click(page, '登记拟推荐名单（1）')
+    await visible(page, '已登记拟推荐名单')
+    assert.equal(state.selections.length, 1)
+    assert.equal(state.selections[0].review_status, 'draft')
+    assert.deepEqual(state.selections[0].candidate_ids, [profile.id])
+    // 依据快照是无记名口径：有票数、有投票人数，没有投票人身份
+    assert.equal(state.selections[0].evidence.voter_count, 1)
+    assert.equal(state.selections[0].evidence.tally[profile.id].agree, 1)
+    assert.ok(!JSON.stringify(state.selections[0].evidence).includes('viewer-a'))
+    // 登记出来就是草稿：界面上没有"已生效"，也不给登记人自己审核的入口
+    const selDraftRow = page.getByRole('row').filter({ hasText: '草稿' })
+    await visible(page, '草稿')
+    assert.equal(await selDraftRow.getByRole('button', { name: '审核', exact: true }).count(), 0)
+    await visible(page, '不自动改阶段')
+    checks.push('选定名单与依据后仍是草稿（不自动生成结论）')
+
+    // 修订：保存为新版本并回到草稿，必须重新送审
+    await selDraftRow.getByRole('button', { name: '修订名单与依据', exact: true }).click()
+    const selEditDialog = page
+      .getByRole('dialog')
+      .filter({ has: page.getByLabel('修订理由') })
+    await visible(page, '改完必须重新送审')
+    await selEditDialog
+      .getByLabel('结论依据')
+      .fill('依据第 1 轮选优投票汇总、培养考察记录与党员大会意见（细则第十三条）')
+    await selEditDialog.getByLabel('修订理由').fill('补充党员大会意见')
+    await click(page, '保存修订')
+    await visible(page, '已保存第 2 版')
+    assert.equal(state.selections[0].revision, 2)
+    assert.equal(state.selections[0].review_status, 'draft')
+    assert.equal(state.selections[0].revisions.length, 2)
+    checks.push('修订只追加版本并回到草稿')
+
+    // 送审：自己不能审自己的版本
+    await selDraftRow.getByRole('button', { name: '送审', exact: true }).click()
+    const selSubmitDialog = page
+      .getByRole('dialog')
+      .filter({ has: page.getByLabel('送审说明') })
+    await visible(page, '你自己不能审核自己的版本')
+    await selSubmitDialog.getByLabel('送审说明').fill('名单与依据已核对，报另一位组织人员审核')
+    await click(page, '提交审核')
+    await visible(page, '已送另一位组织人员审核')
+    assert.equal(state.selections[0].review_status, 'pending')
+    assert.equal(state.selections[0].submitted_by, 'viewer-a')
+    const selPendingRow = page.getByRole('row').filter({ hasText: '待审核' })
+    assert.equal(await selPendingRow.getByRole('button', { name: '审核', exact: true }).count(), 0)
+    checks.push('送审后登记人看不到审核入口')
+
+    // 另一位组织人员审核通过：结论才生效
+    const selReviewer = await context(1440, false, 'reviewer-b')
+    await selReviewer.page.goto(`${BASE}/members`, { waitUntil: 'networkidle' })
+    await tab(selReviewer.page, '多轮选优')
+    await selReviewer.page.getByLabel('本年度批次').selectOption('B1')
+    await visible(selReviewer.page, '待审核')
+    const selReviewRow = selReviewer.page.getByRole('row').filter({ hasText: '待审核' })
+    await selReviewRow.getByRole('button', { name: '审核', exact: true }).click()
+    const selReviewDialog = selReviewer.page
+      .getByRole('dialog')
+      .filter({ has: selReviewer.page.getByLabel('审核意见') })
+    await selReviewDialog.getByLabel('审核结果').selectOption('approved')
+    await selReviewDialog.getByLabel('审核意见').fill('名单与依据核对无误，同意')
+    await selReviewDialog.getByRole('button', { name: '提交审核结果', exact: true }).click()
+    await visible(selReviewer.page, '结论已通过并生效')
+    assert.equal(state.selections[0].review_status, 'approved')
+    assert.equal(state.selections[0].reviewed_by, 'reviewer-b')
+    await selReviewer.ctx.close()
+
+    // 结论生效不等于阶段流转：档案阶段没被自动改动
+    assert.equal(state.profile.current_stage, selStageBefore)
+    // 工作区刷新要同时重取投票汇总与选优结论（结论可能在另一位组织人员那边刚审核过）
+    const selRefresh = page
+      .locator('.wb-toolbar')
+      .getByRole('button', { name: '刷新', exact: true })
+    assert.equal(await selRefresh.count(), 1)
+    await selRefresh.click()
+    await visible(page, '已通过')
+    const selApprovedRow = page.getByRole('row').filter({ hasText: '已通过' })
+    await selApprovedRow.getByRole('button', { name: '明细与留痕', exact: true }).click()
+    const selDetailDialog = page
+      .getByRole('dialog')
+      .filter({ has: page.getByText('只追加留痕', { exact: false }) })
+    await visible(page, '只追加留痕（4 版）')
+    // 依据快照是无记名口径：摊开票数，不出现投票人身份
+    await visible(page, '无记名汇总')
+    const selHistory = selDetailDialog.locator('section', { hasText: '只追加留痕' })
+    assert.equal(await selHistory.locator('li').count(), 4)
+    assert.equal(await selHistory.getByText('操作人 viewer-a', { exact: false }).count(), 3)
+    assert.equal(await selHistory.getByText('操作人 reviewer-b', { exact: false }).count(), 1)
+    assert.ok(!(await selDetailDialog.innerText()).includes('voter_id'))
+    await click(page, '关闭')
+    checks.push('选优结论双人审核留痕与阶段不自动流转')
+
+    // 作废推优记录：记录保留可查，且已生效结论不受影响（不阻断、不回滚）
+    await selChenRow.getByRole('button', { name: '作废推优', exact: true }).click()
+    const selRevokeDialog = page
+      .getByRole('dialog')
+      .filter({ has: page.getByLabel('作废理由') })
+    await selRevokeDialog.getByLabel('作废理由').fill('推荐单位填错，重新登记')
+    await click(page, '作废该记录')
+    await visible(page, '该条推优记录已作废')
+    assert.equal(state.leagueRecommendations[0].revoked_on, today)
+    await visible(page, '原有记录已作废')
+    assert.equal(state.selections[0].review_status, 'approved')
+    checks.push('作废推优记录保留留痕且不影响生效结论')
 
     // ---------------------------- 组织关系接转（T-MEM-14） ----------------------------
     await tab(page, '组织关系接转')

@@ -1,10 +1,10 @@
 # 数据库迁移指南
 
-更新日期：2026-10-11。从项目根目录、安装项目依赖的 Python 环境执行。目标数据库为支持 pgvector 的 PostgreSQL，连接读取 `DATABASE_URL`。
+更新日期：2026-10-17。从项目根目录、安装项目依赖的 Python 环境执行。目标数据库为支持 pgvector 的 PostgreSQL，连接读取 `DATABASE_URL`。
 
 ## 当前迁移链
 
-当前唯一头为 `012_member_self`：
+当前唯一头为 `022_member_vote_dedup_batch`：
 
 | revision | 内容 |
 | --- | --- |
@@ -20,6 +20,16 @@
 | `010_security_governance` | 配置版本、人工审核、耐久任务、模型用量与安全治理字段 |
 | `011_governance_timestamps` | 对治理表的时间默认值进行兼容修正 |
 | `012_member_self` | 在既有名册和组织材料表上增加账号关联、私有原件与提交重试字段；不自动按姓名匹配 |
+| `013_notification_delivery` | 通知投递台账（站内 / 外部渠道投递与重试留痕） |
+| `014_knowledge_authority_validity` | 知识条目权威来源 / 效力状态 / 公共库审核发布字段；存量按层级回填 |
+| `015_knowledge_review_schedule` | 知识条目供给复核日程；存量不回填（按当前配置倒推会伪造来源） |
+| `016_qa_session_versions` | 问答记录版本留痕（JSON 可空）；存量不回填 |
+| `017_member_reviews` | 民主评议党员；一人一年一条，唯一约束租户 × 年度 × 档案，年月与等次由人工形成 |
+| `018_member_transfers` | 组织关系接转台账与名册组织关系缓存列；存量按「在册」处理，接转记录不回填 |
+| `019_member_upper_reports` | 上级审批 / 备案报送台账；存量不回填（凭空补报送记录等于伪造事实） |
+| `020_member_data_levels` | 材料 / 民主评议字段级密级；存量材料按材料类型回填，映射在迁移内冻结 |
+| `021_member_selection` | 选优结论与团组织推优台账；名单与依据由人填写，存量不回填 |
+| `022_member_vote_dedup_batch` | 投票去重唯一约束补 `batch_no`，与服务层查重同一条规则；放宽约束，存量不冲突 |
 
 ## 应用与核对
 

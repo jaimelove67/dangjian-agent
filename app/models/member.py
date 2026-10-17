@@ -159,12 +159,23 @@ class MemberCultivation(Base):
 
 
 class MemberVote(Base):
-    """多轮选优投票；重复记录按批次、轮次与投票人去重，明细按最小权限展示。"""
+    """多轮选优投票；重复记录按**批次**、轮次与投票人去重，明细按最小权限展示。
+
+    批次是一次独立的选优：同一投票人在新年度批次的第 1 轮投票不算重复提交。唯一约束必须带
+    ``batch_no``，才会与服务层查重（同租户 + 同批次 + 同轮次 + 同投票人）是同一条规则；
+    少一项就会让正常投票撞唯一键、被抛成 500 而不是被查重挡住。约束按"投票人 + 投票对象"
+    保留 ``profile_id``：一次提交本来就要给名单里每个人各留一条记录。
+    """
 
     __tablename__ = "member_votes"
     __table_args__ = (
         UniqueConstraint(
-            "tenant_id", "round_no", "voter_id", "profile_id", name="uq_member_vote_dedup"
+            "tenant_id",
+            "batch_no",
+            "round_no",
+            "voter_id",
+            "profile_id",
+            name="uq_member_vote_dedup",
         ),
         Index("ix_member_votes_batch", "tenant_id", "batch_no", "round_no", "profile_id"),
     )
@@ -326,4 +337,104 @@ class MemberUpperReport(Base):
     revoked_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     revoke_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # 操作版本：报送 / 回填 / 作废各留一版完整快照，编号只增不减
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class MemberSelection(Base):
+    """选优结论台账（模块2 / `T-MEM-13`、`T-MEM-06`）：支部研究形成的**拟推荐名单**。
+
+    这张表的形状由三件不能让步的事决定：
+
+    1. **系统不出结论**。名单与依据都是组织人员填写的（``candidates`` / ``basis``），
+       服务层只做校验与留痕，**不读投票汇总替人排序或选人**——多轮投票是辅助材料，
+       不是结论来源。投票明细只以**无记名汇总**快照进 ``evidence``（供审核人核对依据
+       位置），不含投票人身份。
+    2. **必经第二位组织人员审核**。``review_status`` 走"草稿 → 送审 → 审核"，
+       送审人不得自审（``apply_review``），审核通过（``approved``）才是生效结论；
+       未送审、被退回的结论界面上明确标出不可视为认定依据。
+    3. **结论不等于阶段流转**。生效结论只是"组织认定依据"，阶段仍由授权人员在
+       ``member_stage_history`` 上人工办理——系统不因为结论通过就改 ``current_stage``，
+       也不自动向上级报送（报送走 `T-MEM-11` 台账，由人登记）。
+
+    ``target_stage`` 只允许"向前"的阶段；``research_method`` 区分支委会 / 党员大会，
+    因为细则要求"经支委会或党员大会研究确定"，两种程序都要能如实记下来。
+    """
+
+    __tablename__ = "member_selections"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        Index("ix_member_selections_scope", "tenant_id", "org_unit_id", "batch_no", "round_no"),
+        Index("ix_member_selections_status", "tenant_id", "review_status", "created_at"),
+    )
+
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    batch_no: Mapped[str] = mapped_column(String(20), nullable=False)
+    round_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 拟推进到的阶段（activist / candidate / probationary / member），只允许向前
+    target_stage: Mapped[str] = mapped_column(String(20), nullable=False)
+    # 名单快照 [{"profile_id":…, "member_name":…, "stage":…}]：人员改名或流转后历史行仍可读回
+    candidates: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
+    # 结论依据：必须由人写清引用了哪一轮投票 / 哪份材料 / 哪条培养记录，不写等于没依据
+    basis: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 无记名投票汇总快照（仅限名单内候选人）：只留票数规模与分布，不留投票人身份
+    evidence: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    research_on: Mapped[date] = mapped_column(Date, nullable=False)
+    # 研究程序：committee 支委会 / member_meeting 党员大会
+    research_method: Mapped[str] = mapped_column(String(20), nullable=False, default="committee")
+    # 字段级敏感分级（T-MEM-12）：含组织对某人的评价与认定依据
+    data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="sensitive")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    submitted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class MemberLeagueRecommendation(Base):
+    """团组织推优台账（`T-MEM-06`）：记录"28 周岁以下青年入党"要有的推优环节。
+
+    细则要求发展青年党员注重团组织推优，但**这项判断系统做不了**：名册里没有出生年月，
+    也没有可核对的"是否属 28 周岁以下"的权威字段。因此本表只做两件事——把推优这件事
+    如实记下来（推荐团组织 / 推荐日期 / 推优说明），以及在界面上提示"系统不判断年龄，
+    请组织核对"。**不因为缺这条记录就阻断选优或阶段流转**（宁缺勿假：真实推优材料
+    往往后补，硬拦会逼人填假日期），也不自动把推优记录写成选优结论。
+
+    ``note`` 是推优说明，属第三人信息（可能含团组织 / 他人的评价意见），读取出口按
+    密级（`member_selection_level`，默认敏感）收敛；作废保留记录与理由，不删除。
+    """
+
+    __tablename__ = "member_league_recommendations"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        Index(
+            "ix_member_league_recommendations_scope",
+            "tenant_id",
+            "org_unit_id",
+            "recommended_on",
+        ),
+        Index(
+            "ix_member_league_recommendations_profile",
+            "tenant_id",
+            "profile_id",
+            "recommended_on",
+        ),
+    )
+
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # 登记时的姓名 / 组织 / 阶段快照
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    # 推荐团组织名称文本：可能是院系团委、校团委或校外团组织，未必在本系统组织树里
+    league_org: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    recommended_on: Mapped[date] = mapped_column(Date, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 字段级敏感分级（T-MEM-12）：推优说明含第三人评价意见
+    data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="sensitive")
+    revoked_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    revoke_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 操作版本：登记 / 作废各留一版完整快照，编号只增不减
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

@@ -103,6 +103,9 @@ data_sensitivity:
   member_review_level: sensitive
   # 选优投票明细默认密级：投票人身份属第三人信息，默认不返回（只回"我投没投"）
   member_vote_level: sensitive
+  # 选优结论与团组织推优台账默认密级：两者都含"组织对某人的评价 / 推优说明"，
+  # 推优说明里的第三人信息（他人意见）按同一口径收敛
+  member_selection_level: sensitive
 
 # 评分规则配置
 scoring_rules:

@@ -25,6 +25,9 @@ def test_shipped_config_levels_and_labels():
     assert ds.material_level("入党申请书", rules=rules) is DataLevel.INTERNAL
     assert rules.review_level is DataLevel.SENSITIVE
     assert rules.vote_level is DataLevel.SENSITIVE
+    # 选优结论与团组织推优台账同一口径：都含"组织对某人的评价"
+    assert rules.selection_level is DataLevel.SENSITIVE
+    assert ds.selection_level(rules=rules) is DataLevel.SENSITIVE
 
 
 def test_short_names_cannot_dodge_the_level():
@@ -52,12 +55,14 @@ def test_config_can_raise_a_level(tmp_path):
         "data_sensitivity:\n"
         "  member_material_levels:\n"
         "    入党申请书: classified\n"
-        "  member_review_level: classified\n",
+        "  member_review_level: classified\n"
+        "  member_selection_level: classified\n",
         encoding="utf-8",
     )
     rules = ds.load_rules(str(path))
     assert ds.material_level("入党申请书", rules=rules) is DataLevel.CLASSIFIED
     assert rules.review_level is DataLevel.CLASSIFIED
+    assert rules.selection_level is DataLevel.CLASSIFIED
     # 未列出的类型仍按 internal（不因为改了一项就把所有材料抬高）
     assert ds.material_level("思想汇报", rules=rules) is DataLevel.INTERNAL
 
@@ -67,6 +72,8 @@ def test_broken_config_falls_back_to_defaults(tmp_path):
     path.write_text("data_sensitivity: [这不是映射]\n", encoding="utf-8")
     rules = ds.load_rules(str(path))
     assert ds.material_level("政治审查材料", rules=rules) is DataLevel.CLASSIFIED
+    # 配置损坏时选优口径不许变松：仍按敏感（不是"读不到就放行"）
+    assert rules.selection_level is DataLevel.SENSITIVE
 
 
 def test_level_ordering_and_guards():

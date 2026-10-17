@@ -145,6 +145,115 @@ export interface VoteSummary {
     { agree: number; disagree: number; abstain: number; voted_by_me: boolean }
   >
 }
+// 选优结论（拟推荐名单）与团组织推优（T-MEM-13、T-MEM-06）
+export interface SelectionCandidate {
+  profile_id: string
+  member_name: string
+  stage: MemberStage
+  stage_label: string
+}
+/** 结论的依据快照：本轮投票的无记名汇总（只有票数与投票人数，没有投票人身份） */
+export interface SelectionEvidence {
+  batch_no: string
+  round_no: number
+  voter_count: number
+  tally: Record<string, { agree: number; disagree: number; abstain: number }>
+  evidence_note?: string
+}
+export interface SelectionRevision {
+  revision: number
+  action: string
+  actor_id: string
+  reason: string
+  created_at: string
+}
+export type ResearchMethod = 'committee' | 'member_meeting'
+export const RESEARCH_METHOD_LABELS: Record<ResearchMethod, string> = {
+  committee: '支委会',
+  member_meeting: '党员大会',
+}
+export type SelectionStatus = 'draft' | 'pending' | 'approved' | 'rejected'
+export interface MemberSelection {
+  id: string
+  batch_no: string
+  round_no: number
+  org_unit_id: string
+  org_name: string
+  target_stage: MemberStage
+  target_stage_label: string
+  candidates: SelectionCandidate[]
+  candidate_count: number
+  basis: string
+  evidence: SelectionEvidence
+  research_on: string
+  research_method: ResearchMethod
+  research_method_label: string
+  review_status: SelectionStatus
+  review_status_label: string
+  submitted_by: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  review_comment: string
+  revision: number
+  /** 只有审核通过的结论才是组织认定依据 */
+  effective: boolean
+  /** 由后端判定：待审核 + 不是自己提交的 + 有审核权限 */
+  can_review: boolean
+  next_step_hint: string
+  notice: string
+  boundary: string
+  missing?: string[]
+  advisories?: string[]
+  revisions?: SelectionRevision[]
+  data_level: string
+  data_level_label: string
+  cloud_allowed: boolean
+  embedding_allowed: boolean
+  redacted_fields: string[]
+}
+export interface SelectionList extends MemberPage<MemberSelection> {
+  summary: Record<string, number>
+  notice: string
+  boundary: string
+}
+export interface LeagueRecommendation {
+  id: string
+  profile_id: string
+  member_name: string
+  stage: MemberStage
+  stage_label: string
+  org_unit_id: string
+  org_name: string
+  league_org: string
+  recommended_on: string
+  note: string
+  revoked_on: string | null
+  revoke_reason: string
+  revision: number
+  active: boolean
+  age_notice: string
+  notice: string
+  data_level: string
+  data_level_label: string
+  cloud_allowed: boolean
+  embedding_allowed: boolean
+  redacted_fields: string[]
+}
+export interface LeagueRecommendationStatus {
+  profile_id: string
+  member_name: string
+  has_record: boolean
+  active_count: number
+  latest_on: string | null
+  latest_org: string
+  age_notice: string
+}
+export interface LeagueRecommendationList extends MemberPage<LeagueRecommendation> {
+  summary: { total: number; active: number; revoked: number }
+  status: LeagueRecommendationStatus[]
+  age_notice: string
+  notice: string
+}
 const profileURL = (id: string) => `/member-full/profiles/${encodeURIComponent(id)}`
 
 export const memberDevelopmentApi = {
@@ -244,5 +353,77 @@ export const memberDevelopmentApi = {
   },
   voteSummary(batch_no: string, round_no: number): Promise<VoteSummary> {
     return http.get('/member-full/votes/summary', { params: { batch_no, round_no } })
+  },
+  // 选优结论（拟推荐名单）：系统不自动产生结论，名单与依据都由人填写（T-MEM-13）
+  selections(params: {
+    batch_no?: string
+    round_no?: number
+    review_status?: SelectionStatus
+    page?: number
+    page_size?: number
+  }): Promise<SelectionList> {
+    return http.get('/member-full/selections', { params })
+  },
+  selection(id: string): Promise<MemberSelection> {
+    return http.get(`/member-full/selections/${encodeURIComponent(id)}`)
+  },
+  createSelection(body: {
+    batch_no: string
+    round_no: number
+    target_stage: MemberStage
+    candidate_ids: string[]
+    basis: string
+    research_on: string
+    research_method: ResearchMethod
+    reason: string
+  }): Promise<MemberSelection> {
+    return http.post('/member-full/selections', body)
+  },
+  updateSelection(
+    id: string,
+    body: {
+      expected_revision: number
+      target_stage?: MemberStage
+      candidate_ids?: string[]
+      basis?: string
+      research_on?: string
+      research_method?: ResearchMethod
+      reason: string
+    },
+  ): Promise<MemberSelection> {
+    return http.patch(`/member-full/selections/${encodeURIComponent(id)}`, body)
+  },
+  submitSelection(
+    id: string,
+    body: { expected_revision: number; reason: string },
+  ): Promise<MemberSelection> {
+    return http.post(`/member-full/selections/${encodeURIComponent(id)}/submit`, body)
+  },
+  reviewSelection(
+    id: string,
+    body: { expected_revision: number; decision: 'approved' | 'rejected'; reason: string },
+  ): Promise<MemberSelection> {
+    return http.post(`/member-full/selections/${encodeURIComponent(id)}/review`, body)
+  },
+  // 团组织推优台账：只登记事实，不判断年龄、不阻断选优与阶段流转（T-MEM-06）
+  leagueRecommendations(params: {
+    profile_id?: string
+    profile_ids?: string
+    page?: number
+    page_size?: number
+  }): Promise<LeagueRecommendationList> {
+    return http.get('/member-full/league-recommendations', { params })
+  },
+  createLeagueRecommendation(body: {
+    profile_id: string
+    league_org: string
+    recommended_on: string
+    note: string
+    reason: string
+  }): Promise<LeagueRecommendation> {
+    return http.post('/member-full/league-recommendations', body)
+  },
+  revokeLeagueRecommendation(id: string, body: { reason: string }): Promise<LeagueRecommendation> {
+    return http.post(`/member-full/league-recommendations/${encodeURIComponent(id)}/revoke`, body)
   },
 }

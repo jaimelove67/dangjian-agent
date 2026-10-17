@@ -1,7 +1,7 @@
 """字段级敏感分级与第三人信息脱敏（T-MEM-12）
 
 对应 SEC-01（人员档案 / 政治表现 / 投票 / 评议分类分级）与 SEC-04（敏感内容不出网）。
-本模块是"党员材料 / 民主评议 / 选优投票"密级的**唯一来源**，供下列出口消费：
+本模块是"党员材料 / 民主评议 / 选优投票 / 选优结论与团组织推优"密级的**唯一来源**，供下列出口消费：
 
 - 读取出口：密级高于查看者等级时，第三人字段不返回正文（``redact_third_party``）；
 - 批量导出：第三人字段一律不写出（``strip_third_party_fields``）；
@@ -49,6 +49,8 @@ LEVEL_LABELS: dict[DataLevel, str] = {
 DEFAULT_MATERIAL_LEVEL = DataLevel.INTERNAL
 DEFAULT_REVIEW_LEVEL = DataLevel.SENSITIVE
 DEFAULT_VOTE_LEVEL = DataLevel.SENSITIVE
+# 选优结论与团组织推优台账：含"组织对某人的评价、推优说明"，按敏感级处理。
+DEFAULT_SELECTION_LEVEL = DataLevel.SENSITIVE
 
 # 含第三人信息（他人对某人的评价、给某人的备注与说明）的字段名。
 # 读取出口按密级收敛，批量导出与模型调用一律不含。
@@ -86,6 +88,7 @@ class SensitivityRules:
     default_material_level: DataLevel = DEFAULT_MATERIAL_LEVEL
     review_level: DataLevel = DEFAULT_REVIEW_LEVEL
     vote_level: DataLevel = DEFAULT_VOTE_LEVEL
+    selection_level: DataLevel = DEFAULT_SELECTION_LEVEL
 
     def material_level(self, material_type: Any) -> DataLevel:
         """按材料类型给出密级；未登记的类型按内部处理（不猜内容）。"""
@@ -156,6 +159,10 @@ def load_rules(config_path: Optional[str] = None) -> SensitivityRules:
         vote_level=_as_level(
             entry.get("member_vote_level", DEFAULT_VOTE_LEVEL.value), DEFAULT_VOTE_LEVEL
         ),
+        selection_level=_as_level(
+            entry.get("member_selection_level", DEFAULT_SELECTION_LEVEL.value),
+            DEFAULT_SELECTION_LEVEL,
+        ),
     )
 
 
@@ -173,6 +180,11 @@ def review_level(*, rules: Optional[SensitivityRules] = None) -> DataLevel:
 
 def vote_level(*, rules: Optional[SensitivityRules] = None) -> DataLevel:
     return (rules or load_rules()).vote_level
+
+
+def selection_level(*, rules: Optional[SensitivityRules] = None) -> DataLevel:
+    """选优结论与团组织推优台账的密级（同一套"组织评价"口径）。"""
+    return (rules or load_rules()).selection_level
 
 
 def level_rank(level: DataLevel | str | None) -> int:

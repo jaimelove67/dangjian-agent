@@ -334,6 +334,21 @@ async def test_votes_deduplicate_and_summarize(member_url):
         # 同一投票人重复提交被拒绝
         response = await client.post("/api/v1/member-full/votes", json=body)
         assert response.status_code == 409
+        # 换一个年度批次、同一轮次不算重复：批次是一次独立的选优。
+        # 数据库唯一约束漏了 batch_no 时这里会 500（约束比服务层查重更严），所以必须钉住。
+        await ok(
+            client,
+            "POST",
+            "/member-full/votes",
+            {
+                "batch_no": "B2",
+                "round_no": 1,
+                "votes": [{"profile_id": first["id"], "vote": "agree", "comment": "新批次"}],
+            },
+        )
+        new_batch = await ok(client, "GET", "/member-full/votes/summary?batch_no=B2&round_no=1")
+        assert new_batch["voter_count"] == 1
+        assert new_batch["tally"][first["id"]]["agree"] == 1
     async with client_for(
         member_url, actor("member-voter2", UserRole.BRANCH_SECRETARY, "branch-a")
     ) as (client, _):

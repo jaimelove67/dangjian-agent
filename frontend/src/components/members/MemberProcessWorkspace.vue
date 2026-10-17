@@ -15,6 +15,7 @@ import ActionDialog from '@/components/ActionDialog.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
 import MemberFilePanel from './MemberFilePanel.vue'
+import MemberSelectionPanel from './MemberSelectionPanel.vue'
 import { session } from '@/stores/session'
 import { todayISO } from '@/utils/files'
 
@@ -25,7 +26,9 @@ const canScore = computed(() => session.can('member.scoring'))
 const loading = ref(false)
 const busy = ref(false)
 const profileBusy = ref(false)
-watch([busy, profileBusy], () => emit('busy', busy.value || profileBusy.value))
+const selectionBusy = ref(false)
+const selectionPanel = ref<InstanceType<typeof MemberSelectionPanel> | null>(null)
+watch([busy, profileBusy, selectionBusy], () => emit('busy', busy.value || profileBusy.value || selectionBusy.value))
 const error = ref<unknown>(null)
 const message = ref('')
 const year = ref(new Date().getFullYear())
@@ -222,6 +225,19 @@ function resetVote(): void {
   void loadVotes()
 }
 watch([voteBatch, round], resetVote)
+
+/**
+ * 工作区刷新：多轮选优这一屏既要重取投票汇总，也要重取选优结论与团组织推优台账
+ * （结论可能在另一位组织人员那边刚审核过）。
+ */
+async function refreshWorkspace(): Promise<void> {
+  if (props.mode === 'votes' && voteBatch.value) {
+    await loadVotes()
+    selectionPanel.value?.refresh()
+    return
+  }
+  await load()
+}
 function changeYear(): void {
   page.value = 1
   voteBatch.value = ''
@@ -294,7 +310,7 @@ async function submitVotes(): Promise<void> {
         class="btn btn--quiet"
         type="button"
         :disabled="loading || busy"
-        @click="mode === 'votes' && voteBatch ? loadVotes() : load()"
+        @click="refreshWorkspace"
       >
         刷新
       </button>
@@ -515,6 +531,14 @@ async function submitVotes(): Promise<void> {
           </div>
           <p v-else class="u-meta">本轮尚无记录。</p>
         </section>
+        <MemberSelectionPanel
+          ref="selectionPanel"
+          :batch-no="voteBatch"
+          :round-no="round"
+          :rows="voteRows"
+          :summary="summary"
+          @busy="selectionBusy = $event"
+        />
       </template>
     </div>
     <div v-if="!loading && total > 20" class="wb-pager">

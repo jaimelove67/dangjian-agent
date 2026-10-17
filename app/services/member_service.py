@@ -11,6 +11,7 @@ import yaml
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import tenant_config
@@ -639,8 +640,14 @@ class MemberDevelopment:
             )
             for entry in body.votes
         ]
-        self.db.add_all(rows)
-        await self.db.flush()
+        try:
+            async with self.db.begin_nested():
+                self.db.add_all(rows)
+                await self.db.flush()
+        except IntegrityError as exc:
+            # 并发兜底：唯一约束（租户 + 批次 + 轮次 + 投票人 + 投票对象）与上面的查重是同一条
+            # 规则，撞上说明另一个请求刚提交完，这时要给 409 而不是把数据库异常抛成 500。
+            raise HTTPException(409, "同一投票人本轮已投票，不能重复提交") from exc
         return {"batch_no": body.batch_no, "round_no": body.round_no, "recorded": len(rows)}
 
     async def vote_summary(self, batch_no: str, round_no: int) -> dict[str, Any]:

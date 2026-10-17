@@ -14,6 +14,7 @@ from app.schemas import (  # noqa: E402
     meeting,
     member_ext,
     member_review,
+    member_selection,
     member_transfer,
     member_upper_report,
 )
@@ -53,6 +54,20 @@ CONTRACTS = [
     ("POST", r"/member-full/upper-reports", member_upper_report.UpperReportCreate),
     ("POST", r"/member-full/upper-reports/[^/]+/settle", member_upper_report.UpperReportSettle),
     ("POST", r"/member-full/upper-reports/[^/]+/revoke", member_upper_report.UpperReportRevoke),
+    ("POST", r"/member-full/selections", member_selection.SelectionCreate),
+    ("PATCH", r"/member-full/selections/[^/]+", member_selection.SelectionUpdate),
+    ("POST", r"/member-full/selections/[^/]+/submit", member_selection.SelectionSubmit),
+    ("POST", r"/member-full/selections/[^/]+/review", member_selection.SelectionDecision),
+    (
+        "POST",
+        r"/member-full/league-recommendations",
+        member_selection.LeagueRecommendationCreate,
+    ),
+    (
+        "POST",
+        r"/member-full/league-recommendations/[^/]+/revoke",
+        member_selection.LeagueRecommendationRevoke,
+    ),
 ]
 
 
