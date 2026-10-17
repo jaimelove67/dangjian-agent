@@ -99,11 +99,12 @@ docker stats --no-stream
 - 构建期 apt/pip/npm 源经 ARG 注入（`.env`）：`APT_MIRROR=mirrors.cloud.tencent.com`、`PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple`、`NPM_REGISTRY=https://registry.npmmirror.com`。`Dockerfile` / `Dockerfile.frontend.http` 已支持 `BASE_IMAGE` / `NODE_IMAGE` / `NGINX_IMAGE` / `APT_MIRROR` / `PIP_INDEX_URL` / `NPM_REGISTRY`，默认值等价官方地址。
   踩坑：ARG 在 `FROM` 前声明是全局，仅可用于 FROM 行；stage 内的 RUN 要用必须在 stage 内再 `ARG` 一次。
 - 容器：`party-agent-postgres` / `party-agent-redis` / `party-agent-app` / `party-agent-frontend` 全部运行中；迁移到 head `022_member_vote_dedup_batch`；外网 `http://129.204.32.148` 首页 200。
-- `/api/v1/health/ready` 当前 503：唯一阻塞项 `models=configuration_required`（`DASHSCOPE_API_KEY` 未配置）。database / redis / schema / encryption / audit_storage 均 healthy。补 Key 后自动就绪：
+- `/api/v1/health/ready` **已返回 200**。百炼 Key 已配置，`cloud-llm` / `cloud-embedding` / `cloud-reranker` 三个模型注册并实际调用校验通过（health 全 true）；database / redis / schema / encryption / audit_storage 均 healthy。更换 Key：
   ```bash
   cd /opt/dangjian-agent && sed -i 's|^DASHSCOPE_API_KEY=.*|DASHSCOPE_API_KEY=sk-你的Key|' .env \
     && docker compose -f docker-compose.server.yml up -d app
   ```
+- **排障别踩的坑**：`docker compose exec app python` 起的是**新进程**，不会执行 FastAPI lifespan，因此直接调 `_readiness_details()` 会误报 `redis=unhealthy` 与 `models=missing`。判断是否真的有问题，一律以接口为准：`curl http://127.0.0.1/api/v1/health/ready`。
 - 常用运维：
   ```bash
   cd /opt/dangjian-agent
