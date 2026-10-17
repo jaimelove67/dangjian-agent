@@ -67,6 +67,27 @@ const profile = {
       submit_date: today,
       review_status: 'pending',
       note: '',
+      data_level: 'internal',
+      data_level_label: '内部',
+      cloud_allowed: true,
+      embedding_allowed: true,
+      redacted_fields: [],
+      review_history: [],
+    },
+    {
+      // 政审类材料按涉密级返回：第三人字段正文（审核备注）由后端脱敏，
+      // 这里给的就是脱敏后的占位，界面只应展示密级与占位说明。
+      material_type: '政治审查材料',
+      file_version: '第1版',
+      stage: 'activist',
+      submit_date: today,
+      review_status: 'approved',
+      note: '（涉密材料正文不在界面展示，请查党组织线下原件）',
+      data_level: 'classified',
+      data_level_label: '涉密',
+      cloud_allowed: false,
+      embedding_allowed: false,
+      redacted_fields: ['note'],
       review_history: [],
     },
   ],
@@ -1150,9 +1171,9 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
       )
       const tally = {}
       for (const row of rows) {
-        tally[row.profile_id] ??= { agree: 0, disagree: 0, abstain: 0, voters: [] }
+        tally[row.profile_id] ??= { agree: 0, disagree: 0, abstain: 0, voted_by_me: false }
         tally[row.profile_id][row.vote] += 1
-        tally[row.profile_id].voters.push(row.voter_id)
+        tally[row.profile_id].voted_by_me ||= row.voter_id === viewer
       }
       return route.fulfill(
         ok({
@@ -1160,7 +1181,11 @@ async function context(width = 1440, readonly = false, viewer = 'viewer-a', data
           round_no: Number(url.searchParams.get('round_no')),
           voter_count: new Set(rows.map((item) => item.voter_id)).size,
           tally,
-          note: '汇总仅为过程记录，组织结论由人工形成。',
+          data_level: 'sensitive',
+          data_level_label: '敏感',
+          cloud_allowed: false,
+          embedding_allowed: true,
+          note: '汇总仅为过程记录，组织结论由人工形成；无记名，不给出投票人身份。',
         }),
       )
     }
@@ -1647,6 +1672,10 @@ try {
     await page.getByText('查看审核历史（1）', { exact: true }).click()
     await visible(page, '原件已逐项核验')
     checks.push('材料人工审核与历史展示')
+    // 字段级敏感分级（T-MEM-12）：涉密材料在界面上标出密级，第三人字段正文不展示
+    await visible(page, '涉密级材料：不进名册')
+    await visible(page, '涉密材料正文不在界面展示')
+    checks.push('涉密材料标出密级且第三人字段正文不展示')
     await tab(page, '培养与评分')
     await page.getByText('登记培养与表现记录', { exact: true }).click()
     await page.getByLabel('分值（无评分证据时留空）').fill('0')

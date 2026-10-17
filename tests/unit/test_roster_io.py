@@ -184,6 +184,36 @@ class TestBuildRoster:
         )
         assert "导出条数：1" in guide and "全组织范围" in guide
 
+    def test_third_party_fields_never_reach_the_export(self):
+        """T-MEM-12：即使上游把第三人字段塞进行数据，导出也不落进表格。"""
+        data = build_roster(
+            [
+                {
+                    "name": "张三",
+                    "org_name": "组织-branch-a",
+                    "stage": "activist",
+                    "stage_joined_on": "2024-05-01",
+                    "year": 2024,
+                    "batch_no": "2024-1",
+                    "pending": 0,
+                    "note": "经向其舅舅王某某核实",
+                    "description": "第三人说明",
+                    "comment": "投票意见",
+                    "peer_review": "党员互评原文",
+                }
+            ]
+        )
+        workbook = load_workbook(io.BytesIO(data))
+        dumped = "\n".join(
+            str(cell.value)
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+            if cell.value is not None
+        )
+        for marker in ("王某某", "第三人说明", "投票意见", "党员互评原文"):
+            assert marker not in dumped
+
     def test_exported_roster_can_be_read_back_as_import_template(self):
         data = build_roster(
             [

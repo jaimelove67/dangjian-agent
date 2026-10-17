@@ -291,23 +291,28 @@ async def test_study_restricted_response_cannot_be_replaced_by_raw_snapshot(monk
 async def test_vote_review_uses_frozen_authorized_candidate_scope(monkeypatch):
     service = ReviewService(SimpleNamespace(), actor())
     body = ReviewSubmit(source_kind="vote", source_id="batch")
+    bucket = {"agree": 1, "disagree": 0, "abstain": 0, "voted_by_me": True}
     frozen = {
         "batch_no": "batch",
         "round_no": 1,
-        "tally": {"a": {"voters": ["one"], "agree": 1}},
+        "tally": {"a": dict(bucket)},
         "voter_count": 1,
     }
     row = HumanReview(snapshot={"parameters": body.model_dump(), "content": frozen})
-    delegate = SimpleNamespace(profile=AsyncMock())
+    delegate = SimpleNamespace(
+        profile=AsyncMock(), vote_voter_count=AsyncMock(return_value=1)
+    )
     fresh = {
         **frozen,
-        "tally": {**frozen["tally"], "b": {"voters": ["two"], "agree": 1}},
+        "tally": {**frozen["tally"], "b": dict(bucket)},
         "voter_count": 2,
     }
     monkeypatch.setattr(service, "source", AsyncMock(return_value=(fresh, delegate, None)))
     current, _, _ = await service.current_source(row)
     assert current == frozen
     delegate.profile.assert_awaited_once_with("a", lock=False)
+    # 无记名汇总下只能回服务端计数，不能靠返回的投票人身份再数。
+    delegate.vote_voter_count.assert_awaited_once_with("batch", 1, ["a"])
 
 
 async def test_independent_audit_failure_is_encrypted_and_replay_deduplicates(

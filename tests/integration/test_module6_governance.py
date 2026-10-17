@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -24,7 +25,7 @@ from app.core.config import settings, tenant_config
 from app.core.tenant import bypass_tenant_filter, tenant_context
 from app.models.audit import AuditLog
 from app.models.governance import DurableJob
-from app.models.member import MemberCultivation, MemberProfile
+from app.models.member import MemberCultivation, MemberProfile, MemberVote
 from app.models.org import OrgUnit
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
@@ -326,6 +327,73 @@ async def test_review_frozen_score_rejects_self_approval_and_invalidates_changed
             assert fresh.id != row.id and fresh.status == "pending"
             visible = await ReviewService(db, reviewer).visible_reviews()
             assert sum(item["effective_status"] == "pending" for item in visible) == 1
+
+
+async def test_review_frozen_vote_summary_stays_anonymous_and_recounts_voters(native):
+    _, maker = native
+    async with maker() as db:
+        school, _, branch, author, reviewer = await seed(db)
+        with tenant_context(school.id, author.id):
+            candidates = [
+                MemberProfile(
+                    tenant_id=school.id,
+                    name=f"选优对象{index}",
+                    org_name=branch.name,
+                    org_unit_id=branch.id,
+                )
+                for index in (1, 2)
+            ]
+            db.add_all(candidates)
+            await db.flush()
+            db.add_all(
+                [
+                    MemberVote(
+                        tenant_id=school.id,
+                        batch_no="2026-1",
+                        round_no=1,
+                        profile_id=candidates[0].id,
+                        voter_id=author.id,
+                        vote="agree",
+                    ),
+                    MemberVote(
+                        tenant_id=school.id,
+                        batch_no="2026-1",
+                        round_no=1,
+                        profile_id=candidates[0].id,
+                        voter_id=reviewer.id,
+                        vote="disagree",
+                    ),
+                    MemberVote(
+                        tenant_id=school.id,
+                        batch_no="2026-1",
+                        round_no=1,
+                        profile_id=candidates[1].id,
+                        voter_id=author.id,
+                        vote="agree",
+                    ),
+                ]
+            )
+            await db.commit()
+            body = ReviewSubmit(source_kind="vote", source_id="2026-1", round=1)
+            row = await ReviewService(db, author).submit(body)
+            await db.commit()
+            frozen = row.snapshot["content"]
+            assert frozen["voter_count"] == 2
+            assert set(frozen["tally"][candidates[0].id]) == {
+                "agree",
+                "disagree",
+                "abstain",
+                "voted_by_me",
+            }
+        with tenant_context(school.id, reviewer.id):
+            # 审核人组织范围更广也必须能打开汇总：票数按服务端计数，不靠投票人身份。
+            view = await ReviewService(db, reviewer).view(row, include_content=True)
+            assert not view["stale"]
+            content = view["snapshot"]
+            assert content["voter_count"] == 2
+            first = content["tally"][candidates[0].id]
+            assert (first["agree"], first["disagree"]) == (1, 1)
+            assert "voters" not in first and author.id not in json.dumps(content)
 
 
 async def test_job_dedup_expired_lease_revocation_and_bounded_retries(native, monkeypatch):

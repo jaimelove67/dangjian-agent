@@ -39,6 +39,7 @@ PERMISSIONS = {
     "assessment_report": Permission.ASSESSMENT_REVIEW,
     "assessment_plan": Permission.ASSESSMENT_REVIEW,
 }
+# 指纹里必须忽略"随查看者变化"的字段，否则同一份内容在不同审核人眼里会被判成版本失效。
 VOLATILE = {
     "created_at",
     "updated_at",
@@ -51,6 +52,8 @@ VOLATILE = {
     "revision",
     "archived_at",
     "archive_policy_version",
+    # 无记名选优汇总给当前查看者的"我已投"标记，不是内容本身（T-MEM-12）。
+    "voted_by_me",
 }
 
 
@@ -126,8 +129,9 @@ class ReviewService:
             current["tally"] = {
                 key: value for key, value in current["tally"].items() if key in scope_ids
             }
-            current["voter_count"] = len(
-                {voter for item in current["tally"].values() for voter in item["voters"]}
+            # 无记名汇总不返回投票人身份（T-MEM-12），票数规模改由服务端按冻结范围计数。
+            current["voter_count"] = await service.vote_voter_count(
+                params.source_id, params.round, scope_ids
             )
         return current, service, source
 

@@ -18,6 +18,7 @@ from app.main import app
 from app.models.org import OrgUnit
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
+from app.rules import data_sensitivity as ds
 from tests.integration import test_repaired_storage as storage_fixtures
 
 storage_url = storage_fixtures.storage_url
@@ -179,6 +180,10 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
         )
         # 材料二进制不得进入响应，也不得因延迟列懒加载而 500。
         assert all("content" not in item for item in listed["items"])
+        # 字段级敏感分级（T-MEM-12）：每行都带密级与出网 / 向量化口径
+        assert all(item["data_level_label"] for item in listed["items"])
+        assert all(item["cloud_allowed"] is True for item in listed["items"])
+        assert all(item["redacted_fields"] == [] for item in listed["items"])
         for item in listed["items"]:
             if not item.get("legacy_material"):
                 await ok(
@@ -187,6 +192,27 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
                     f"/member-full/materials/{item['id']}/review",
                     {"review_status": "approved", "note": "核验通过", "reason": "人工核验"},
                 )
+        # 政审类材料按涉密级收敛：第三人字段正文不出界面（T-MEM-12）
+        politics = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/materials",
+            {"material_type": "政治审查材料", "submit_date": today, "reason": "登记政审材料"},
+        )
+        assert politics["data_level"] == "classified" and politics["cloud_allowed"] is False
+        await ok(
+            client,
+            "POST",
+            f"/member-full/materials/{politics['id']}/review",
+            {"review_status": "approved", "note": "经向其舅舅王某某核实", "reason": "人工核验"},
+        )
+        after_review = await ok(client, "GET", f"/member-full/profiles/{profile['id']}/materials")
+        politics = next(
+            item for item in after_review["items"] if item["material_type"] == "政治审查材料"
+        )
+        assert politics["note"] == ds.CLASSIFIED_NOTE
+        assert "note" in politics["redacted_fields"]
+        assert "王某某" not in str(after_review)
         # 非法流转被拒（未满足合法顺序）
         response = await client.post(
             "/api/v1" + f"/member-full/profiles/{profile['id']}/transition",
@@ -324,8 +350,14 @@ async def test_votes_deduplicate_and_summarize(member_url):
         summary = await ok(client, "GET", "/member-full/votes/summary?batch_no=B1&round_no=1")
         assert summary["voter_count"] == 2
         assert summary["tally"][first["id"]]["agree"] == 2
+        # 无记名（T-MEM-12）：汇总不返回任何投票人身份，只回答"我投没投过这个人"
+        assert "voters" not in summary["tally"][first["id"]]
+        assert summary["tally"][first["id"]]["voted_by_me"] is True
+        assert summary["tally"][second["id"]]["voted_by_me"] is False
+        assert "member-author" not in str(summary) and "member-voter2" not in str(summary)
         # 选优汇总同样强制标注，且指向可逐条核对的投票明细分
         assert "辅助参考" in summary["note"] and "投票明细" in summary["note"]
+        assert "不给出投票人身份" in summary["note"]
 
 
 @pytest.mark.asyncio

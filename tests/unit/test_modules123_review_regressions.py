@@ -1,5 +1,6 @@
 """上传审查发现的权限与日期回归；SQLite 实际执行汇总 SQL，不调用云模型。"""
 
+import json
 from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,7 +16,7 @@ from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask
 from app.models.member import MemberCultivation, MemberMaterial, MemberProfile, MemberVote
 from app.models.user import User, UserRole
 from app.schemas.meeting import ActivityCreate, ActivityUpdate
-from app.schemas.member_ext import MaterialReview, ScoringRequest, TransitionRequest
+from app.schemas.member_ext import MaterialCreate, MaterialReview, ScoringRequest, TransitionRequest
 from app.services import activity_service
 from app.services.file_store import read_original, save_original
 from app.services.member_service import MemberDevelopment
@@ -87,12 +88,63 @@ async def test_vote_summary_and_stats_stay_within_branch(member_data):
     votes = await service.vote_summary("B1", 1)
     assert set(votes["tally"]) == {"own"}
     assert votes["voter_count"] == 1
-    assert votes["tally"]["own"]["voters"] == ["voter-own"]
+    # 无记名（T-MEM-12）：只回答"我投没投"，不回答"谁投了"
+    assert votes["tally"]["own"]["voted_by_me"] is False
+    assert votes["data_level"] == "sensitive" and votes["cloud_allowed"] is False
+    assert "voter-own" not in json.dumps(votes, ensure_ascii=False)
+    assert "voters" not in votes["tally"]["own"]
     stats = await service.roster_stats(year=2026, batch_no="B1")
     assert stats["total"] == 1 and stats["by_stage"] == {"activist": 1}
     service.org_ids = []
     assert (await service.vote_summary("B1", 1))["tally"] == {}
     assert (await service.roster_stats(year=None, batch_no=None))["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_material_level_is_snapshotted_and_third_party_text_is_hidden(member_data):
+    """T-MEM-12：材料密级在登记时带出；第三人字段高于查看者等级时不返回正文。"""
+    service, _ = member_data
+    classified = await service.add_material(
+        "own", MaterialCreate(material_type="政治审查材料", reason="登记政审材料")
+    )
+    mass = await service.add_material(
+        "own", MaterialCreate(material_type="政审材料", reason="用简称登记也要认得出")
+    )
+    sensitive = await service.add_material(
+        "own", MaterialCreate(material_type="群众评议材料", reason="登记群众评议材料")
+    )
+    await service.review_material(
+        str(classified.id),
+        MaterialReview(review_status="approved", note="经向其舅舅王某某核实", reason="人工核验"),
+    )
+    await service.review_material(
+        str(sensitive.id),
+        MaterialReview(review_status="approved", note="群众反映良好", reason="人工核验"),
+    )
+    items = {item["material_type"]: item for item in await service.list_materials("own")}
+    politics = items["政治审查材料"]
+    assert politics["data_level"] == "classified"
+    assert politics["data_level_label"] == "涉密"
+    assert politics["cloud_allowed"] is False and politics["embedding_allowed"] is False
+    assert "note" in politics["redacted_fields"]
+    # 正文与留痕快照里的第三人信息都不出界面
+    assert "王某某" not in json.dumps(politics, ensure_ascii=False)
+    assert "王某某" not in json.dumps(politics["review_history"], ensure_ascii=False)
+    # 简称登记的材料同样按正式名给密级（不给"换个写法"留缝）
+    assert items["政审材料"]["data_level"] == "classified"
+    # 组织人员本人（敏感级）看得到群众评议材料的备注
+    assert items["群众评议材料"]["data_level"] == "sensitive"
+    assert items["群众评议材料"]["note"] == "群众反映良好"
+    assert items["群众评议材料"]["redacted_fields"] == []
+    # 未登记过的材料类型按内部处理
+    plain = await service.add_material(
+        "own", MaterialCreate(material_type="入党申请书", reason="登记入党申请书")
+    )
+    plain_item = next(
+        item for item in await service.list_materials("own") if item.get("id") == str(plain.id)
+    )
+    assert plain_item["data_level"] == "internal"
+    assert plain_item["cloud_allowed"] is True and plain_item["embedding_allowed"] is True
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,13 @@ from app.models.member import (
     MemberVote,
 )
 from app.models.user import User
+from app.rules.data_sensitivity import (
+    annotate_level,
+    material_level,
+    redact_third_party,
+    viewer_level,
+    vote_level,
+)
 from app.rules.member_stages import STAGE_LABELS, MemberStage, StageRules, load_stage_rules
 from app.schemas.member_ext import (
     ArchiveCheckRun,
@@ -234,6 +241,7 @@ class MemberDevelopment:
             org_unit_id=profile.org_unit_id or "",
             stage=body.stage or profile.current_stage,
             material_type=body.material_type,
+            data_level=material_level(body.material_type).value,
             file_version=body.file_version,
             submit_date=body.submit_date or date.today(),
             submitter_id=str(self.user.id),
@@ -242,6 +250,18 @@ class MemberDevelopment:
         self.db.add(material)
         await self.db.flush()
         return material
+
+    def material_view(self, material: Any) -> dict[str, Any]:
+        """材料写入后的回显口径：带密级与出网 / 向量化标注。
+
+        第三人字段正文**不在这里脱敏**：写材料 / 写审核备注的人看到的是自己刚录的内容，
+        对写入动作的留痕（审计快照）也应当是真实内容；按查看者等级收敛只发生在读取出口
+        ``list_materials``。
+        """
+        data = row_data(material)
+        level = data.get("data_level") or material_level(data.get("material_type")).value
+        data.update(annotate_level(level))
+        return data
 
     async def list_materials(self, profile_id: str) -> list[dict[str, Any]]:
         profile = await self.profile(profile_id)
@@ -295,6 +315,14 @@ class MemberDevelopment:
                         "note": "历史材料名称，待组织人员核验原始文件后归档",
                     }
                 )
+        # 字段级敏感分级（T-MEM-12）：密级高于查看者时不返回第三人字段正文（含留痕快照）。
+        viewer = viewer_level(self.user)
+        for index, item in enumerate(items):
+            level = item.get("data_level") or material_level(item.get("material_type")).value
+            masked, redacted = redact_third_party(item, level=level, viewer=viewer)
+            masked.update(annotate_level(level))
+            masked["redacted_fields"] = redacted
+            items[index] = masked
         return items
 
     async def review_material(self, material_id: str, body: MaterialReview) -> MemberMaterial:
@@ -636,13 +664,16 @@ class MemberDevelopment:
         )
         tally: dict[str, dict[str, Any]] = {}
         voters: set[str] = set()
+        mine = str(self.user.id)
         for row in rows:
             voters.add(row.voter_id)
             bucket = tally.setdefault(
-                row.profile_id, {"agree": 0, "disagree": 0, "abstain": 0, "voters": []}
+                row.profile_id,
+                {"agree": 0, "disagree": 0, "abstain": 0, "voted_by_me": False},
             )
             bucket[row.vote] += 1
-            bucket["voters"].append(row.voter_id)
+            # 无记名：只回答"我投没投过这个人"，不回答"谁投了这个人"（T-MEM-12）。
+            bucket["voted_by_me"] = bucket["voted_by_me"] or row.voter_id == mine
         return {
             "batch_no": batch_no,
             "round_no": round_no,
@@ -650,9 +681,35 @@ class MemberDevelopment:
             "tally": tally,
             "note": (
                 f"{ASSISTED_REFERENCE_NOTE}；本汇总仅为过程记录，排序与入选由组织人员依规认定。"
+                "汇总为无记名口径：只给出票数与票数分布，不给出投票人身份。"
                 + evidence_note("投票明细")
             ),
+            **annotate_level(vote_level()),
         }
+
+    async def vote_voter_count(self, batch_no: str, round_no: int, profile_ids: list[str]) -> int:
+        """无记名口径下的投票人数：只在服务端计数，任何身份都不经过接口。
+
+        统一审核重算冻结候选范围时仍需要票数规模，但汇总已不返回 ``voters``
+        （T-MEM-12），因此计数必须由服务端按授权范围完成，不能靠返回明细再数。
+        """
+        if not profile_ids:
+            return 0
+        total = (
+            await self.db.execute(
+                select(func.count(func.distinct(MemberVote.voter_id)))
+                .join(MemberProfile, MemberVote.profile_id == MemberProfile.id)
+                .where(
+                    *self._scope(MemberProfile),
+                    MemberVote.tenant_id == self.tenant_id,
+                    MemberVote.batch_no == batch_no,
+                    MemberVote.round_no == round_no,
+                    MemberVote.is_deleted.is_(False),
+                    MemberVote.profile_id.in_(profile_ids),
+                )
+            )
+        ).scalar_one()
+        return int(total or 0)
 
     # ==================== 有证据的辅助评分 ====================
 

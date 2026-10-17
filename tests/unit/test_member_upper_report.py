@@ -302,6 +302,47 @@ def test_export_lists_checklist_not_material_contents():
     assert "不代替上级党组织审批" in guide
 
 
+def test_export_drops_third_party_fields_but_keeps_reply_note():
+    """T-MEM-12：第三人字段不落表；批复说明（decide_note）是台账要素，保留。"""
+    content = build_upper_report_export(
+        [
+            {
+                "item": "member_approval",
+                "item_label": item_spec("member_approval").label,
+                "kind_label": "审批",
+                "member_name": "合成周砚青",
+                "org_name": "TEST 支部",
+                "stage_label": "预备党员",
+                "upper_org": "TEST 院系党委",
+                "letter_no": "TEST-2026-01",
+                "submitted_on": date(2026, 7, 1),
+                "materials": ["中国共产党入党志愿书"],
+                "status_label": "已批复",
+                "result_label": "同意",
+                "decided_on": date(2026, 7, 20),
+                "reply_no": "TEST-批-2026-01",
+                "decide_note": "院系党委已批复",
+                "overdue": False,
+                "note": "经向其舅舅王某某核实",
+                "description": "第三人说明",
+                "comment": "投票意见",
+                "peer_review": "党员互评原文",
+            }
+        ]
+    )
+    book = load_workbook(io.BytesIO(content))
+    dumped = "\n".join(
+        str(cell.value)
+        for sheet in book.worksheets
+        for row in sheet.iter_rows()
+        for cell in row
+        if cell.value is not None
+    )
+    for marker in ("王某某", "第三人说明", "投票意见", "党员互评原文"):
+        assert marker not in dumped
+    assert "院系党委已批复" in dumped
+
+
 def test_export_handles_missing_dates_without_none():
     content = build_upper_report_export(
         [

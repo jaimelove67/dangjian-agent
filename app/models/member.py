@@ -84,6 +84,8 @@ class MemberMaterial(Base):
     org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     material_type: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    # 字段级敏感分级（T-MEM-12）：登记时按材料类型带出的密级快照，配置调整不回改历史。
+    data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="internal")
     file_version: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     submit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     submitter_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
@@ -211,6 +213,8 @@ class MemberReview(Base):
     org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    # 字段级敏感分级（T-MEM-12）：评议含个人自评 / 党员互评 / 支部评定意见原文。
+    data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="sensitive")
     # {"self_assessment":…, "peer_review":…, "test":{…票数}, "branch_opinion":…}
     procedure: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
     grade: Mapped[str] = mapped_column(String(20), nullable=False, default="")

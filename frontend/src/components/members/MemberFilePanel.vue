@@ -37,6 +37,22 @@ const tabs = [
   { key: 'archive', label: '档案检查' },
 ]
 const materialLabels = { pending: '待核验', approved: '人工核验通过', rejected: '已退回' }
+// 字段级敏感分级（T-MEM-12）：敏感 / 涉密材料在界面上标出来，让组织人员知道它不进导出、
+// 也不交给模型；第三人字段是否已按查看者等级脱敏由后端返回的 redacted_fields 说明。
+const levelLabels: Record<string, string> = { sensitive: '敏感', classified: '涉密' }
+function materialLevelLabel(item: MemberMaterial): string {
+  return levelLabels[item.data_level ?? ''] ?? ''
+}
+// 提示句按后端返回的口径拼，不写死：出网 / 向量化能不能，由 cloud_allowed / embedding_allowed 说了算。
+function materialLevelNote(item: MemberMaterial): string {
+  const label = materialLevelLabel(item)
+  if (!label) return ''
+  const parts = [`${label}级材料：不进名册 / 台账导出`]
+  if (item.cloud_allowed === false) parts.push('也不交给模型')
+  if (item.embedding_allowed === false) parts.push('也不用于检索向量化')
+  parts.push('其中的第三人信息按查看者等级脱敏')
+  return `${parts.join('，')}。`
+}
 const assignment = reactive({ year: new Date().getFullYear(), batch_no: '', reason: '' })
 const material = reactive({
   material_type: '',
@@ -326,7 +342,9 @@ async function archiveCheck(): Promise<void> {
                   class="badge"
                   :class="item.review_status === 'approved' ? 'badge--ok' : 'badge--warn'"
                   >{{ materialLabels[item.review_status] }}</span
-                >
+                ><span v-if="materialLevelLabel(item)" class="badge badge--warn">{{
+                  materialLevelLabel(item)
+                }}</span>
               </div>
               <p class="u-meta">
                 {{
@@ -335,6 +353,7 @@ async function archiveCheck(): Promise<void> {
                     : `版本 ${item.file_version || '未标注'} / 提交 ${item.submit_date || '未记录'}`
                 }}
               </p>
+              <p v-if="materialLevelNote(item)" class="u-meta">{{ materialLevelNote(item) }}</p>
               <p v-if="item.note">{{ item.note }}</p>
               <button
                 v-if="canManage && item.id"

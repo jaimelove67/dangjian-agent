@@ -65,9 +65,7 @@ const ballot = computed(() =>
 const alreadyVoted = computed(
   () =>
     recordedRounds.has(`${voteBatch.value}:${round.value}`) ||
-    Object.values(summary.value?.tally ?? {}).some((entry) =>
-      entry.voters.includes(session.state.user?.id ?? ''),
-    ),
+    Object.values(summary.value?.tally ?? {}).some((entry) => entry.voted_by_me),
 )
 let sequence = 0
 let voteSequence = 0

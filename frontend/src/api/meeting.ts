@@ -351,6 +351,12 @@ export interface MemberReviewDetail {
   missing: string[]
   advisories: string[]
   revisions: MeetingRevision[]
+  // 字段级敏感分级（T-MEM-12）：密级、可否出网 / 向量化、本次被脱敏的第三人字段
+  data_level?: string
+  data_level_label?: string
+  cloud_allowed?: boolean
+  embedding_allowed?: boolean
+  redacted_fields?: string[]
   notice: string
   boundary: string
 }

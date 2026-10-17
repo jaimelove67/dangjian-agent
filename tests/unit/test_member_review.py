@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.user import UserRole
+from app.rules import data_sensitivity as ds
 from app.schemas.member_review import ReviewCreate, ReviewTest
 from app.services import member_review_service as reviews
 from app.services.member_review_service import (
@@ -194,3 +195,47 @@ class TestNotices:
 
     def test_unqualified_notice_leaves_disposal_to_the_party_organization(self):
         assert "党章党规" in load_rules()["unqualified_notice"]
+
+
+class TestThirdPartyRedaction:
+    """字段级敏感分级（T-MEM-12）：党员互评等第三人字段按查看者等级收敛。"""
+
+    def test_same_level_viewer_reads_the_full_procedure(self):
+        data = service().visible_review(
+            {"procedure": {"self_assessment": "自评", "peer_review": "张三说他最近不积极"}},
+            "sensitive",
+        )
+        assert data["procedure"]["peer_review"] == "张三说他最近不积极"
+        assert data["redacted_fields"] == []
+        assert data["data_level"] == "sensitive" and data["cloud_allowed"] is False
+
+    def test_lower_level_viewer_loses_the_peer_review_text(self):
+        data = service(role=UserRole.MEMBER).visible_review(
+            {"procedure": {"self_assessment": "自评", "peer_review": "张三说他最近不积极"}},
+            "sensitive",
+        )
+        assert data["procedure"]["peer_review"] == ds.REDACTED_NOTE
+        assert data["procedure"]["self_assessment"] == "自评"
+        assert data["redacted_fields"] == ["procedure.peer_review"]
+
+    def test_history_snapshots_are_redacted_too(self):
+        data = service(role=UserRole.MEMBER).visible_review(
+            {"procedure": {}, "revisions": [{"revision": 2, "snapshot": {"procedure": {"peer_review": "互评"}}}]},
+            "sensitive",
+        )
+        assert data["revisions"][0]["snapshot"]["procedure"]["peer_review"] == ds.REDACTED_NOTE
+        assert data["redacted_fields"] == ["revisions.snapshot.procedure.peer_review"]
+
+    def test_classified_review_hides_the_text_from_everyone(self):
+        data = service().visible_review(
+            {"procedure": {"peer_review": "互评"}}, "classified"
+        )
+        assert data["procedure"]["peer_review"] == ds.CLASSIFIED_NOTE
+
+    def test_redaction_placeholder_is_never_written_back(self):
+        assert MemberReviewService._without_placeholders(
+            {"peer_review": ds.REDACTED_NOTE, "branch_opinion": "同意"}
+        ) == {"branch_opinion": "同意"}
+        assert MemberReviewService._without_placeholders(
+            {"peer_review": "张三说他最近不积极"}
+        ) == {"peer_review": "张三说他最近不积极"}

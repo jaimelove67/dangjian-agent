@@ -21,6 +21,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from app.rules.data_sensitivity import strip_third_party_fields
 from app.rules.member_stages import STAGE_LABELS, MemberStage
 
 TEMPLATE_SHEET = "名册"
@@ -301,6 +302,8 @@ def build_template(org_names: list[str]) -> bytes:
 
 def build_roster(rows: list[dict[str, Any]], *, scope_note: str = "") -> bytes:
     """导出名册：与模板同列，另附导出说明便于核对。"""
+    # 第三人字段（备注 / 说明 / 投票意见等）不进批量导出（T-MEM-12）。
+    rows = [strip_third_party_fields(row) for row in rows]
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = TEMPLATE_SHEET
@@ -369,6 +372,8 @@ def build_upper_report_export(rows: list[dict[str, Any]], *, scope_note: str = "
     来源），不是材料原件；政治审查材料等敏感内容不在本表内，因此这份台账可以按需交接口、
     也可以给上级联络人核对，而不会把敏感材料原文带出去。
     """
+    # 第三人字段（备注 / 说明 / 投票意见等）不进批量导出（T-MEM-12）。
+    rows = [strip_third_party_fields(row) for row in rows]
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "报送台账"

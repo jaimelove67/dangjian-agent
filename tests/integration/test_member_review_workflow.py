@@ -280,6 +280,11 @@ async def test_launch_record_review_and_self_view(review_url):
         assert fetched["missing"] == []
         assert fetched["advisories"] == []
         assert fetched["grade_label"] == "合格"
+        # 字段级敏感分级（T-MEM-12）：详情带密级与出网 / 向量化口径；同级查看者仍看得到互评
+        assert fetched["data_level"] == "sensitive" and fetched["data_level_label"] == "敏感"
+        assert fetched["cloud_allowed"] is False and fetched["embedding_allowed"] is True
+        assert fetched["redacted_fields"] == []
+        assert fetched["procedure"]["peer_review"].startswith("其他党员认为")
 
         revision = await revision_of(client, row_id)
         await ok(

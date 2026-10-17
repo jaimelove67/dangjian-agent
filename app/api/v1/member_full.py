@@ -194,7 +194,7 @@ async def add_material(
     return await respond(
         request,
         service,
-        row_data(material),
+        service.material_view(material),
         "create_material",
         "member_material",
         str(material.id),
@@ -216,7 +216,7 @@ async def review_material(
     return await respond(
         request,
         service,
-        row_data(material),
+        service.material_view(material),
         "review_material",
         "member_material",
         material_id,

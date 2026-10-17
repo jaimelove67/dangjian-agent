@@ -28,6 +28,14 @@ from app.core.security import Permission, has_permission
 from app.models.meeting import ContentRevision
 from app.models.member import MemberProfile, MemberReview
 from app.models.user import User
+from app.rules.data_sensitivity import (
+    THIRD_PARTY_FIELDS,
+    annotate_level,
+    is_redaction_placeholder,
+    redact_third_party,
+    review_level,
+    viewer_level,
+)
 from app.rules.member_stages import STAGE_LABELS, MemberStage
 from app.schemas.member_review import (
     ReviewCreate,
@@ -258,6 +266,7 @@ class MemberReviewService:
                 org_name=profile.org_name or org_name,
                 member_name=profile.name,
                 stage=profile.current_stage,
+                data_level=review_level().value,
             )
             self.db.add(row)
             await self.db.flush()
@@ -301,7 +310,8 @@ class MemberReviewService:
             org_name=profile.org_name,
             member_name=profile.name,
             stage=profile.current_stage,
-            procedure=body.procedure.model_dump(),
+            data_level=review_level().value,
+            procedure=self._without_placeholders(body.procedure.model_dump()),
             grade=body.grade or "",
             basis=body.basis,
             rectification=body.rectification,
@@ -316,7 +326,9 @@ class MemberReviewService:
         row = await self.review_row(review_id, lock=True)
         self.check_revision(row, body.expected_revision)
         if body.procedure is not None:
-            row.procedure = body.procedure.model_dump()
+            # 详情面板按等级脱敏后回填的占位文本不当内容写回（T-MEM-12）。
+            incoming = self._without_placeholders(body.procedure.model_dump())
+            row.procedure = {**(row.procedure or {}), **incoming}
         if body.grade is not None:
             row.grade = body.grade
         if body.basis is not None:
@@ -507,25 +519,46 @@ class MemberReviewService:
             "boundary": DECISION_BOUNDARY,
         }
 
+    @staticmethod
+    def _without_placeholders(incoming: dict[str, Any]) -> dict[str, Any]:
+        """丢掉第三人字段里的脱敏占位：占位不是内容，不能覆盖真实正文。"""
+        return {
+            key: value
+            for key, value in incoming.items()
+            if not (key in THIRD_PARTY_FIELDS and is_redaction_placeholder(value))
+        }
+
+    def visible_review(self, data: dict[str, Any], level: str) -> dict[str, Any]:
+        """按密级脱敏（T-MEM-12）：第三人字段（党员互评等，含留痕快照）高于查看者
+        等级时不返回正文；密级不高于查看者时原样返回，只补上密级标注。"""
+        masked, redacted = redact_third_party(data, level=level, viewer=viewer_level(self.user))
+        masked.update(annotate_level(level))
+        masked["redacted_fields"] = redacted
+        return masked
+
     async def detail(self, review_id: str) -> dict[str, Any]:
         row = await self.review_row(review_id)
-        data = row_data(row)
+        level = row.data_level or review_level().value
+        revisions = [
+            self.visible_review(row_data(item), level) for item in await self.revisions(review_id)
+        ]
+        data = self.visible_review(row_data(row), level)
         data.update(
             {
                 "grade_label": GRADE_LABELS.get(row.grade, ""),
                 "missing": self.missing(row),
                 "advisories": self.advisories(row),
-                "revisions": await self.history(review_id),
+                "revisions": revisions,
                 "notice": REVIEW_NOTICE,
                 "boundary": DECISION_BOUNDARY,
             }
         )
         return data
 
-    async def history(self, review_id: str) -> list[dict[str, Any]]:
-        """只追加修订记录：能看到改前改后分别是什么。"""
+    async def revisions(self, review_id: str) -> list[ContentRevision]:
+        """只追加修订记录：能看到改前改后分别是什么（脱敏在 ``detail`` 出口统一做）。"""
         await self.review_row(review_id)
-        rows = (
+        return list(
             (
                 await self.db.execute(
                     select(ContentRevision)
@@ -541,7 +574,6 @@ class MemberReviewService:
             .scalars()
             .all()
         )
-        return [row_data(item) for item in rows]
 
 
 async def own_reviews(

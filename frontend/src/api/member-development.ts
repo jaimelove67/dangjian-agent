@@ -34,6 +34,12 @@ export interface MemberMaterial {
   submit_date?: string | null
   review_status: 'pending' | 'approved' | 'rejected'
   note: string
+  // 字段级敏感分级（T-MEM-12）：密级、是否可出网 / 可向量化、本次被脱敏的第三人字段
+  data_level?: string
+  data_level_label?: string
+  cloud_allowed?: boolean
+  embedding_allowed?: boolean
+  redacted_fields?: string[]
   review_history?: MaterialRevision[]
 }
 export interface StageHistory {
@@ -130,7 +136,14 @@ export interface VoteSummary {
   round_no: number
   voter_count: number
   note: string
-  tally: Record<string, { agree: number; disagree: number; abstain: number; voters: string[] }>
+  data_level: string
+  data_level_label: string
+  cloud_allowed: boolean
+  embedding_allowed: boolean
+  tally: Record<
+    string,
+    { agree: number; disagree: number; abstain: number; voted_by_me: boolean }
+  >
 }
 const profileURL = (id: string) => `/member-full/profiles/${encodeURIComponent(id)}`
 
