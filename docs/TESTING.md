@@ -335,6 +335,18 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 
 未覆盖：**不自动生成结论、不排序、不定等次**（只存人填的名单与依据）；**不判断年龄、不新增出生年月字段**；不新增权限码（沿用 `member.query` / `member.scoring` / `member.stage_transition`）；生效结论**不自动改阶段、不自动向上级报送**；不产生个体通知与待办；不与 `T-MEM-09` 档案检查联动；结论的「同批次同轮次」不加唯一约束（重复由双人审核与留痕约束）；推优记录不自动写进结论；`evidence` 是无记名汇总快照，**不含投票明细**（要核对到票只能另开投票明细，且明细本身按最小权限）。
 
+## 名册按支部筛选与名册统计回归（T-MEM-02）
+
+2026-10-17，补齐 `T-MEM-02` 验收句里"按支部筛选"这一条，并把**早已实现却没有页面引用**的名册统计（`GET /member-full/stats`）挂到「党员发展 → 人员档案」的筛选行下方。名册列表、导出、统计三处共用同一口径（租户 + 未删除 + 有效 + 默认不含已转出 + 权限范围内的组织）；传范围外 / 已删除 / 不存在 / 没有组织的 id 一律 403，不静默忽略（"假筛选比没有筛选更糟"）。
+
+- `tests/integration/test_selected_business_features.py`：新增 9 项通过（一次性 PostgreSQL 库 + `alembic upgrade head`）。`test_roster_filters_by_one_org_within_scope` 钉住"学校管理员按某一个支部筛选时，名册只回该支部人员、名册统计与名册列表总数一致、导出与列表同一口径"；`test_roster_org_filter_rejects_out_of_scope_org`（跨租户 / 已删除 / 不存在 / 没有组织的 id × 名册与统计两条链路）钉住 403 而不是"忽略参数回退成全量"。
+- `tests/unit/test_member_roster_filters.py`：5 项通过（SQLite 实际执行）。新增 1 项钉住"范围内的组织能收窄、范围外的组织 403"；并修正既有 4 项——直接调用端点函数不会走 FastAPI 的默认值解析，`include_transferred` 与新增的 `org_unit_id` 会是真值 `Query` 对象，现在显式传入解析后的默认值（否则测的是一条真实请求不会走的路径）。
+- `node frontend/scripts/verify-modules123.mjs`：47 组检查通过。既有"建立批次与完整名册筛选"扩为：支部下拉有「全部支部（权限范围内）」+ 1 个本支部、选中后名册列表与名册统计请求**都带同一个 `org_unit_id`**（只用 mock 收到的参数判定，避免"看起来筛了"）、复位为空后仍能查。
+- `node frontend/scripts/check-roles-ui.mjs`：7 个角色通过。新增 `checkRosterOrgFilter`：支部下拉必须挂载、"当前筛选共 N 人"统计文案必须可见、选了支部后名册与统计请求都带同一 `org_unit_id`、接口不得报错、页面不得出现错误态（`system_admin` 没有组织范围，下拉只有"全部支部"一项，按此跳过联动断言）。
+- 开发库端到端手工核对（`C:\pt\e2e_roster_org.py`，`test-dept` 账号）：权限范围内 2 个组织；全范围名册 5 人 = 名册统计 5 人；按支部筛选后列表只含该支部人员、统计总数与列表一致；按支部导出返回真 xlsx（6424 字节）；范围外组织 id 在名册 / 统计 / 导出上都是 403。
+
+未覆盖：不新增"公示"实体（公示期提醒待学校确认工作日口径）；名册筛选只能在既有权限范围内收窄（不是越权通道）；名册统计只按当前阶段与在册状态计数，不出等次、不排名。
+
 ## 本地扩展证据与主分支区分
 
 文档分支所引用的 `admin-workspace-isolated.xml`（179项、0失败/错误/跳过）与 `admin-workspace-backend.xml`（205项、30项准备错误）属于未合入的本地管理员工作台扩展，不能套用到本次主分支合并结果；各范围有重复用例，不累加为通过总数。原先开户43项及相关91项记录保留其原始范围。
