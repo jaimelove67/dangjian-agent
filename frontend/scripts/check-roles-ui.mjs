@@ -221,6 +221,7 @@ async function checkRole(browser, spec) {
     await checkKnowledgeTools(page, spec)
     await checkGovernanceIdentity(page, spec)
     await checkOperationsTab(page, spec)
+    await checkRetentionReport(page, spec)
     await checkQaRecordsAccess(page, spec)
     await checkMeetingFrequency(page, spec)
     await checkMemberReviews(page, spec)
@@ -393,6 +394,50 @@ async function checkOperationsTab(page, spec) {
   // 异常活动提示也用 wb-error（无 role），这里按真正的错误态（role=alert）判断
   if (await page.getByRole('alert').count()) {
     fail(`${spec.username}: 运行审计页出现错误态`)
+  }
+}
+
+/**
+ * 「学校配置」的保留策略必须是"填了就有用"的配置。
+ *
+ * 文件保留天数 / 审计保留天数曾只写不读：治理页让人填，系统里没有任何地方用到，
+ * 管理员会以为到期数据已被清理、审计至少留了一年。现在按这两项天数渲染只读的
+ * 「保留期现状」（软删除记录 / 原件 / 审计），并明写"系统不自动清理、在用原件不参与
+ * 核对"。具备 config.manage 的角色必须能看到这段现状与边界。
+ */
+async function checkRetentionReport(page, spec) {
+  if (!spec.allow.includes('/governance')) return
+  await page.goto(`${BASE}/governance`, { waitUntil: 'domcontentloaded' })
+  await settle(page)
+  const configTab = page.getByRole('tab', { name: '学校配置' })
+  if (!(await configTab.count())) {
+    if (spec.confirmDispatch) {
+      fail(`${spec.username}: 具备 config.manage 却看不到「学校配置」标签`)
+    } else {
+      notes.push(`${spec.username}: 无「学校配置」标签（不具备 config.manage），跳过保留期现状检查`)
+    }
+    return
+  }
+  if (!spec.confirmDispatch) {
+    fail(`${spec.username}: 不具备 config.manage 却出现「学校配置」标签`)
+    return
+  }
+  await configTab.first().click()
+  await page.waitForTimeout(2000)
+  if (!(await page.getByText(/保留期现状（截至/).count())) {
+    fail(`${spec.username}: 学校配置未渲染保留期现状（保留天数填了没人读）`)
+  }
+  if (!(await page.getByText(/软删除记录/).count())) {
+    fail(`${spec.username}: 保留期现状缺少软删除记录核对`)
+  }
+  if (!(await page.getByText(/在用记录的原件不参与保留期核对/).count())) {
+    fail(`${spec.username}: 保留期现状未说明在用记录不参与核对`)
+  }
+  if (!(await page.getByText(/系统不自动清理业务数据与审计/).count())) {
+    fail(`${spec.username}: 保留期现状未写明不自动清理的边界`)
+  }
+  if (await page.getByRole('alert').count()) {
+    fail(`${spec.username}: 学校配置页出现错误态（保留期现状或配置接口报错）`)
   }
 }
 

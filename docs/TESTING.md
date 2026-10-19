@@ -347,6 +347,19 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 
 未覆盖：不新增"公示"实体（公示期提醒待学校确认工作日口径）；名册筛选只能在既有权限范围内收窄（不是越权通道）；名册统计只按当前阶段与在册状态计数，不出等次、不排名。
 
+## 保留期现状与删除边界回归（T-SEC-07）
+
+2026-10-17，`T-SEC-07` 的"数据删除机制"补齐：治理页原先让人填"文件保留天数 / 审计保留天数"，但这两项在 `app/` 里**没有任何地方被读取**（只出现在配置模型、前端类型和两个输入框里）——"填了没用"的配置比没有更糟：管理员会以为到期数据已被清理、审计至少留了一年。现在新增只读的 `GET /admin/retention`（`admin.config`）按这两项天数报告三类现状：已软删除记录（按表计数＋最早删除时间）、原件文件（**只核对已删除知识条目的原件**）、审计条目（总数＋超过保留期的条数）；并固定返回"系统不自动清理、也不提供一键物理清理"的边界说明与五条口径说明。
+
+- `tests/unit/test_retention_report.py`：6 项通过（临时目录造文件，纯文件扫描，不依赖数据库）。钉住"在用条目的原件按年龄**不报到期**"（3000 天的在用制度文件不算超期）、"恰好到保留期当天不算超过"、归档快照（`archive-<hash>`）与判不出用途的文件不参与已删除记录核对、跨租户目录与不存在的存储目录按空报告处理、超过扫描上限如实报 `truncated`（不假装数完）。
+- `tests/integration/test_selected_business_features.py`：新增 2 项通过（一次性 PostgreSQL 库）。`test_retention_report_requires_config_permission` 钉住支部书记 403；`test_retention_report_reads_policy_over_deleted_audit_and_storage` 钉住"报告读的是本环境的存储目录"（`FILE_STORAGE_DIR` 换成临时目录后文件计数跟着变）、800 天前的原件也不算"已删除条目到期"、软删除人员档案按表计数、800 天前的审计落到"超过保留期"（证明 `audit_days` 真的参与计算）、默认口径 `365 / 365 / disabled`、`auto_purge=false`、以及读取动作本身写入审计（摘要＋可读的 `config_version`）。
+- `node frontend/scripts/verify-module6.mjs`：16 组检查通过。新增断言：学校配置页在保留天数输入框下渲染「保留期现状」并显示按填写天数算出的数字、明写"在用条目不参与保留期核对"与"已禁用（默认）"。
+- `node frontend/scripts/check-roles-ui.mjs`：7 个角色通过。新增 `checkRetentionReport`：具备 `config.manage` 的角色必须看得到保留期现状与边界说明；不具备的角色连「学校配置」标签都不该出现（`admin.config` 与页面入口同权）。
+- 开发库真机核验（`test-reviewer` / `admin` 账号，后端 127.0.0.1:18000）：「学校配置」页显示真实数字与边界；`audit_logs` 落 `read_retention` 行（`resource_type=retention`、`data_level=sensitive`、`new_value` 为 `{"sha256":…,"bytes":…,"config_version":N}`）。
+- `deploy/docker/README.md`：备份与升级一节原先只给明文 `pg_dump` 并写"仓库没有已验证的自动备份恢复脚本"，与仓库里的 `scripts/module6_backup.py`（加密备份＋默认只校验＋`--apply` 只写空隔离目标＋`--resume` 续跑）矛盾，已改正并写明明文 `pg_dump` 只适合临时核对结构。
+
+未覆盖：不实现自动物理清理（删错没有回退；清理范围与审批按学校批准的删除流程，治理页 `physical_purge` / `evidence` 记这份审批，界面只显示状态）；不做归档快照的归属记录核对（哈希命名判不出归属，只计入总数）；不做审计自动清理（审计只追加，是否归档由组织决定）。
+
 ## 本地扩展证据与主分支区分
 
 文档分支所引用的 `admin-workspace-isolated.xml`（179项、0失败/错误/跳过）与 `admin-workspace-backend.xml`（205项、30项准备错误）属于未合入的本地管理员工作台扩展，不能套用到本次主分支合并结果；各范围有重复用例，不累加为通过总数。原先开户43项及相关91项记录保留其原始范围。

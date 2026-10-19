@@ -79,40 +79,47 @@ async def account_org_units(
 async def create_account(
     body: AccountCreateRequest,
     request: Request,
+    tenant_id: Optional[str] = Query(
+        None, max_length=36, description="跨租户开户仅平台系统管理员可用"
+    ),
     user: User = Depends(_require_system_admin),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[AccountCreated]:
-    """创建同租户账号，并在同一事务内记录不含密码的审计日志。"""
-    organization = (
-        await db.execute(
-            select(OrgUnit)
-            .where(
-                OrgUnit.id == body.org_unit_id,
-                OrgUnit.tenant_id == str(user.tenant_id),
-                OrgUnit.is_deleted.is_(False),
-                OrgUnit.org_type.in_(["school", "department", "branch"]),
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if organization is None:
-        raise HTTPException(status_code=403, detail="请选择当前租户内的有效组织")
-    expected_type = _ROLE_ORG_TYPES.get(body.role)
-    if expected_type and organization.org_type != expected_type:
-        raise HTTPException(status_code=422, detail="所选角色与组织类型不匹配")
+    """创建账号，并在同一事务内记录不含密码的审计日志。
 
-    existing = (
-        await db.execute(
-            select(User.id).where(
-                User.tenant_id == str(user.tenant_id), User.username == body.username
+    租户口径与组织目录保持一致：显式传入 tenant_id 时按平台管理员的跨租户授权校验归属，
+    省略时落在当前登录租户，不改变既有行为；跨租户检索需绕过自动租户过滤。
+    """
+    target = str((await IdentityService(db, user).tenant(tenant_id)).id)
+    with bypass_tenant_filter():
+        organization = (
+            await db.execute(
+                select(OrgUnit)
+                .where(
+                    OrgUnit.id == body.org_unit_id,
+                    OrgUnit.tenant_id == target,
+                    OrgUnit.is_deleted.is_(False),
+                    OrgUnit.org_type.in_(["school", "department", "branch"]),
+                )
+                .with_for_update()
             )
-        )
-    ).scalar_one_or_none()
+        ).scalar_one_or_none()
+        if organization is None:
+            raise HTTPException(status_code=403, detail="请选择当前租户内的有效组织")
+        expected_type = _ROLE_ORG_TYPES.get(body.role)
+        if expected_type and organization.org_type != expected_type:
+            raise HTTPException(status_code=422, detail="所选角色与组织类型不匹配")
+
+        existing = (
+            await db.execute(
+                select(User.id).where(User.tenant_id == target, User.username == body.username)
+            )
+        ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=409, detail="用户名不可用，请更换后重试")
 
     account = User(
-        tenant_id=str(user.tenant_id),
+        tenant_id=target,
         username=body.username,
         name=body.name,
         password_hash=await run_in_threadpool(hash_password, body.password.get_secret_value()),

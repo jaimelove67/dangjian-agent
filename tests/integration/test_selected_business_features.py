@@ -3,9 +3,10 @@
 import asyncio
 import io
 import json
+import os
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -752,3 +753,110 @@ async def test_roster_import_rejects_bad_files_with_actionable_message(business_
         )
         assert headers_only.status_code == 422
         assert "没有数据行" in headers_only.json()["message"]
+
+
+# --------------------------------------------------- 保留期现状与删除边界（T-SEC-07）
+
+
+async def test_retention_report_requires_config_permission(business_url):
+    """保留期现状会暴露整个租户的文件与审计存量：只对 config.manage 开放"""
+    async with client_for(business_url, user(UserRole.BRANCH_SECRETARY, "branch-a")) as (client, _):
+        assert (await client.get("/api/v1/admin/retention")).status_code == 403
+
+
+async def test_retention_report_reads_policy_over_deleted_audit_and_storage(
+    business_url, tmp_path, monkeypatch
+):
+    """保留天数必须真的被读到：超期按它算，只核对已删除条目的原件，且读取留痕。
+
+    治理页让人填"文件保留天数 / 审计保留天数"，如果系统里没有地方读它，管理员会以为
+    到期数据已被清理、审计至少留了一年——那比不填更糟。这里同时钉住：
+    ① 报告读的就是这台环境的存储目录；② 在用条目的原件按年龄也不报"到期"；
+    ③ 软删除记录按表核对；④ 审计超期按填写天数算；⑤ 读取动作本身写入审计。
+    """
+    storage = tmp_path / "files"
+    original = storage / "tenant-a" / "originals" / "doc-live__v1.bin"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"sealed")
+    stale = (datetime.now(timezone.utc) - timedelta(days=800)).timestamp()
+    os.utime(original, (stale, stale))
+    monkeypatch.setenv("FILE_STORAGE_DIR", str(storage))
+
+    async with client_for(business_url, user(UserRole.SYSTEM_ADMIN, None)) as (client, db):
+        # 报告请求之前先造两行：一条 800 天前的审计（超过默认 365 天保留期），
+        # 一个乙租户的已软删除人员档案（报告只该数本租户，多出来的那个不能进计数）
+        db.add(
+            AuditLog(
+                id="retention-old-audit",
+                tenant_id="tenant-a",
+                user_id="synthetic",
+                user_name="合成用户",
+                action="query",
+                resource_type="knowledge_doc",
+                data_level="internal",
+                request_id="retention-fixture",
+                result="success",
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=800),
+            )
+        )
+        db.add(
+            MemberProfile(
+                id="retention-foreign-deleted",
+                tenant_id="tenant-b",
+                name="合成人员-乙租户已删除",
+                org_name="合成组织",
+                org_unit_id="foreign",
+                current_stage="activist",
+                stage_joined_on=date.today() - timedelta(days=400),
+                is_deleted=True,
+                is_active=True,
+            )
+        )
+        await db.commit()
+
+        own_deleted = await db.scalar(
+            select(func.count(MemberProfile.id)).where(
+                MemberProfile.tenant_id == "tenant-a", MemberProfile.is_deleted.is_(True)
+            )
+        )
+
+        response = await client.get("/api/v1/admin/retention")
+        assert response.status_code == 200
+        data = response.json()["data"]
+
+        # ① 报告读的是本环境的存储目录（换了目录数字就变），而不是凭空给结论
+        assert data["files"]["total"] == 1
+        assert [row["kind"] for row in data["files"]["by_kind"]] == ["originals", "archives", "other"]
+        assert data["files"]["by_kind"][0]["total"] == 1
+        # ② 在用条目的原件 800 天也不报"到期"：制度文件的寿命与文件年龄无关
+        assert data["files"]["deleted_docs_total"] == 0
+        assert data["files"]["deleted_docs_expired"] == 0
+        # ③ 软删除记录按表核对：与库内独立统计一致，且**只数本租户**（乙租户那条不算）
+        counts = {row["table"]: row["count"] for row in data["deleted"]["tables"]}
+        assert own_deleted >= 1
+        assert counts["member_profiles"] == own_deleted
+        assert data["deleted"]["total"] >= own_deleted
+        # ④ 审计超期按填写天数算（这条 800 天的记录必须落在"超过保留期"里）
+        assert data["audit"]["total"] >= 1 and data["audit"]["expired"] >= 1
+        # 口径与边界：天数默认值、物理清理默认禁用、不承诺自动清理
+        assert data["policy"] == {
+            "file_days": 365,
+            "audit_days": 365,
+            "physical_purge": "disabled",
+            "purge_evidence_present": False,
+        }
+        assert data["boundary"]["auto_purge"] is False
+        assert any("不参与保留期核对" in note for note in data["notes"])
+        assert any("归档快照" in note for note in data["notes"])
+        # ⑤ 读取保留期现状本身留痕：谁看了、当时的配置是什么
+        audits = (
+            (await db.execute(select(AuditLog).where(AuditLog.action == "read_retention")))
+            .scalars()
+            .all()
+        )
+        assert len(audits) == 1
+        assert audits[0].tenant_id == "tenant-a"
+        assert audits[0].data_level == "sensitive"
+        # 审计只留摘要：可读的只有"报告依据的配置版本"，存量数字进摘要哈希
+        assert audits[0].new_value["config_version"] == 0
+        assert set(audits[0].new_value) == {"sha256", "bytes", "config_version"}

@@ -73,12 +73,16 @@ docker compose exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping'
 下面使用 Bash 重定向；恢复会写入数据库，执行前须确认目标、备份及维护窗口：
 
 ```bash
+# 备份用仓库内的加密备份脚本（数据库 + 认证加密文件 + 认证吊销记录打成一个包）
+python scripts/module6_backup.py backup --quiesced --output /secure/backups/module6.bin
+# 默认只校验包内容，不写入任何库；--apply 才写入已确认的空隔离目标，中断后用 --resume 续跑
+python scripts/module6_backup.py restore --input /secure/backups/module6.bin \
+  --files /data/files --audit /data/audit --apply
+# 只适合临时核对结构：不带文件与吊销记录、不加密，不能替代加密备份
 docker compose exec -T postgres pg_dump -U party_user -d party_agent > backup.sql
-# 在已确认的恢复窗口执行
-docker compose exec -T postgres psql -U party_user -d party_agent < backup.sql
 ```
 
-同时记录部署代码和迁移版本。备份加密、位置、保留期及 Redis 恢复以实际运维方案为准。Redis 已启用 AOF，仓库没有已验证的自动备份恢复脚本。
+同时记录部署代码和迁移版本。备份加密密钥、存放位置与保留期按实际运维方案；密钥丢失等于备份不可恢复，须与备份分开保管。带 `--apply` 的恢复只写目标库（隔离库名形如 `module6_restore_*`），不要对在跑的业务库执行。
 
 升级先备份并核对兼容性，再构建、在维护窗口迁移、重启和核对核心业务。回滚须匹配代码和数据库结构，不能只切回代码就假定兼容。
 

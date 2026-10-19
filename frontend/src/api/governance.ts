@@ -53,6 +53,26 @@ export interface Operations {
   alerts: { action: string; result: string; count: number; window_hours: number }[]
   audit_spool_pending: number
 }
+// 保留期现状（T-SEC-07）：治理页填写的保留天数在这里变成可核对的数字
+export interface RetentionReport {
+  as_of: string
+  policy: {
+    file_days: number; audit_days: number; physical_purge: string; purge_evidence_present: boolean
+  }
+  deleted: {
+    total: number; oldest_deleted_at: string
+    tables: { table: string; label: string; count: number; oldest_deleted_at: string }[]
+  }
+  files: {
+    storage: string; scanned: number; truncated: boolean; total: number
+    by_kind: { kind: string; label: string; total: number }[]
+    deleted_docs_total: number; deleted_docs_expired: number
+    unreadable: number; oldest: string; newest: string
+  }
+  audit: { total: number; expired: number; oldest: string; newest: string }
+  boundary: { auto_purge: boolean; note: string }
+  notes: string[]
+}
 // 运行日志（T-SYS-06E）：任务生命周期与定时扫描的对账视图
 export interface RunLogRecord {
   id: string; created_at: string; event: string; event_text: string; result: string
@@ -119,6 +139,7 @@ export const saveUser = (id: string | null, body: object, tenant_id?: string) =>
   id ? http.patch('/admin/users/' + encodeURIComponent(id), body, {params: target(tenant_id)})
     : http.post('/admin/users', body, {params: target(tenant_id)})
 export const getGovernance = () => http.get<never, GovernanceConfig>('/admin/governance')
+export const getRetentionReport = () => http.get<never, RetentionReport>('/admin/retention')
 export const saveGovernance = (body: {expected_version: number; reason: string; values: GovernanceValues}) =>
   http.patch<never, GovernanceConfig>('/admin/governance', body)
 export const listReviews = (page = 1) =>

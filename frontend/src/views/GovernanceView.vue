@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import * as api from '@/api/governance'
-import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, ReviewRecord, RunLogRecord, TenantRecord, UserRecord, VersionChange, VersionTrail } from '@/api/governance'
+import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, RetentionReport, ReviewRecord, RunLogRecord, TenantRecord, UserRecord, VersionChange, VersionTrail } from '@/api/governance'
 import { ApiError } from '@/api/http'
 import * as qaApi from '@/api/qa'
 import { DOC_AUTHORITY_LABELS, DOC_AUTHORITY_ORDER, PERM, ROLE_LABELS, type QARecord, type UserRole, type VersionFingerprint } from '@/api/types'
@@ -17,6 +17,8 @@ const loading = ref(false), busy = ref(false), error = ref(''), notice = ref('')
 const tenants = ref<TenantRecord[]>([]), organizations = ref<OrgRecord[]>([]), users = ref<UserRecord[]>([])
 const selectedTenant = ref(session.state.user?.tenant_id ?? '')
 const config = ref<GovernanceConfig | null>(null), operations = ref<Operations | null>(null)
+// 保留期现状（T-SEC-07）：治理页填写的保留天数在这里变成可核对的数字（只读报告）
+const retention = ref<RetentionReport | null>(null)
 const reviews = ref<ReviewRecord[]>([]), jobs = ref<JobRecord[]>([]), logs = ref<AuditRecord[]>([])
 // 通知渠道与投递台账：渠道是否就绪、事件路由、每次投递的渠道/状态/尝试次数。
 const channels = ref<NotificationChannel[]>([]), deliveries = ref<NotificationDelivery[]>([])
@@ -268,6 +270,7 @@ async function loadTab(): Promise<void> {
       config.value = loaded
       allowedHosts.value = loaded.values.model_policy.allowed_hosts.join('\n')
       localHosts.value = loaded.values.model_policy.local_hosts.join('\n')
+      retention.value = await api.getRetentionReport()
     }
     if (tab.value === 'operations') {
       const params = {...auditParams(), page: auditPage.value}
@@ -442,9 +445,14 @@ function formatDate(value: string | null): string {
         </div><p class="wb-note">辅助评分维度采用经审定的业务规则；权重总和必须为 1。</p>
           <div class="wb-grid"><label v-for="key in Object.keys(config.values.scoring_weights)" :key="key" class="wb-field"><span>{{ {theory_test:'理论测试',volunteer_service:'志愿服务',academic:'学业表现',public_review:'群众评议',party_review:'党员意见'}[key] ?? key }}</span><input class="input" v-model.number="config.values.scoring_weights[key]" type="number" min="0.01" max="1" step="0.01" /></label></div>
           <button v-if="!Object.keys(config.values.scoring_weights).length" type="button" class="btn btn--quiet" @click="config.values.scoring_weights={theory_test:0.2,volunteer_service:0.2,academic:0.2,public_review:0.2,party_review:0.2}">配置学校评分权重</button>
-          <label class="wb-field"><span>文件保留天数</span><input class="input" v-model.number="config.values.retention.file_days" type="number" min="365" max="36500" /></label>
+          <label class="wb-field"><span>文件保留天数（只用于已删除记录的原件）</span><input class="input" v-model.number="config.values.retention.file_days" type="number" min="365" max="36500" /></label>
           <label class="wb-field"><span>审计保留天数（不少于一年）</span><input class="input" v-model.number="config.values.retention.audit_days" type="number" min="365" max="36500" /></label>
-          <p class="wb-note">物理清理默认禁用。软删除保留历史证据，清理须按学校批准的保留与删除流程执行。</p>
+          <div v-if="retention" class="wb-note">
+            <p>保留期现状（截至 {{ retention.as_of }}，按上面填写的天数核对）：软删除记录 {{ retention.deleted.total }} 条（最早 {{ retention.deleted.oldest_deleted_at || '无' }}）；加密文件 {{ retention.files.total }} 个，其中已删除知识条目的原件 {{ retention.files.deleted_docs_total }} 个、超过文件保留期的 {{ retention.files.deleted_docs_expired }} 个；审计条目 {{ retention.audit.total }} 条，其中 {{ retention.policy.audit_days }} 天以前的 {{ retention.audit.expired }} 条。</p>
+            <p>系统不自动清理业务数据与审计，也不提供一键物理清理：在用记录的原件不参与保留期核对（制度文件长期有效，按文件年龄清理会删掉仍在执行的制度）。物理清理状态：{{ retention.policy.physical_purge === 'disabled' ? '已禁用（默认）' : (retention.policy.purge_evidence_present ? '需审批，已登记审批依据' : '需审批，缺审批依据') }}。清理范围与审批按学校批准的保留与删除流程执行。</p>
+            <ul><li v-for="note in retention.notes" :key="note">{{ note }}</li></ul>
+          </div>
+          <p v-else class="wb-note">保留期现状加载中…</p>
         </section>
         <section class="wb-section wb-stack"><h2>知识库供给机制</h2>
           <p class="wb-note">按权威来源明确供给责任部门、责任人与更新周期。条目入库即据此排定下次复核日期，到期后在知识库列表提示「待复核」；未登记的类别不排日程。法规修订后更新正文视为一次复核，日程随之重排。</p>

@@ -36,9 +36,11 @@ from app.schemas.governance import (
     TenantUpdate,
     UserUpdate,
 )
+from app.services.file_store import storage_root
 from app.services.governance_service import GovernanceUpdate, read_governance, save_governance
 from app.services.identity_service import IdentityService, is_platform_admin, public_record
 from app.services.job_service import enqueue
+from app.services.retention_service import retention_report
 from app.services.review_service import ReviewService
 from app.services.run_log_service import (
     RUN_EVENTS,
@@ -226,6 +228,46 @@ async def update_governance(
         # 键名用 ``config_version``：它属于审计摘要白名单里的"不可变版本指针"，
         # 写 ``version`` 会被统一脱敏成 sha256，留痕反而读不出第几个版本。
         new_value={"config_version": data["version"]},
+    )
+    await db.commit()
+    return response(request, data)
+
+
+@router.get("/admin/retention")
+async def retention(
+    request: Request, user: User = Depends(config_admin), db: AsyncSession = Depends(get_db)
+) -> APIResponse[dict[str, Any]]:
+    """保留期现状（T-SEC-07）：治理页填写的保留天数在这里变成可核对的数字。
+
+    只读报告：软删除记录、审计条目、文件存储三类现状 + "系统不自动清理"的边界。
+    写不清"哪些文件该清"就干脆不报（用文件年龄报到期会诱导删掉在用的制度文件）。
+    """
+    governance = await read_governance(db, user)
+    data = await retention_report(
+        db,
+        tenant_id=str(user.tenant_id),
+        policy=governance["values"].get("retention") or {},
+        root=storage_root(),
+    )
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="read_retention",
+        resource_type="retention",
+        resource_id=str(user.tenant_id),
+        data_level="sensitive",
+        # 审计按仓库口径只留摘要，只有不可变指针可读：这里留下报告所依据的配置版本，
+        # 其余存量数字进摘要哈希（读不出明细，但能证明"哪一版配置下看过什么"）。
+        new_value={
+            "config_version": governance["version"],
+            "file_days": data["policy"]["file_days"],
+            "audit_days": data["policy"]["audit_days"],
+            "physical_purge": data["policy"]["physical_purge"],
+            "deleted_total": data["deleted"]["total"],
+            "files_total": data["files"]["total"],
+            "audit_total": data["audit"]["total"],
+        },
     )
     await db.commit()
     return response(request, data)

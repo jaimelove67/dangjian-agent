@@ -72,6 +72,20 @@ async function page(width=1440, readonly=false) {
       username:'fixture-user',role:'member',org_unit_id:'branch',is_active:true}]}
     else if (path==='/admin/governance') data=method==='GET'?config:{...config,
       version:config.version+1, values:body.values}
+    // 保留期现状（T-SEC-07）：软删除记录 / 原件文件 / 审计条目三类可核对数字
+    else if (path==='/admin/retention') data={as_of:'2026-10-17 18:00',
+      policy:{file_days:365,audit_days:365,physical_purge:'disabled',purge_evidence_present:false},
+      deleted:{total:2,oldest_deleted_at:'2025-01-05 09:00',tables:[
+        {table:'knowledge_docs',label:'知识条目',count:1,oldest_deleted_at:'2025-01-05 09:00'},
+        {table:'qa_sessions',label:'长期问答记录',count:1,oldest_deleted_at:'2025-02-06 10:00'}]},
+      files:{storage:'本地认证加密文件存储（FILE_STORAGE_DIR）',scanned:3,truncated:false,total:3,
+        by_kind:[{kind:'originals',label:'制度文件原件',total:2},
+          {kind:'archives',label:'归档快照',total:1},{kind:'other',label:'其他 / 未识别',total:0}],
+        deleted_docs_total:1,deleted_docs_expired:1,unreadable:0,
+        oldest:'2025-01-05 09:00',newest:'2026-10-16 09:00'},
+      audit:{total:4,expired:0,oldest:'2026-10-16 09:00',newest:'2026-10-17 18:00'},
+      boundary:{auto_purge:false,note:'系统不自动清理任何业务数据或审计。'},
+      notes:['文件保留天数只用于已软删除知识条目的原件；在用条目不参与保留期核对。']}
     else if (path==='/admin/reviews' && method==='GET') data={items:[review],has_more:false,total:1}
     else if (path==='/admin/reviews/review') data={...review,stale,submitted_by:self?'viewer':'other',
       snapshot:stale?null:review.snapshot}
@@ -153,6 +167,13 @@ try {
   assert.equal(await tab.locator('input[type=checkbox]:checked').count(),0)
   await tab.screenshot({path:resolve(OUT,'governance-config-desktop.png'),fullPage:true})
   checks.push('未确认学校、模型和电子归档保持关闭')
+  // 保留期现状（T-SEC-07）：保留天数不能只是"填完没人读"——页面上必须能看到按它算出的
+  // 真实数字，并写明"系统不自动清理、在用原件不参与核对"，否则管理员无从判断该不该清。
+  await tab.getByText('软删除记录 2 条',{exact:false}).first().waitFor()
+  await tab.getByText('加密文件 3 个',{exact:false}).first().waitFor()
+  await tab.getByText('在用条目不参与保留期核对',{exact:false}).first().waitFor()
+  await tab.getByText('已禁用（默认）',{exact:false}).first().waitFor()
+  checks.push('保留期现状可核对（软删除 / 原件 / 审计）且不承诺自动清理')
   // 供给机制（T-KB-13）：按权威来源登记责任部门、责任人与更新周期。整行留空的
   // 类别不写入配置；半填的行必须当场拦下，否则学校会以为"登记好了"，而条目
   // 既没有复核责任人也没有到期提醒。
