@@ -1,6 +1,7 @@
 import { http } from './http'
 import type {
   DocumentCreateResponse,
+  DocumentMetaSuggestion,
   DocumentResponse,
   DocReviewStatus,
   DocumentStatusUpdate,
@@ -14,6 +15,20 @@ import type {
 /** app/api/v1/knowledge.py：列表、详情、创建和状态维护均为真实接口。 */
 export function listDocuments(params: { page?: number; page_size?: number; q?: string; status?: string; level?: string; review_status?: DocReviewStatus; due_for_review?: boolean }): Promise<DocumentListResponse> {
   return http.get('/knowledge-docs', { params })
+}
+
+/**
+ * 上传文件只为识别元数据（不落库），返回可直接回填表单的建议值。
+ * 正文里没写的字段会是空值并列在 missing_fields 里，交给用户补。
+ */
+export function suggestDocumentMeta(file: File): Promise<DocumentMetaSuggestion> {
+  const fd = new FormData()
+  fd.append('file', file)
+  return http.post('/knowledge-docs/suggest-meta', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    // 读正文 + 调模型，比普通接口慢；给足时间避免前端先超时
+    timeout: 120000,
+  })
 }
 
 export function getDocument(docId: string): Promise<DocumentResponse> {

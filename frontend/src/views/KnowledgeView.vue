@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 
-import { confirmDocumentMaintenance, createDocument, deleteDocument, listDocuments, reviewDocument, updateDocumentStatus, replaceDocumentContent } from '@/api/knowledge'
+import { confirmDocumentMaintenance, createDocument, deleteDocument, listDocuments, reviewDocument, suggestDocumentMeta, updateDocumentStatus, replaceDocumentContent } from '@/api/knowledge'
 import { ApiError } from '@/api/http'
 import type {
   DocumentResponse,
@@ -364,6 +364,95 @@ const uploadSubmitting = ref(false)
 const uploadError = ref('')
 const uploadDone = ref('')
 
+/* ---------------- 元数据自动识别（减少手敲，仍需人工核对） ---------------- */
+
+/** 字段 → 中文名：提示"已填写/未识别"时用人话，不暴露后端字段名 */
+const META_LABELS: Record<string, string> = {
+  title: '标题',
+  doc_number: '文号',
+  issuer: '发文机关',
+  level: '效力层级',
+  issue_date: '印发日期',
+  effective_date: '生效日期',
+  expiration_date: '失效日期',
+  tags: '标签',
+  summary: '摘要',
+}
+
+const metaBusy = ref(false)
+const metaFilled = ref<string[]>([])
+const metaMissing = ref<string[]>([])
+const metaError = ref('')
+const metaChars = ref(0)
+const metaTruncated = ref(false)
+/** 只认最后一次识别结果：换文件/重试时，旧请求回来不能覆盖新值 */
+let metaSequence = 0
+
+async function suggestMeta(file: File): Promise<void> {
+  const sequence = ++metaSequence
+  metaBusy.value = true
+  metaFilled.value = []
+  metaMissing.value = []
+  metaError.value = ''
+  metaChars.value = 0
+  metaTruncated.value = false
+
+  try {
+    const s = await suggestDocumentMeta(file)
+    if (sequence !== metaSequence) return
+
+    const filled: string[] = []
+    if (s.title) {
+      upload.title = s.title
+      filled.push(META_LABELS.title!)
+    }
+    if (s.doc_number) {
+      upload.doc_number = s.doc_number
+      filled.push(META_LABELS.doc_number!)
+    }
+    if (s.issuer) {
+      upload.issuer = s.issuer
+      filled.push(META_LABELS.issuer!)
+    }
+    if (s.level) {
+      upload.level = s.level as DocLevel
+      filled.push(META_LABELS.level!)
+    }
+    if (s.effective_date) {
+      upload.effective_date = s.effective_date
+      filled.push(META_LABELS.effective_date!)
+    }
+    if (s.expiration_date) {
+      upload.expiration_date = s.expiration_date
+      filled.push(META_LABELS.expiration_date!)
+    }
+    if (s.tags.length) {
+      upload.tags = s.tags.join('、')
+      filled.push(META_LABELS.tags!)
+    }
+    if (s.summary) {
+      upload.summary = s.summary
+      filled.push(META_LABELS.summary!)
+    }
+
+    metaFilled.value = filled
+    // 可见范围、数据分级不由模型决定：它们决定谁能看、能不能出网
+    metaMissing.value = s.missing_fields
+      .filter((field) => field !== 'issue_date') // 印发日期不在表单里，不提示
+      .map((field) => META_LABELS[field] ?? field)
+    metaChars.value = s.text_chars
+    metaTruncated.value = s.truncated
+  } catch (err) {
+    if (sequence !== metaSequence) return
+    metaError.value =
+      err instanceof ApiError
+        ? err.message
+        : '自动识别失败，请手动填写下方信息后入库'
+  } finally {
+    if (sequence === metaSequence) metaBusy.value = false
+  }
+}
+
 const MAX_UPLOAD = 10 * 1024 * 1024 // 与 settings.MAX_UPLOAD_SIZE 一致
 
 const uploadValid = computed(
@@ -386,6 +475,8 @@ function onFileChange(e: Event): void {
   if (f && !upload.doc_id) {
     upload.doc_id = `DOC-${Date.now().toString().slice(-8)}`
   }
+  // 换文件就重新识别；旧结果作废（同一次会话里保留用户手改的可能性最大）
+  if (f) void suggestMeta(f)
 }
 
 function resetUpload(): void {
@@ -407,6 +498,14 @@ function resetUpload(): void {
   })
   uploadError.value = ''
   uploadDone.value = ''
+  // 作废未返回的识别请求，避免它把值写回已清空的表单
+  metaSequence += 1
+  metaBusy.value = false
+  metaFilled.value = []
+  metaMissing.value = []
+  metaError.value = ''
+  metaChars.value = 0
+  metaTruncated.value = false
 }
 
 async function submitUpload(): Promise<void> {
@@ -506,6 +605,38 @@ async function submitUpload(): Promise<void> {
             <AppIcon name="alert" :size="13" />
             文件超过 10 MB，后端会拒绝接收
           </p>
+
+          <!-- 自动识别结果：说清"填了哪些、还差哪些、哪些不能替用户决定" -->
+          <div
+            v-if="upload.file && (metaBusy || metaFilled.length || metaMissing.length || metaError)"
+            class="meta-hint"
+            :class="{ 'is-bad': Boolean(metaError) }"
+          >
+            <AppIcon :name="metaError ? 'alert' : metaBusy ? 'clock' : 'info'" :size="14" />
+            <div class="meta-hint__body">
+              <p v-if="metaBusy" class="meta-hint__title">正在读取文件内容，识别标题、发文机关与生效日期…</p>
+              <p v-else-if="metaError" class="meta-hint__title">{{ metaError }}</p>
+              <p v-else class="meta-hint__title">
+                已根据正文识别并填写
+                <span class="u-meta">（读取 {{ metaChars }} 字<template v-if="metaTruncated">，超出部分未参与识别</template>）</span>
+              </p>
+              <p v-if="metaFilled.length" class="meta-hint__line">已填写：{{ metaFilled.join('、') }}，请核对后再入库</p>
+              <p v-if="metaMissing.length" class="meta-hint__line is-warn">
+                未能识别：{{ metaMissing.join('、') }}，请手动补充
+              </p>
+              <p v-if="!metaError" class="meta-hint__line u-meta">
+                可见范围与数据分级由你决定，不会自动填写；识别结果仅供预填，以文件原文为准。
+              </p>
+            </div>
+            <button
+              v-if="!metaBusy && upload.file"
+              class="btn btn--quiet meta-hint__retry"
+              type="button"
+              @click="suggestMeta(upload.file)"
+            >
+              重新识别
+            </button>
+          </div>
         </div>
 
         <div class="upload__grid">
@@ -601,10 +732,10 @@ async function submitUpload(): Promise<void> {
             <button
               class="btn btn--primary"
               type="button"
-              :disabled="!uploadValid || uploadSubmitting"
+              :disabled="!uploadValid || uploadSubmitting || metaBusy"
               @click="submitUpload"
             >
-              {{ uploadSubmitting ? '正在入库' : '确认入库' }}
+              {{ uploadSubmitting ? '正在入库' : metaBusy ? '识别中…' : '确认入库' }}
             </button>
           </div>
         </footer>
@@ -1201,6 +1332,54 @@ async function submitUpload(): Promise<void> {
   color: var(--bad-ink);
   background: var(--bad-wash);
   border: 1px solid var(--bad-edge);
+}
+
+/* ---- 元数据自动识别提示 ---- */
+.meta-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--ink-soft);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-sm);
+}
+
+.meta-hint.is-bad {
+  color: var(--bad-ink);
+  background: var(--bad-wash);
+  border-color: var(--bad-edge);
+}
+
+.meta-hint > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.meta-hint__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.meta-hint__title {
+  font-weight: 600;
+  color: inherit;
+}
+
+.meta-hint__line.is-warn {
+  color: var(--warn-ink);
+}
+
+.meta-hint__retry {
+  flex: none;
+  align-self: flex-start;
 }
 
 .upload__foot {

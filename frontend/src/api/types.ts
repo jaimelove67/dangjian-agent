@@ -454,6 +454,25 @@ export interface DocumentStatusUpdate {
   status: DocStatus
 }
 
+/** app/api/v1/knowledge.py::DocumentMetaSuggestion —— 入库元数据建议值（需人工确认） */
+export interface DocumentMetaSuggestion {
+  title: string
+  doc_number: string
+  issuer: string
+  /** central / provincial / school / department；识别不出为空字符串 */
+  level: string
+  issue_date: string | null
+  effective_date: string | null
+  expiration_date: string | null
+  tags: string[]
+  summary: string
+  /** 正文里确实没写的字段，界面据此提示"这几项需要你补" */
+  missing_fields: string[]
+  /** 参与识别的正文字数（超过上限时会截断） */
+  text_chars: number
+  truncated: boolean
+}
+
 /** 上传表单：对应 POST /knowledge-docs 的 multipart 字段 */
 export interface DocumentUploadForm {
   file: File

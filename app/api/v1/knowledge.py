@@ -77,6 +77,7 @@ from app.services.knowledge_service import (
     supply_cycle,
     sync_review_schedule,
 )
+from app.services.knowledge_meta_service import suggest_metadata
 from app.services.org_scope import accessible_org_units
 
 router = APIRouter()
@@ -179,6 +180,71 @@ def _parse_field_levels(raw: str | None) -> dict[str, str] | None:
             detail={"code": ErrorCode.BUSINESS_ERROR, "message": "字段级敏感等级必须是 JSON 对象"},
         )
     return {str(key): value for key, value in parsed.items()}
+
+
+class DocumentMetaSuggestion(BaseModel):
+    """入库元数据建议值（只做建议，入库仍需人工确认）"""
+
+    title: str = ""
+    doc_number: str = ""
+    issuer: str = ""
+    level: str = ""
+    issue_date: str | None = None
+    effective_date: str | None = None
+    expiration_date: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    summary: str = ""
+    #: 正文里确实没写的字段：界面据此提示"这几项需要你补"
+    missing_fields: list[str] = Field(default_factory=list)
+    #: 参与识别的正文字数（超过上限时会截断）
+    text_chars: int = 0
+    truncated: bool = False
+
+
+@router.post(
+    "/knowledge-docs/suggest-meta",
+    response_model=APIResponse[DocumentMetaSuggestion],
+    summary="从文件正文识别入库元数据",
+    description=(
+        "上传同一份文件，服务端读取正文并抽取标题、发文字号、发文机关、层级、"
+        "印发/生效/失效日期、标签与摘要，供表单预填。"
+        "**只返回建议值，不落库**；正文里没写的字段返回空值并列入 missing_fields，"
+        "涉密或含个人标识的文件直接拒绝（不发送到云端模型）。"
+    ),
+    tags=["知识库"],
+)
+async def suggest_document_meta(
+    request: Request,
+    file: UploadFile = File(..., description="待入库文件（用于读取正文，不入库）"),
+    user: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[DocumentMetaSuggestion]:
+    """识别入库元数据的建议值（供"上传即回填"用，避免逐项手敲）"""
+    content = await file.read(settings.MAX_UPLOAD_SIZE + 1)
+    file_name = file.filename or "未命名文件"
+    suggestion = await suggest_metadata(
+        data=content,
+        file_name=file_name,
+        context={"request_id": _trace_id(request), "user_id": str(user.id)},
+    )
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="suggest_meta",
+        resource_type="knowledge_doc",
+        data_level="internal",
+        new_value={
+            "file_name": file_name,
+            "text_chars": suggestion["text_chars"],
+            "missing_fields": suggestion["missing_fields"],
+        },
+    )
+    await db.commit()
+    return APIResponse(
+        data=DocumentMetaSuggestion(**suggestion),
+        trace_id=_trace_id(request),
+    )
 
 
 @router.post(
