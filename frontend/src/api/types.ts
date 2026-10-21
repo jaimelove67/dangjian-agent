@@ -209,6 +209,22 @@ export interface AskQuestionRequest {
   top_k: number
   session_id?: string
   include_expired?: boolean
+  /** 已上传附件的编号（POST /qa/attachments 返回）；材料只作背景，不占引用编号 */
+  attachment_ids?: string[]
+}
+
+/** app/api/v1/qa.py::QAAttachmentSchema —— 附件元数据（不含正文） */
+export interface QAAttachmentMeta {
+  id: string
+  file_name: string
+  size: number
+  /** 实际参与作答的正文字数（可能已被截断） */
+  chars: number
+  truncated: boolean
+  /** 正文是否由云端文字识别（OCR）得到 */
+  ocr: boolean
+  /** 附件提示（OCR 误差、只识别了部分页等） */
+  notes: string[]
 }
 
 /** app/api/v1/qa.py::CitationSchema */
@@ -247,6 +263,8 @@ export interface AskQuestionResponse {
   disclaimer: string
   refused: boolean
   session_id?: string | null
+  /** 本次提问携带的附件（只有元数据）；历史记录里也可能有 */
+  attachments?: QAAttachmentMeta[]
   /** 本次回答的版本指纹（SEC-11）：回答产生时记录，不做事后倒推 */
   versions?: VersionFingerprint
 }

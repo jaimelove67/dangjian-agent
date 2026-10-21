@@ -113,3 +113,28 @@ docker stats --no-stream
   docker stats --no-stream                                  # 资源
   docker compose -f docker-compose.server.yml down          # 停止（保留数据卷）
   ```
+
+## 2026-10-21 增量上线：问答附件 + 扫描件/图片 OCR
+
+- 变更范围：`app/api/v1/qa.py`（新增 `POST /qa/attachments`、`attachment_ids`）、
+  `app/services/qa_attachment_service.py`、`app/services/ocr_service.py`、
+  `app/llm/providers/qwen_vision.py`、`app/chains/qa_chain.py`（仅材料作答）、
+  `app/rag/rag_service.py`（材料块）、`app/models/qa_session.py` + 迁移 `023`、前端 `AskView.vue`。
+- 上线步骤（已执行）：
+  ```bash
+  cd /opt/dangjian-agent
+  tar czf /root/backups/code_$(date +%F_%H%M).tar.gz app frontend/src migrations
+  docker exec party-agent-postgres pg_dump -U party_user -d party_agent -Fc > /root/backups/pg_$(date +%F_%H%M).dump
+  # 传代码 → 重建镜像
+  docker compose -f docker-compose.server.yml up -d --build app
+  docker compose -f docker-compose.server.yml up -d --build frontend
+  docker compose -f docker-compose.server.yml exec -T app python -m alembic upgrade head   # 022 → 023
+  curl http://127.0.0.1/api/v1/health/ready
+  ```
+- **坑**：本目录下有多份 compose（`docker-compose.yml` 是生产模板，需要 TLS/密钥等一堆变量），
+  `docker compose exec` 不带 `-f` 会读默认那份并报一堆 `required variable ... is missing`。
+  所有运维命令都要写全 `-f docker-compose.server.yml`。
+- 新增配置（可选）：`OCR_MODEL`（默认 `qwen-vl-ocr`，留空则关闭图片与扫描件）、`OCR_MAX_PAGES`（默认 5）。
+  未显式配置时按默认值生效，本次无需改 `.env`。
+- 验证：`/api/v1/qa/attachments` 无 token 返回 401（路由存在）；容器内实测 OCR
+  （`store_attachment(..., cloud_ocr=True)`）识别中文条款正确；`qa_sessions.attachments` 列已存在。

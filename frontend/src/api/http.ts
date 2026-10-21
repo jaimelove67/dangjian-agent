@@ -86,10 +86,13 @@ function normalizeError(err: AxiosError<Partial<ApiEnvelope<unknown>>>): ApiErro
   const body = err.response?.data
   const traceId = body?.trace_id ?? err.response?.headers?.['x-request-id'] ?? ''
 
-  if (body && typeof body.code === 'number') {
+  // 业务码通常是数字；但后端对"需要用户先确认"这类前置条件会回字符串码
+  // （如 OCR_CONSENT_REQUIRED）。保留 message 才能让界面说清原因与出路，
+  // 否则只剩一句"请求失败（HTTP 428）"，用户不知道要不要同意。
+  if (body && (typeof body.code === 'number' || typeof body.code === 'string')) {
     return new ApiError(
       withRetryHint(body.message || '请求失败', err),
-      body.code,
+      typeof body.code === 'number' ? body.code : -1,
       String(traceId),
       status,
     )

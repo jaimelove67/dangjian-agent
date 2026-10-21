@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
-import { askQuestion, deleteQASession, listQASessions } from '@/api/qa'
-import type { AskQuestionResponse, QASessionItem } from '@/api/types'
+import { askQuestion, deleteQASession, listQASessions, uploadQAAttachment } from '@/api/qa'
+import { ApiError } from '@/api/http'
+import type { AskQuestionResponse, QAAttachmentMeta, QASessionItem } from '@/api/types'
 import ActionDialog from '@/components/ActionDialog.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import CitationCard from '@/components/CitationCard.vue'
@@ -79,6 +80,8 @@ function viewHistory(item: QASessionItem): void {
   if (loading.value) return
   question.value = item.question
   submittedQuestion.value = item.question
+  submittedAttachments.value = []
+  attachments.value = []
   result.value = item
   error.value = null
   activeCitation.value = null
@@ -123,8 +126,153 @@ async function confirmDelete(): Promise<void> {
 
 const MAX_LEN = 500 // 后端 QuestionRequest.question 的 max_length
 
+/* ------------------------- 附件（随提问提交的材料） ------------------------- */
+
+/**
+ * 附件定位：提问时一并参考的材料，**不是**制度依据。
+ * 因此界面上把它放在输入框里（而不是另开一个"材料库"入口），并明确标注
+ * "不占引用编号"，避免用户以为上传后它就成了可引用的制度文件。
+ */
+const MAX_ATTACHMENTS = 3
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+const IMAGE_PATTERN = /\.(jpe?g|png|bmp|gif|webp|tiff?|heic)$/i
+const ATTACH_ACCEPT = '.txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.bmp,.gif,.webp,.tif,.tiff,.heic'
+/** 只带附件、不写问题时用的兜底问句：让模型知道"看材料"本身就是诉求 */
+const ATTACH_ONLY_QUESTION = '请根据我上传的材料作答。'
+
+interface ComposerAttachment {
+  key: string
+  file: File
+  status: 'uploading' | 'ready' | 'error'
+  meta?: QAAttachmentMeta
+  error?: string
+}
+
+const attachments = ref<ComposerAttachment[]>([])
+const submittedAttachments = ref<QAAttachmentMeta[]>([])
+const fileInput = ref<HTMLInputElement | null>(null)
+const composerError = ref('')
+/** 需要用户确认"允许云端识别"的文件（图片、扫描件） */
+const consentFile = ref<File | null>(null)
+const consentReason = ref('')
+
+const uploading = computed(() => attachments.value.some((item) => item.status === 'uploading'))
+const readyAttachments = computed(() =>
+  attachments.value.filter((item) => item.status === 'ready' && item.meta),
+)
+
+/** 当前该展示的附件：看历史时用记录里的，实时提问用本次提交的 */
+const shownAttachments = computed<QAAttachmentMeta[]>(() => {
+  if (viewingHistory.value) return result.value?.attachments ?? []
+  return submittedAttachments.value
+})
+
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${bytes} B`
+}
+
+function openFilePicker(): void {
+  if (loading.value || uploading.value) return
+  if (attachments.value.length >= MAX_ATTACHMENTS) {
+    composerError.value = `一次提问最多 ${MAX_ATTACHMENTS} 份附件，请先移除再添加。`
+    return
+  }
+  composerError.value = ''
+  fileInput.value?.click()
+}
+
+function onFilesPicked(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  // 清空 value 才能再次选中同一个文件
+  input.value = ''
+  if (!file) return
+  void acceptFile(file)
+}
+
+async function acceptFile(file: File): Promise<void> {
+  if (attachments.value.length >= MAX_ATTACHMENTS) {
+    composerError.value = `一次提问最多 ${MAX_ATTACHMENTS} 份附件，请先移除再添加。`
+    return
+  }
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    composerError.value = `《${file.name}》超过 10MB，请压缩或拆分后再上传。`
+    return
+  }
+  composerError.value = ''
+  // 图片必然要云端识别：先问同意，别等一个来回再拒绝
+  if (IMAGE_PATTERN.test(file.name)) {
+    consentReason.value = `《${file.name}》是图片，读取其中文字需要把图片发送到云端识别。`
+    consentFile.value = file
+    return
+  }
+  await uploadFile(file, false)
+}
+
+async function uploadFile(file: File, cloudOcr: boolean): Promise<void> {
+  const row: ComposerAttachment = {
+    key: uuid(),
+    file,
+    status: 'uploading',
+  }
+  attachments.value = [...attachments.value, row]
+
+  try {
+    const meta = await uploadQAAttachment(file, { cloudOcr })
+    const target = attachments.value.find((item) => item.key === row.key)
+    if (!target) return
+    target.meta = meta
+    target.status = 'ready'
+  } catch (err) {
+    const apiError = err instanceof ApiError ? err : null
+    // 428 = 后端要求"先得到用户同意才能云端识别"（典型场景：扫描件 PDF）
+    if (apiError?.httpStatus === 428) {
+      attachments.value = attachments.value.filter((item) => item.key !== row.key)
+      consentReason.value = apiError.message
+      consentFile.value = file
+      return
+    }
+    const target = attachments.value.find((item) => item.key === row.key)
+    if (target) {
+      target.status = 'error'
+      target.error = apiError?.message ?? '上传失败，请重试'
+    }
+  }
+}
+
+function confirmConsent(): void {
+  const file = consentFile.value
+  if (!file) return
+  consentFile.value = null
+  void uploadFile(file, true)
+}
+
+function cancelConsent(): void {
+  consentFile.value = null
+  consentReason.value = ''
+}
+
+function removeAttachment(key: string): void {
+  attachments.value = attachments.value.filter((item) => item.key !== key)
+  composerError.value = ''
+}
+
+function attachmentNote(item: QAAttachmentMeta): string {
+  const parts = [`${item.chars} 字`]
+  if (item.ocr) parts.push('云端识别')
+  if (item.truncated) parts.push('已截断')
+  return parts.join(' · ')
+}
+
 const remaining = computed(() => MAX_LEN - question.value.length)
-const canSubmit = computed(() => question.value.trim().length > 0 && !loading.value)
+const canSubmit = computed(
+  () =>
+    (question.value.trim().length > 0 || readyAttachments.value.length > 0) &&
+    !loading.value &&
+    !uploading.value,
+)
 
 /** 欢迎态：无任何提问或结果时居中显示引导 */
 const welcome = computed(
@@ -137,6 +285,14 @@ const citationOpen = ref(true)
 const evidence = computed(() => {
   const r = result.value
   if (!r) return null
+  // 看了材料但制度库没有可引片段：不能算"依据充分"，也不能说"没检索到"就完事
+  if ((r.attachments?.length ?? 0) > 0 && r.used_count === 0) {
+    return {
+      tone: 'warn' as const,
+      label: '仅依据材料',
+      text: '制度库未检索到可引用的片段，本次回答仅依据你上传的材料整理，不能作为制度依据。',
+    }
+  }
   if (!r.has_sufficient_evidence) {
     return {
       tone: 'warn' as const,
@@ -214,12 +370,16 @@ async function scrollToBottom(): Promise<void> {
 async function onAsk(): Promise<void> {
   if (!canSubmit.value) return
 
-  const q = question.value.trim()
+  const ready = readyAttachments.value
+  const q = question.value.trim() || (ready.length ? ATTACH_ONLY_QUESTION : '')
+  if (!q) return
+
   loading.value = true
   error.value = null
   result.value = null
   activeCitation.value = null
   submittedQuestion.value = q
+  submittedAttachments.value = ready.map((item) => item.meta!)
   viewingHistory.value = false
   activeItemId.value = null
   resultReranker.value = USE_RERANKER_SUBMIT
@@ -233,7 +393,10 @@ async function onAsk(): Promise<void> {
       use_reranker: USE_RERANKER_SUBMIT,
       top_k: TOP_K_SUBMIT,
       session_id: sessionId.value,
+      attachment_ids: ready.length ? ready.map((item) => item.meta!.id) : undefined,
     })
+    // 提交成功后清空输入区：材料已进本次记录，留着只会被误认为"还在待发"
+    attachments.value = []
     void loadHistory(1)
     void scrollToBottom()
   } catch (err) {
@@ -280,6 +443,10 @@ function onReset(): void {
   result.value = null
   error.value = null
   submittedQuestion.value = ''
+  submittedAttachments.value = []
+  attachments.value = []
+  composerError.value = ''
+  consentFile.value = null
   activeCitation.value = null
   viewingHistory.value = false
   resultReranker.value = null
@@ -431,6 +598,14 @@ function historyDateParts(value: string): string {
           <!-- 用户问题 -->
           <div v-if="submittedQuestion" class="msg msg--user">
             <p class="msg__bubble">{{ submittedQuestion }}</p>
+            <!-- 附件同样出现在提问气泡里：事后回看要能知道"当时看了哪几份材料" -->
+            <ul v-if="shownAttachments.length" class="msg__files">
+              <li v-for="file in shownAttachments" :key="file.id" class="msg__file">
+                <AppIcon name="file" :size="13" />
+                <span class="msg__file-name">{{ file.file_name }}</span>
+                <span class="u-meta">{{ attachmentNote(file) }}</span>
+              </li>
+            </ul>
           </div>
 
           <!-- 加载态：骨架回答 -->
@@ -541,7 +716,58 @@ function historyDateParts(value: string): string {
             @keydown.ctrl.enter="onAsk"
           ></textarea>
 
+          <!-- 已选附件：上传中就显示"解析中"，失败要说清原因，不能只留一个转圈 -->
+          <ul v-if="attachments.length" class="composer__files">
+            <li
+              v-for="item in attachments"
+              :key="item.key"
+              class="composer-file"
+              :class="{ 'is-error': item.status === 'error', 'is-busy': item.status === 'uploading' }"
+            >
+              <AppIcon name="file" :size="14" />
+              <span class="composer-file__name">{{ item.file.name }}</span>
+              <span v-if="item.status === 'uploading'" class="u-meta">解析中…</span>
+              <span v-else-if="item.status === 'error'" class="composer-file__error">{{ item.error }}</span>
+              <span v-else-if="item.meta" class="u-meta">{{ formatSize(item.file.size) }} · {{ attachmentNote(item.meta) }}</span>
+              <button
+                class="composer-file__remove"
+                type="button"
+                :aria-label="`移除附件：${item.file.name}`"
+                title="移除"
+                @click="removeAttachment(item.key)"
+              >
+                <AppIcon name="close" :size="12" />
+              </button>
+            </li>
+          </ul>
+
+          <p v-if="composerError" class="composer__error" role="alert">{{ composerError }}</p>
+
           <div class="composer__bar">
+            <div class="composer__attach">
+              <input
+                ref="fileInput"
+                class="u-sr"
+                type="file"
+                :accept="ATTACH_ACCEPT"
+                aria-label="选择附件"
+                @change="onFilesPicked"
+              />
+              <button
+                class="btn btn--quiet composer__attach-btn"
+                type="button"
+                :disabled="loading || attachments.length >= MAX_ATTACHMENTS"
+                :title="'上传附件：支持 txt / md / pdf / docx 与图片'"
+                @click="openFilePicker"
+              >
+                <AppIcon name="paperclip" :size="15" />
+                <span>附件</span>
+              </button>
+              <span class="u-meta composer__attach-hint">
+                材料仅作背景，不占引用编号；图片与扫描件由云端识别
+              </span>
+            </div>
+
             <div class="composer__submit">
               <span class="u-meta u-num" :class="{ 'is-low': remaining < 40 }">{{ remaining }}</span>
               <button class="btn btn--primary" type="submit" :disabled="!canSubmit">
@@ -553,6 +779,27 @@ function historyDateParts(value: string): string {
         </div>
       </form>
     </div>
+
+    <!-- 云端识别确认：这是一次真实的出网动作，必须由人点"同意" -->
+    <ActionDialog
+      :open="Boolean(consentFile)"
+      title="允许云端识别这份文件？"
+      @close="cancelConsent"
+    >
+      <p class="consent-what">{{ consentReason }}</p>
+      <ul class="consent-list">
+        <li>识别时，文件会发送到云端模型，仅用于提取文字，不用于训练。</li>
+        <li>请确认材料<strong>不含涉密内容</strong>，也没有身份证号、手机号等个人身份信息。</li>
+        <li>识别结果可能有误差，正式答复请以原件为准。</li>
+      </ul>
+      <p class="consent-alt">
+        不想发送到云端？可以在 Word / WPS 里「另存为 .docx」或导出带文字层的 PDF 后重新上传。
+      </p>
+      <div class="del-actions">
+        <button class="btn btn--quiet" type="button" @click="cancelConsent">取消</button>
+        <button class="btn btn--primary" type="button" @click="confirmConsent">同意并识别</button>
+      </div>
+    </ActionDialog>
 
     <!-- 删除历史提问：站内确认，不弹原生窗口 -->
     <ActionDialog
@@ -1055,6 +1302,38 @@ function historyDateParts(value: string): string {
   color: var(--ink-muted);
 }
 
+/* ---- 提问气泡里的附件 ---- */
+.msg__files {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.msg__file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 34rem;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
+  background: var(--paper-raised);
+  border: var(--border);
+  border-radius: var(--radius-full);
+}
+
+.msg__file :deep(svg) {
+  color: var(--ink-faint);
+  flex: none;
+}
+
+.msg__file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ============================ 输入框 =============================== */
 .composer {
   display: flex;
@@ -1098,11 +1377,139 @@ function historyDateParts(value: string): string {
 .composer__bar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: var(--space-4);
   padding: var(--space-2) var(--space-3);
   border-top: var(--border);
   background: var(--paper-dim);
+}
+
+/* ---- 附件区 ---- */
+.composer__files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.composer-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
+  background: var(--paper-dim);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+
+.composer-file.is-busy {
+  border-style: dashed;
+}
+
+.composer-file.is-error {
+  color: var(--bad-ink);
+  background: var(--bad-wash);
+  border-color: var(--bad-edge);
+}
+
+.composer-file :deep(svg) {
+  color: var(--ink-faint);
+  flex: none;
+}
+
+.composer-file__name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 22rem;
+}
+
+.composer-file__error {
+  color: inherit;
+  line-height: var(--leading-snug);
+}
+
+.composer-file__remove {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: auto;
+  flex: none;
+  border-radius: var(--radius-full);
+  color: var(--ink-faint);
+}
+
+.composer-file__remove:hover,
+.composer-file__remove:focus-visible {
+  color: var(--bad-ink);
+  background: var(--bad-wash);
+}
+
+.composer__error {
+  padding: 0 var(--space-4) var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--bad-ink);
+}
+
+.composer__attach {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.composer__attach-btn {
+  flex: none;
+  color: var(--ink-muted);
+}
+
+.composer__attach-btn:hover:not(:disabled) {
+  color: var(--accent-deep);
+}
+
+.composer__attach-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 云端识别确认 ---- */
+.consent-what {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink);
+}
+
+.consent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-left: 1.1em;
+  list-style: disc;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink-soft);
+}
+
+.consent-list strong {
+  color: var(--warn-ink);
+}
+
+.consent-alt {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--ink-muted);
+  background: var(--paper-dim);
+  border-radius: var(--radius-sm);
 }
 
 .composer__submit {
@@ -1190,6 +1597,10 @@ function historyDateParts(value: string): string {
     flex-direction: column;
     align-items: stretch;
     gap: var(--space-3);
+  }
+
+  .composer__attach-hint {
+    display: none;
   }
 
   .composer__submit {

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional, Protocol, Sequence
 
 from app.chains.rewrite import LLMCall, rewrite_question
@@ -56,6 +57,7 @@ class QAChain:
         session: Optional[SessionStore] = None,
         llm_call: Optional[LLMCall] = None,
         no_evidence_threshold: Optional[float] = None,
+        supplemental_material: Optional[str] = None,
     ) -> None:
         self.retriever = retriever
         self.generator = generator
@@ -67,6 +69,10 @@ class QAChain:
             if no_evidence_threshold is None
             else no_evidence_threshold
         )
+        # 提问人自己上传的材料（已拼成材料块）。它不能替代制度依据，但制度库确实
+        # 没有可引片段时，用户要的是"就我这份材料看看怎么办"，此时直接拒答等于
+        # 什么都没帮到——改为"仅依据材料作答 + 明示不构成依据"。
+        self.supplemental_material = supplemental_material
 
     async def ask(
         self,
@@ -119,6 +125,12 @@ class QAChain:
 
         RETRIEVAL_SCORE.observe(max((c.score or 0 for c in chunks), default=0))
         if self._is_no_evidence(chunks):
+            if self.supplemental_material:
+                return await self._answer_from_material(
+                    question=standalone_question,
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                )
             response = QAResponse(
                 answer=REFUSAL_ANSWER,
                 citations=[],
@@ -193,6 +205,43 @@ class QAChain:
         return response
 
     # ---------------------------------------------------------------
+    async def _answer_from_material(
+        self, *, question: str, tenant_id: str, session_id: Optional[str]
+    ) -> QAResponse:
+        """制度库没有可引片段、但用户上传了材料时的作答路径。
+
+        与正常作答的两点差别必须同时成立，否则就退化成"假装有依据"：
+
+        1. 没有引用：材料是提问人自己给的，不是可核对的制度来源，因此答案里
+           不能出现 [n] 编号（模型仍可能照着模板写，这里统一清掉，避免界面上
+           出现点了没反应的空角标）；
+        2. 回答前明示依据来源：界面据此显示"依据不充分"，不给这条答案盖章。
+        """
+        try:
+            draft = await self.generator.generate(question=question, chunks=[])
+        except Exception:
+            logger.exception(
+                "qa_material_only_generation_failed", extra={"tenant_id": tenant_id}
+            )
+            raise
+        answer = re.sub(r"\s*\[\d+\]", "", draft or "").strip()
+        response = QAResponse(
+            answer=answer,
+            citations=[],
+            warnings=[
+                "制度库未检索到可引用的片段：以下内容仅依据你上传的材料整理，"
+                "不作为制度依据，请以正式文件与组织意见为准。"
+            ],
+            disclaimer=DEFAULT_DISCLAIMER,
+            refused=False,
+        )
+        logger.info(
+            "qa_material_only_answer",
+            extra={"tenant_id": tenant_id, "answer_length": len(answer)},
+        )
+        await self._persist(tenant_id, session_id, question, response)
+        return response
+
     @staticmethod
     def _cited_chunks(
         citations: Sequence[Citation], chunks: Sequence[RetrievedChunk]

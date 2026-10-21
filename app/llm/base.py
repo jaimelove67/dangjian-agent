@@ -33,6 +33,7 @@ class TaskType(str, Enum):
     REWRITE = "rewrite"  # 改写
     SCORING = "scoring"  # 评分
     ARCHIVE_CHECK = "archive_check"  # 档案检查
+    OCR = "ocr"  # 图片/扫描件文字识别
 
 
 class ModelType(str, Enum):
@@ -41,6 +42,8 @@ class ModelType(str, Enum):
     LLM = "llm"  # 大语言模型
     EMBEDDING = "embedding"  # 向量化模型
     RERANKER = "reranker"  # 重排模型
+    # 视觉识别单独一类：避免通用问答路由把视觉模型当成候选文本模型选走
+    VISION = "vision"  # 图片文字识别（OCR）
 
 
 class DeploymentType(str, Enum):

@@ -1,10 +1,38 @@
 import { http } from './http'
-import type { AskQuestionRequest, AskQuestionResponse, HealthResponse, QARecordListResponse, ReadyResponse, QASessionListResponse } from './types'
+import type {
+  AskQuestionRequest,
+  AskQuestionResponse,
+  HealthResponse,
+  QAAttachmentMeta,
+  QARecordListResponse,
+  ReadyResponse,
+  QASessionListResponse,
+} from './types'
 
 /** app/api/v1/qa.py */
 
 export function askQuestion(payload: AskQuestionRequest): Promise<AskQuestionResponse> {
   return http.post('/qa', payload)
+}
+
+/**
+ * 上传一份提问附件（app/api/v1/qa.py::POST /qa/attachments）。
+ *
+ * `cloudOcr` 是用户对"允许把图片/扫描件发到云端识别文字"的明确同意：后端默认拒绝，
+ * 未同意时返回 428，界面据此弹确认框而不是当成普通失败。
+ */
+export function uploadQAAttachment(
+  file: File,
+  options: { cloudOcr?: boolean } = {},
+): Promise<QAAttachmentMeta> {
+  const data = new FormData()
+  data.append('file', file)
+  if (options.cloudOcr) data.append('cloud_ocr', 'true')
+  return http.post('/qa/attachments', data, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    // 扫描件逐页识别较慢，给足时间，避免前端先超时而后端还在识别
+    timeout: 180000,
+  })
 }
 
 export function listQASessions(params: { page?: number; page_size?: number } = {}): Promise<QASessionListResponse> {

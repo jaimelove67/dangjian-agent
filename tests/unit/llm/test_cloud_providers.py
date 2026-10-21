@@ -214,7 +214,8 @@ def test_initialization_registers_three_cloud_capabilities_without_requests(monk
     monkeypatch.setattr(settings, "LLM_MODEL_NAME", "qwen3.8-flash")
     init_models.init_models()
     init_models.init_models()
-    assert len(registry.list_models()) == 3
+    # 四类能力：文本 / 向量 / 重排 / 视觉 OCR；视觉是可选项（模型名留空则不注册）
+    assert len(registry.list_models()) == 4
     assert {
         registry.get_provider(model).config.model_type for model in registry.list_models()
     } == set(ModelType)
@@ -223,3 +224,19 @@ def test_initialization_registers_three_cloud_capabilities_without_requests(monk
         for model in registry.list_models()
     )
     assert set(init_models.model_readiness().values()) == {"configured"}
+
+
+def test_vision_model_is_optional(monkeypatch):
+    """不配 OCR 模型名时不注册视觉模型：这类部署应把图片与扫描件明确拒掉，
+    而不是留一个必然失败的模型入口。"""
+    from app.core.config import settings
+    from app.llm import init_models
+    from app.llm.registry import ModelRegistry
+
+    registry = ModelRegistry()
+    monkeypatch.setattr(init_models, "get_model_registry", lambda: registry)
+    monkeypatch.setattr(settings, "DASHSCOPE_API_KEY", "test-only-key")
+    monkeypatch.setattr(settings, "VISION_OCR_MODEL", "")
+    init_models.init_models()
+    assert registry.list_models(model_type=ModelType.VISION) == []
+    assert len(registry.list_models()) == 3

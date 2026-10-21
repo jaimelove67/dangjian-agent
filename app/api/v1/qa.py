@@ -7,8 +7,19 @@ from dataclasses import asdict
 from datetime import date, datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel, Field
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +42,15 @@ from app.rag.retrieval.access import knowledge_filters
 from app.schemas.common import APIResponse, ErrorCode
 from app.schemas.wf import SensitiveCheckRequest
 from app.services.identity_service import IdentityService
+from app.services.qa_attachment_service import (
+    ATTACHMENT_TTL_SECONDS,
+    MAX_ATTACHMENTS,
+    QAAttachment,
+    attachment_warnings,
+    load_attachments,
+    material_block,
+    store_attachment,
+)
 from app.services.qa_record_io import build_qa_records
 from app.services.qa_record_service import (
     MAX_EXPORT_ROWS,
@@ -53,7 +73,9 @@ _require_audit = require_permissions(Permission.AUDIT_QUERY)
 class QuestionRequest(BaseModel):
     """问答请求"""
 
-    question: str = Field(..., description="用户问题", min_length=1, max_length=500)
+    question: str = Field(
+        "", description="用户问题", max_length=500
+    )
     data_level: Optional[DataLevel] = Field(
         None,
         description="内容分级提示；服务端会提高至登录态及实际依据所需级别，涉密内容拒绝处理",
@@ -65,6 +87,35 @@ class QuestionRequest(BaseModel):
     )
     include_expired: Optional[bool] = Field(
         None, description="是否检索历史文件，省略时使用租户配置（回答会提示失效风险）"
+    )
+    attachment_ids: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_ATTACHMENTS,
+        description=(
+            "已上传附件的编号（由 POST /qa/attachments 返回，2 小时内有效）；"
+            "附件只作为提问背景材料进提示词，不参与检索、不占引用编号"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_question_or_attachment(self) -> "QuestionRequest":
+        """只带附件、不写问题也算一次有效提问：要看的材料本身已经说明来意"""
+        if not self.question.strip() and not self.attachment_ids:
+            raise ValueError("请输入问题，或上传至少一份附件后再提问")
+        return self
+
+
+class QAAttachmentSchema(BaseModel):
+    """问答附件（只回元数据，不回正文）"""
+
+    id: str = Field(..., description="附件编号，提问时回传")
+    file_name: str
+    size: int = Field(..., description="原始文件字节数")
+    chars: int = Field(..., description="实际参与作答的正文字数")
+    truncated: bool = Field(False, description="正文是否因过长被截断")
+    ocr: bool = Field(False, description="正文是否由云端文字识别（OCR）得到")
+    notes: list[str] = Field(
+        default_factory=list, description="附件提示（OCR 误差、只识别了部分页等），随回答一起展示"
     )
 
 
@@ -101,6 +152,8 @@ class QuestionResponse(BaseModel):
     disclaimer: str
     refused: bool
     session_id: Optional[str] = None
+    #: 本次提问携带的附件（只回元数据）。材料不进引用，只说明"看过哪些材料"。
+    attachments: list[QAAttachmentSchema] = Field(default_factory=list)
     # 版本指纹（SEC-11 / T-SEC-11）：这条答案由哪个提示词版本、哪个工作流契约版本产出。
     # 写入问答记录后即可事后追溯；引用条各自带 content_revision 说明引的是哪一版。
     versions: dict[str, Any] = Field(
@@ -124,6 +177,11 @@ class QASessionItem(QuestionResponse):
         warnings = list(record.warnings or [])
         if any(not citation.doc_id for citation in citations):
             warnings.append("部分历史引用未包含文件标识，请核对原文。")
+        attachments = [
+            QAAttachmentSchema(**item)
+            for item in (getattr(record, "attachments", None) or [])
+            if isinstance(item, dict) and item.get("id")
+        ]
         return cls(
             id=str(record.id),
             question=record.question,
@@ -138,6 +196,7 @@ class QASessionItem(QuestionResponse):
             disclaimer=record.disclaimer,
             refused=record.refused,
             session_id=record.session_id,
+            attachments=attachments,
             # 本功能上线前的历史记录没有版本指纹，返回空字典，界面显示"未留痕"
             versions=dict(record.versions or {}),
         )
@@ -254,6 +313,68 @@ async def _qa_record_filters(
 
 
 @router.post(
+    "/qa/attachments",
+    response_model=APIResponse[QAAttachmentSchema],
+    summary="上传问答附件（临时材料）",
+    description=(
+        "上传本次提问要一并参考的材料，服务端立即抽取正文并暂存在会话缓存中"
+        f"（{ATTACHMENT_TTL_SECONDS // 3600} 小时有效），返回的编号在提问时回传即可。"
+        "支持 .txt / .md / .pdf / .docx；开启 OCR 后还支持图片与扫描件，"
+        "但需显式传 cloud_ocr=true 表示用户确认这批图片可发送到云端识别。"
+        "材料只作为提问背景，不作为制度依据，不参与检索，也不占用引用编号。"
+    ),
+    tags=["知识问答"],
+)
+async def upload_qa_attachment(
+    request: Request,
+    file: UploadFile = File(..., description="待解析的附件：.txt / .md / .pdf / .docx / 图片"),
+    cloud_ocr: bool = Form(
+        False, description="是否允许把图片/扫描件发送到云端识别文字（需用户明确同意）"
+    ),
+    user: User = Depends(_require_query),
+    tenant_id: str = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[QAAttachmentSchema]:
+    """暂存一份问答附件（解析失败要说清原因与出路，见 service 层的分因提示）"""
+    # 多读 1 字节即可判断越界，不必把超大文件整个读进内存
+    content = await file.read(settings.MAX_UPLOAD_SIZE + 1)
+    attachment: QAAttachment = await store_attachment(
+        CacheService(redis_manager.client),
+        tenant_id=tenant_id,
+        user_id=str(user.id),
+        file_name=file.filename or "未命名附件",
+        data=content,
+        cloud_ocr=cloud_ocr,
+        context={
+            "tenant_id": tenant_id,
+            "user_id": str(user.id),
+            "request_id": _trace_id(request),
+        },
+    )
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="qa_attachment_upload",
+        resource_type="qa_attachment",
+        data_level="internal",
+        new_value={
+            "file_name": attachment.file_name,
+            "size": attachment.size,
+            "chars": attachment.chars,
+            "truncated": attachment.truncated,
+            # 出网确认留痕：谁在什么时候同意把哪份材料发到云端识别
+            "ocr": attachment.ocr,
+            "attachment_id": attachment.id,
+        },
+    )
+    await db.commit()
+    return APIResponse(
+        data=QAAttachmentSchema(**attachment.summary()), trace_id=_trace_id(request)
+    )
+
+
+@router.post(
     "/qa",
     response_model=APIResponse[QuestionResponse],
     summary="知识问答",
@@ -300,6 +421,13 @@ async def ask_question(
         if body.include_expired is not None
         else not tenant_config.get(tenant_id, "exclude_expired_by_default")
     )
+    # 附件：只按当前用户自己的编号取回（过期就明确要求重传），正文进提示词材料块
+    attachments = await load_attachments(
+        CacheService(redis_manager.client),
+        tenant_id=tenant_id,
+        user_id=str(user.id),
+        attachment_ids=body.attachment_ids,
+    )
     # 创建 RAG 服务
     rag_service = RAGService(
         db,
@@ -310,6 +438,7 @@ async def ask_question(
         session=_session_store(user) if body.session_id else None,
         context={"tenant_id": tenant_id, "user_id": str(user.id), "request_id": _trace_id(request)},
         no_evidence_threshold=tenant_config.get(tenant_id, "no_evidence_threshold"),
+        material=material_block(attachments) or None,
     )
 
     # 执行问答
@@ -318,16 +447,22 @@ async def ask_question(
 
     # 转换响应
     citations = [CitationSchema(**asdict(c)) for c in rag_response.citations]
+    warnings = list(rag_response.warnings) + attachment_warnings(attachments)
+    if attachments:
+        warnings.append(
+            f"本次回答同时参考了你上传的 {len(attachments)} 份材料；材料内容不作为制度依据。"
+        )
     response = QuestionResponse(
         answer=rag_response.answer,
         citations=citations,
         retrieved_count=rag_response.retrieved_count,
         used_count=rag_response.used_count,
         has_sufficient_evidence=rag_response.has_sufficient_evidence,
-        warnings=rag_response.warnings,
+        warnings=list(dict.fromkeys(warnings)),
         disclaimer=rag_response.disclaimer,
         refused=rag_response.refused,
         session_id=body.session_id,
+        attachments=[QAAttachmentSchema(**item.summary()) for item in attachments],
         # 版本留痕（SEC-11）：在"回答产生的那一刻"记下当时的提示词与工作流契约版本，
         # 而不是事后按当前配置倒推——配置随时可改，倒推会把旧答案说成新版本的产物。
         versions=version_fingerprint(tenant_id),
@@ -360,6 +495,8 @@ async def ask_question(
             "refused": rag_response.refused,
             "citations": [c.doc_id for c in rag_response.citations],
             "session_id": body.session_id,
+            # 材料不进引用，但"这次问了什么、看了哪些材料"必须留痕
+            "attachments": [{"file_name": a.file_name, "chars": a.chars} for a in attachments],
         },
     )
     await db.commit()

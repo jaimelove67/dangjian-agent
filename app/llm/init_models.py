@@ -1,4 +1,4 @@
-"""按项目配置注册三个云端模型；没有密钥时不发起请求。"""
+"""按项目配置注册云端模型；没有密钥时不发起请求。"""
 
 from typing import Any
 
@@ -13,13 +13,20 @@ def init_models() -> None:
     from app.llm.providers.dashscope_embedding import create_dashscope_embedding_provider
     from app.llm.providers.dashscope_reranker import create_dashscope_reranker_provider
     from app.llm.providers.qwen import create_dashscope_provider
+    from app.llm.providers.qwen_vision import create_dashscope_vision_provider
 
     registry = get_model_registry()
-    for factory, model_id, model_name in (
+    factories: list[tuple[Any, str, str]] = [
         (create_dashscope_provider, "cloud-llm", settings.LLM_MODEL_NAME),
         (create_dashscope_embedding_provider, "cloud-embedding", settings.EMBEDDING_MODEL_NAME),
         (create_dashscope_reranker_provider, "cloud-reranker", settings.RERANKER_MODEL_NAME),
-    ):
+    ]
+    # 视觉 OCR 是可选项：模型名留空表示这套部署不开放图片与扫描件附件
+    if settings.VISION_OCR_MODEL.strip():
+        factories.append(
+            (create_dashscope_vision_provider, "cloud-vision", settings.VISION_OCR_MODEL.strip())
+        )
+    for factory, model_id, model_name in factories:
         if registry.get_provider(model_id) is None:
             params: dict[str, Any] = {
                 "model_id": model_id,

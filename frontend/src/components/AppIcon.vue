@@ -45,6 +45,8 @@ export type IconName =
   | 'arrow-right'
   | 'empty'
   | 'error'
+  | 'paperclip'
+  | 'file'
 
 withDefaults(defineProps<{ name: IconName; size?: number }>(), { size: 16 })
 </script>
@@ -209,6 +211,17 @@ withDefaults(defineProps<{ name: IconName; size?: number }>(), { size: 16 })
     <template v-else-if="name === 'error'">
       <circle cx="12" cy="12" r="8.5" />
       <path d="m9.2 9.2 5.6 5.6M14.8 9.2l-5.6 5.6" />
+    </template>
+
+    <!-- 附件（回形针）：语义=随提问一起提交的材料 -->
+    <template v-else-if="name === 'paperclip'">
+      <path d="M20 11.5 11.9 19.6a4.5 4.5 0 0 1-6.4-6.4l7.6-7.6a3 3 0 1 1 4.2 4.2l-7.5 7.5a1.5 1.5 0 1 1-2.1-2.1l6.9-6.9" />
+    </template>
+
+    <!-- 文件：附件行前缀 -->
+    <template v-else-if="name === 'file'">
+      <path d="M14 3.5H7.5A1.5 1.5 0 0 0 6 5v14a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19V7.5z" />
+      <path d="M14 3.5V7.5h4" />
     </template>
   </svg>
 </template>

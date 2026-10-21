@@ -215,7 +215,9 @@ async def _readiness_details() -> JSONResponse:
                     async with async_session_maker() as db:
                         await tenant_config.load(db, tid)
                     with tenant_context(tid):
-                        for kind in ModelType:
+                        # 视觉识别只在传图片/扫描件时调用，不参与"最近有成功调用"的常规
+                        # 校验：算进来会让长期没人传图的部署永远报 model_warm 未验证。
+                        for kind in (ModelType.LLM, ModelType.EMBEDDING, ModelType.RERANKER):
                             try:
                                 model = get_model_router().get_model(
                                     data_level=DataLevel.PUBLIC,

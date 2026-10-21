@@ -114,6 +114,72 @@ class ModelService:
             )
             raise ModelUnavailableError("文本生成服务暂不可用，请检查模型配置或稍后重试") from e
 
+    async def vision(
+        self,
+        prompt: str,
+        images: List[bytes],
+        *,
+        data_level: DataLevel = DataLevel.PUBLIC,
+        context: Optional[Dict[str, Any]] = None,
+        mime: str = "image/png",
+        max_tokens: int = 4096,
+    ) -> str:
+        """图片文字识别（OCR）
+
+        单独的入口而不是复用 ``generate``：视觉模型的 ``content`` 形状不同，而且
+        必须走 ``ModelType.VISION`` 的路由，否则通用问答路由可能把它当文本模型选走。
+
+        Args:
+            prompt: 识别指令（只负责转录，不做问答）
+            images: 图片字节流，按顺序识别
+            data_level: 数据级别；图片出网同样受 WF-04 闸门约束
+            context: 审计上下文（request_id / tenant_id / user_id）
+
+        Raises:
+            GatewayError: 闸门拦截（涉密/敏感禁止出网）
+            RouterError: 未配置视觉模型
+            ModelUnavailableError: 调用失败
+        """
+        try:
+            provider = self.router.get_model(
+                data_level=data_level,
+                task_type=TaskType.OCR,
+                model_type=ModelType.VISION,
+                context=context,
+            )
+        except RouterError as exc:
+            if "No available model" in str(exc):
+                raise ModelUnavailableError(
+                    "尚未配置图片文字识别模型，扫描件与图片暂不可用；"
+                    "请在环境中配置 VISION_OCR_MODEL 后重启服务"
+                ) from exc
+            raise
+
+        try:
+            await check_model_budget()
+            response = await asyncio.wait_for(
+                provider.generate(prompt, images=images, mime=mime, max_tokens=max_tokens),
+                timeout=settings.OCR_TIMEOUT_SECONDS,
+            )
+            logger.info(
+                "vision_success",
+                model_id=response.model_id,
+                data_level=data_level,
+                image_count=len(images),
+                text_length=len(response.content),
+            )
+            return response.content
+        except Exception as e:
+            logger.error(
+                "vision_failed",
+                data_level=data_level,
+                image_count=len(images),
+                error=type(e).__name__,
+            )
+            raise ModelUnavailableError(
+                "图片文字识别服务暂不可用，请稍后重试，或改用带文字层的 PDF / Word 文件"
+            ) from e
+
     @tracked("embedding")
     async def embed(
         self,

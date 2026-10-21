@@ -104,6 +104,18 @@ class Settings(BaseSettings):
         description="重排模型名称",
     )
 
+    # 视觉 OCR 模型配置（阿里云百炼）：只用于把扫描件/图片转成文字
+    VISION_OCR_MODEL: str = Field(
+        default="qwen-vl-ocr",
+        validation_alias=AliasChoices("OCR_MODEL", "VISION_OCR_MODEL"),
+        description="图片文字识别模型名称；留空表示不开放图片与扫描件附件",
+    )
+    OCR_TIMEOUT_SECONDS: float = Field(default=90, gt=0, description="单次 OCR 调用超时（秒）")
+    OCR_MAX_PAGES: int = Field(default=5, ge=1, le=30, description="扫描件最多识别页数")
+    OCR_MAX_IMAGE_SIDE: int = Field(
+        default=2200, ge=600, le=4000, description="识别前图片长边上限（像素），过大自动缩放"
+    )
+
     # ==================== 检索配置 ====================
     RETRIEVAL_TOP_K: int = Field(default=10, description="初检条数")
     RERANK_TOP_K: int = Field(default=5, description="重排后保留条数")
