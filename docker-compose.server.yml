@@ -16,6 +16,15 @@
 #   - JOB_WORKER_ENABLED 默认 false：关闭 Celery worker 以适配 2G 内存。
 name: party-agent-server
 
+# 容器日志上限：Docker 默认的 json-file 驱动**不轮转也不封顶**，长期运行会把磁盘写满
+# （40G 的盘，跑几个月就危险）。这里每个容器封顶 20MB × 3 份 = 60MB，四个容器约 240MB。
+# 应用自身不写文件日志，日志一律走 stdout，所以这四条限制就是全部。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
 services:
   # ==================== PostgreSQL（pgvector） ====================
   postgres:
@@ -43,6 +52,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging: *default-logging
 
   # ==================== Redis ====================
   redis:
@@ -64,6 +74,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging: *default-logging
 
   # ==================== 后端应用 ====================
   # 使用生产 Dockerfile（哈希锁定依赖、非 root 运行、无热重载）。
@@ -113,6 +124,7 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   # ==================== 前端（Nginx HTTP:80） ====================
   frontend:
@@ -129,6 +141,7 @@ services:
     depends_on:
       - app
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   postgres_data:
