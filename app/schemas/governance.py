@@ -37,7 +37,7 @@ class OrgUpdate(StrictInput):
 class UserCreate(StrictInput):
     username: str = Field(min_length=3, max_length=50, pattern=r"^[A-Za-z0-9_.@-]+$")
     name: str = Field(min_length=1, max_length=50)
-    password: str = Field(min_length=12, max_length=72, repr=False)
+    password: str = Field(min_length=8, max_length=72, repr=False)
     role: UserRole = UserRole.MEMBER
     org_unit_id: str | None = Field(None, max_length=36)
 

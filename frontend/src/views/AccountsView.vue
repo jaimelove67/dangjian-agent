@@ -32,6 +32,8 @@ const form = reactive({
   password: '', confirm_password: '',
 })
 const roles = Object.keys(ROLE_LABELS) as UserRole[]
+// 本页按学校租户开户，系统管理员不属于任何学校组织；平台级账号在治理页维护。
+const assignableRoles = computed(() => roles.filter(role => role !== 'system_admin'))
 const ORG_LABELS = { school: '学校', department: '院系', branch: '支部' }
 // 名册里尚未开户的人：选中即带出姓名与组织，建号时一并完成档案关联。
 const members = ref<AccountMemberOption[]>([])
@@ -196,7 +198,7 @@ async function submit(): Promise<void> {
           <div class="field">
             <label for="account-role" class="field__label">角色</label>
             <select id="account-role" v-model="form.role" class="select" required>
-              <option v-for="role in roles" :key="role" :value="role">{{ ROLE_LABELS[role] }}</option>
+              <option v-for="role in assignableRoles" :key="role" :value="role">{{ ROLE_LABELS[role] }}</option>
             </select>
           </div>
           <div class="field">

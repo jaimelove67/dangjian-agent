@@ -23,13 +23,20 @@ const reviews = ref<ReviewRecord[]>([]), jobs = ref<JobRecord[]>([]), logs = ref
 // 通知渠道与投递台账：渠道是否就绪、事件路由、每次投递的渠道/状态/尝试次数。
 const channels = ref<NotificationChannel[]>([]), deliveries = ref<NotificationDelivery[]>([])
 const channelRoutes = ref<Record<string, string[]>>({})
-const reviewHasMore = ref(false)
+const reviewHasMore = ref(false), reviewsTotal = ref(0), reviewStatus = ref('')
 const reviewPage = ref(1), auditPage = ref(1), auditTotal = ref(0)
 const detail = ref<ReviewRecord | null>(null), identitySearch = ref('')
+// 任务台账分页：服务端一次只回 40 条，没有分页会让第 41 条起静默消失。
+const jobPage = ref(1), jobTotal = ref(0)
+// 导出的必须是“上次查询看到的那一批”，不能跟着未提交的筛选表单跑。
+let lastAuditParams: Record<string, string | number> | null = null
+let lastRecordParams: Record<string, string | number | boolean> | null = null
+// 切页签时旧请求可能后到；用序号丢弃过期结果，避免把上一个页签的数据写回来。
+let loadToken = 0
 const dialog = ref(''), editingId = ref<string | null>(null)
 const form = reactive({name: '', username: '', password: '', role: 'member' as UserRole, org_unit_id: '',
   org_type: 'department', parent_id: '', is_active: true, source_kind: 'score', source_id: '',
-  year: new Date().getFullYear(), round: 1, opinion: '', decision: 'approved', kind: 'member_reminders',
+  year: new Date().getFullYear(), round: 1, opinion: '', decision: '', kind: 'member_reminders',
   document_ids: '', dedup_key: '', evidence: '', enabled: false, tenant_type: 'school'})
 const configReason = ref(''), allowedHosts = ref(''), localHosts = ref('')
 const auditFilters = reactive({user_id: '', resource_id: '', action: '', resource_type: '',
@@ -69,9 +76,25 @@ const statusText: Record<string,string> = {pending:'待审核', approved:'已通
   queued:'等待执行', running:'执行中', retry:'等待重试', done:'已完成', failed:'执行失败',
   superseded:'已由后续提交替代', confirmed:'已确认', revoked:'已撤销', configured:'已登记', success:'成功', denied:'拒绝'}
 const kindText: Record<string,string> = {score:'辅助评分', vote:'选优汇总', meeting:'组织生活纪要',
+  member_review:'民主评议党员',
   study_activity:'中心组学习纪要', study_plan:'中心组学习计划', assessment_report:'考核评价',
   assessment_plan:'年度工作建议', member_reminders:'发展党员提醒', assessment_reminders:'考核提醒',
   embedding:'文档向量化'}
+// 审计结果与任务状态不是一套词：审计的 failed 是“失败”，不是“执行失败”。
+const resultText: Record<string,string> = {success:'成功', denied:'拒绝', failed:'失败',
+  pending:'待处理', approved:'已通过', returned:'已退回'}
+// 运行审计里的模型类型、动作、对象按中文显示，避免学校管理员看到调试词汇。
+const modelTypeText: Record<string,string> = {llm:'聊天模型', embedding:'向量模型', reranker:'重排模型'}
+const actionText: Record<string,string> = {login:'登录', logout:'退出', query:'查询', read:'查看',
+  create:'创建', update:'修改', delete:'删除', export:'导出', config_update:'配置变更',
+  review_submit:'提交审核', review_decision:'审核结论', job_enqueue:'任务入队',
+  job_attempt_failed:'执行失败', job_completed:'执行完成', read_retention:'查看保留期',
+  member_reminder:'发展党员提醒', assessment_reminder:'考核进度提醒',
+  member_stage_transition:'党员阶段流转', meeting_archived:'组织生活归档',
+  assessment_completed:'年度考核完成', channel_self_test:'渠道自检'}
+const resourceTypeText: Record<string,string> = {user:'账号', organization:'组织', tenant:'租户',
+  governance:'学校配置', audit_log:'审计日志', human_review:'人工审核', job:'任务',
+  knowledge_doc:'知识条目', member:'党员档案', member_review:'民主评议', retention:'保留期'}
 // 投递状态与事件名：运维要能一眼看懂“哪条提醒、走哪个渠道、发出去没有”。
 const deliveryText: Record<string,string> = {pending:'待投递', sent:'已投递', failed:'投递失败'}
 // 问答记录（T-SYS-06）：级别与结果必须中文化，否则治理页读起来像调试输出
@@ -83,6 +106,8 @@ const approvalText: Record<string,string> = {registration:'真实组织登记', 
   it_approval:'信息化部门评审', secrecy_approval:'保密部门评审', pilot_scope:'批准的试点范围'}
 const approvals = ['registration','organization_approval','it_approval','secrecy_approval'] as const
 const roles = Object.keys(ROLE_LABELS) as UserRole[]
+// 系统管理员角色只允许平台管理员授予；学校管理员看到这个选项只会点出 403。
+const assignableRoles = computed(() => roles.filter(role => role !== 'system_admin' || isPlatformAdmin.value))
 // 角色可绑定的组织类型（与服务端 ROLE_ORG_TYPES 同口径）：先在前端挡掉必然 422 的组合，
 // 否则用户会在填完整个表单后才发现"所选角色与组织类型不匹配"。
 const ROLE_ORG_TYPES: Partial<Record<UserRole, OrgRecord['org_type']>> = {
@@ -94,10 +119,44 @@ const formOrgs = computed(() => {
   const type = ROLE_ORG_TYPES[form.role]
   return type ? activeOrgs.value.filter(row => row.org_type === type) : activeOrgs.value
 })
-// 只列 platform 租户：学校/院系的父级有固定层级，列出来只会得到 422。
-const parentTenants = computed(() => tenants.value.filter(row => row.is_active && row.tenant_type === 'platform'))
+// 组织层级与服务端 ORG_PARENTS 同口径：学校无上级，院系挂学校，支部挂学校或院系。
+const orgParentOptions = computed(() => {
+  const allowed = form.org_type === 'department' ? ['school']
+    : form.org_type === 'branch' ? ['school', 'department'] : []
+  return activeOrgs.value.filter(row => allowed.includes(row.org_type) && row.id !== editingId.value)
+})
+// 租户层级与服务端 TENANT_PARENTS 同口径：学校挂平台，院系挂学校，支部挂院系。
+const TENANT_PARENT_TYPES: Record<string, string> = {
+  school: 'platform', department: 'school', branch: 'department',
+}
+const parentTenantOptions = computed(() => tenants.value.filter(row =>
+  row.is_active && row.tenant_type === TENANT_PARENT_TYPES[form.tenant_type]))
+const jobKindOptions = computed(() => [
+  { value: 'member_reminders', label: '发展党员提醒扫描', perm: PERM.MEMBER_QUERY },
+  { value: 'assessment_reminders', label: '考核提醒扫描', perm: PERM.ASSESSMENT_QUERY },
+  { value: 'embedding', label: '文档批量向量化', perm: PERM.KNOWLEDGE_MANAGE },
+].filter(row => session.can(row.perm)))
+const reviewKindOptions = computed(() => [
+  { value: 'score', label: kindText.score, perm: PERM.SCORING },
+  { value: 'vote', label: kindText.vote, perm: PERM.SCORING },
+  { value: 'meeting', label: kindText.meeting, perm: PERM.MEETING_REVIEW },
+  { value: 'study_activity', label: kindText.study_activity, perm: PERM.STUDY_REVIEW },
+  { value: 'study_plan', label: kindText.study_plan, perm: PERM.STUDY_REVIEW },
+  { value: 'assessment_report', label: kindText.assessment_report, perm: PERM.ASSESSMENT_REVIEW },
+  { value: 'assessment_plan', label: kindText.assessment_plan, perm: PERM.ASSESSMENT_REVIEW },
+].filter(row => session.can(row.perm)))
 watch(() => form.role, () => {
   if (form.org_unit_id && !formOrgs.value.some(row => row.id === form.org_unit_id)) form.org_unit_id = ''
+})
+watch(() => form.org_type, () => {
+  if (form.parent_id && !orgParentOptions.value.some(row => row.id === form.parent_id)) form.parent_id = ''
+})
+watch(() => form.tenant_type, () => {
+  if (form.parent_id && !parentTenantOptions.value.some(row => row.id === form.parent_id)) form.parent_id = ''
+})
+watch(parentTenantOptions, (rows) => {
+  if (dialog.value !== 'tenant' || editingId.value) return
+  if (!rows.some(row => row.id === form.parent_id)) form.parent_id = rows.length === 1 ? rows[0].id : ''
 })
 /** 供给机制（T-KB-13）：五类权威来源固定成行——缺行就不显示，等于把机制藏起来。 */
 const supplyRows = computed(() => DOC_AUTHORITY_ORDER.map(authority => ({
@@ -121,26 +180,103 @@ const selectedRecord = computed(() => {
   const snapshot = detail.value?.snapshot
   return (snapshot?.record ?? snapshot ?? {}) as Record<string, unknown>
 })
-const snapshotText = computed(() => {
+// 审核材料的可读摘要：不同业务的快照字段差异很大，只认 title/content 会让
+// 评分、选优、民主评议、考核在弹窗里只剩原始 JSON。按业务各给一份人话摘要，
+// 完整快照仍保留在“完整材料与依据”折叠区。
+const summaryFieldLabels: Record<string,string> = {
+  title:'标题', topic:'主题', content:'内容', transcript:'纪要', year:'年度',
+  planned_on:'计划日期', scheduled_on:'计划日期', held_on:'实际日期', host:'主持人',
+  member_name:'党员', org_name:'组织', grade:'等次', basis:'依据', rectification:'整改',
+  activity_type:'活动类型', responsible:'责任人', weighted_score:'辅助总分',
+  batch_no:'批次编号', round_no:'投票轮次', voter_count:'投票人数',
+  notice:'说明', disclaimer:'说明', review_opinion:'审核意见',
+}
+const dimensionText: Record<string,string> = {
+  theory_test:'理论测试', volunteer_service:'志愿服务', academic:'学业表现',
+  public_review:'群众评议', party_review:'党员意见',
+}
+const gradeText: Record<string,string> = {
+  outstanding:'优秀', qualified:'合格', basic:'基本合格', unqualified:'不合格',
+}
+function summaryText(value: unknown): string {
+  if (value === null || value === undefined || value === '') return ''
+  if (Array.isArray(value)) return value.map(summaryText).filter(Boolean).join('、')
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+const summaryRows = computed<{label: string; value: string}[]>(() => {
   const row = selectedRecord.value
-  const parts: string[] = []
-  for (const key of ['title','topic','content','transcript','disclaimer','notice']) {
-    if (typeof row[key] === 'string') parts.push(String(row[key]))
+  const kind = detail.value?.source_kind ?? ''
+  const rows: {label: string; value: string}[] = []
+  const add = (label: string, key: string): void => {
+    const value = summaryText(row[key])
+    if (value) rows.push({label, value})
   }
-  if (row.weighted_score !== undefined) parts.push('辅助总分：' + String(row.weighted_score ?? '无依据'))
-  return parts.join('\n\n')
+  if (kind === 'score') {
+    add('统计年度', 'year'); add('辅助总分', 'weighted_score')
+    const dimensions = row.dimensions as Record<string, Record<string, unknown>> | undefined
+    for (const [key, dim] of Object.entries(dimensions ?? {})) {
+      if (!dim || typeof dim !== 'object') continue
+      const value = dim.value === null || dim.value === undefined ? '无依据' : String(dim.value)
+      rows.push({label: dimensionText[key] ?? key, value: value + '（权重 ' + String(dim.weight ?? '—') + '）'})
+    }
+    add('说明', 'disclaimer')
+    const risks = row.risks as {risk_note?: string}[] | undefined
+    const riskText = (risks ?? []).map(item => summaryText(item.risk_note)).filter(Boolean).join('；')
+    if (riskText) rows.push({label: '风险提示', value: riskText})
+  } else if (kind === 'vote') {
+    add('批次编号', 'batch_no'); add('投票轮次', 'round_no'); add('投票人数', 'voter_count')
+    const tally = row.tally as Record<string, Record<string, number>> | undefined
+    for (const [id, item] of Object.entries(tally ?? {})) {
+      rows.push({label: '候选人 ' + id.slice(0, 8), value: '同意 ' + (item.agree ?? 0)
+        + ' / 不同意 ' + (item.disagree ?? 0) + ' / 弃权 ' + (item.abstain ?? 0)})
+    }
+    add('说明', 'note')
+  } else if (kind === 'member_review') {
+    add('党员', 'member_name'); add('组织', 'org_name'); add('年度', 'year')
+    const grade = summaryText(row.grade)
+    if (grade) rows.push({label: '等次', value: gradeText[grade] ?? grade})
+    add('依据', 'basis'); add('整改', 'rectification')
+    const procedure = row.procedure as Record<string, unknown> | undefined
+    for (const [key, label] of Object.entries({
+      self_assessment: '个人自评', peer_review: '党员互评', branch_opinion: '支部评定意见',
+    })) {
+      const value = summaryText(procedure?.[key])
+      if (value) rows.push({label, value})
+    }
+    const test = procedure?.test
+    if (test && typeof test === 'object') rows.push({label: '民主测评', value: JSON.stringify(test)})
+  } else {
+    for (const key of ['title', 'year', 'activity_type', 'scheduled_on', 'held_on', 'host',
+      'responsible', 'member_name', 'org_name', 'content', 'transcript', 'review_opinion']) {
+      add(summaryFieldLabels[key] ?? key, key)
+    }
+    add('说明', 'disclaimer')
+    add('说明', 'notice')
+    const priorities = row.priorities as unknown[] | undefined
+    if (priorities?.length) {
+      rows.push({label: '年度重点', value: priorities.map(summaryText).filter(Boolean).join('；')})
+    }
+    const results = row.results
+    if (results && typeof results === 'object') {
+      rows.push({label: '考核结果', value: JSON.stringify(results)})
+    }
+  }
+  return rows
 })
 function fail(err: unknown): void {
   error.value = err instanceof ApiError ? err.message + (err.traceId ? '（请求编号：' + err.traceId + '）' : '')
     : err instanceof Error ? err.message : '操作失败，请重试'
 }
-async function loadIdentity(): Promise<void> {
+async function loadIdentity(token = loadToken): Promise<void> {
   const [orgs, accounts] = await Promise.all([api.listOrgs(selectedTenant.value), api.listUsers(selectedTenant.value)])
+  if (token !== loadToken) return
   organizations.value = orgs.items; users.value = accounts.items
 }
-async function loadNotifications(): Promise<void> {
+async function loadNotifications(token = loadToken): Promise<void> {
   const [registered, ledger] = await Promise.all([
     api.listNotificationChannels(), api.listNotificationDeliveries({limit:20})])
+  if (token !== loadToken) return
   channels.value = registered.items; channelRoutes.value = registered.routes
   deliveries.value = ledger.items
 }
@@ -209,8 +345,9 @@ async function exportAudit(): Promise<void> {
   if (busy.value) return
   busy.value = true; error.value = ''; notice.value = ''
   try {
-    downloadBlob(await api.exportAudit(auditParams()), '审计日志-' + todayISO() + '.zip')
-    notice.value = '已导出当前筛选范围（' + (auditScope.value || '未筛选') + '）的审计对账包，导出动作已写入审计。'
+    // 用上次查询成功的参数导出：用户改了筛选却还没点“查询”时，导出的不能是另一批。
+    downloadBlob(await api.exportAudit(lastAuditParams ?? auditParams()), '审计日志-' + todayISO() + '.zip')
+    notice.value = '已导出上次查询范围（' + (auditScope.value || '未筛选') + '）的审计对账包，导出动作已写入审计。'
   } catch (err) { fail(err) } finally { busy.value = false }
 }
 /** 运行日志（T-SYS-06E）：与审计查询同一套时间口径（界面按北京时间填，发送带 +08:00） */
@@ -228,13 +365,16 @@ function resetRunFilters(): void {
   runLogPage.value = 1
   void loadRunLogs()
 }
-async function loadRunLogs(): Promise<void> {
+async function loadRunLogs(token = loadToken): Promise<void> {
   const page = await api.listRunLogs({...runParams(), page: runLogPage.value})
+  if (token !== loadToken) return
   runLogs.value = page.items; runLogTotal.value = page.total; runLogScope.value = page.scope_note
 }
 /** 版本留痕（T-SEC-11）：三块来源都是既有事实的可查视图，不新增登记表 */
-async function loadVersionTrail(): Promise<void> {
-  versionTrail.value = await api.getVersionTrail(versionPage.value)
+async function loadVersionTrail(token = loadToken): Promise<void> {
+  const data = await api.getVersionTrail(versionPage.value)
+  if (token !== loadToken) return
+  versionTrail.value = data
 }
 // 提示词种类显示名：与导出台账同一套说法（后端 app/core/versions.py::PROMPT_LABELS）
 const promptKindText: Record<string,string> = {qa:'问答提示词', rewrite:'追问改写'}
@@ -259,44 +399,61 @@ function revisionText(previous: number | null, revision: number | null): string 
   if (revision === null) return '—'
   return previous === null ? `第 ${revision} 版` : `第 ${previous} → ${revision} 版`
 }
-async function loadRecords(): Promise<void> {
-  const page = await qaApi.listQaRecords({...recordParams(), page: recordPage.value})
+async function loadRecords(token = loadToken): Promise<void> {
+  const params = recordParams()
+  const page = await qaApi.listQaRecords({...params, page: recordPage.value})
+  if (token !== loadToken) return
   records.value = page.items; recordTotal.value = page.total; recordScope.value = page.scope_note
+  // 列表成功后冻结本次参数，导出只认这一批。
+  lastRecordParams = params
 }
 async function exportRecords(): Promise<void> {
   if (busy.value) return
   busy.value = true; error.value = ''; notice.value = ''
   try {
-    downloadBlob(await qaApi.exportQaRecords(recordParams()), '问答记录-' + todayISO() + '.xlsx')
-    notice.value = '已导出当前筛选范围（' + (recordScope.value || '未筛选') + '）的问答记录，导出动作已写入审计。'
+    downloadBlob(await qaApi.exportQaRecords(lastRecordParams ?? recordParams()), '问答记录-' + todayISO() + '.xlsx')
+    notice.value = '已导出上次查询范围（' + (recordScope.value || '未筛选') + '）的问答记录，导出动作已写入审计。'
   } catch (err) { fail(err) } finally { busy.value = false }
 }
 async function loadTab(): Promise<void> {
+  const token = ++loadToken
   loading.value = true; error.value = ''
   try {
-    if (tab.value === 'identity') await loadIdentity()
+    if (tab.value === 'identity') await loadIdentity(token)
     if (tab.value === 'reviews') {
-      const page = await api.listReviews(reviewPage.value)
-      reviews.value = page.items; reviewHasMore.value = page.has_more
+      const page = await api.listReviews(reviewPage.value, reviewStatus.value)
+      if (token !== loadToken) return
+      reviews.value = page.items; reviewHasMore.value = page.has_more; reviewsTotal.value = page.total
     }
-    if (tab.value === 'jobs') jobs.value = (await api.listJobs()).items
-    if (tab.value === 'records') await loadRecords()
+    if (tab.value === 'jobs') {
+      const page = await api.listJobs(jobPage.value)
+      if (token !== loadToken) return
+      jobs.value = page.items; jobTotal.value = page.total
+    }
+    if (tab.value === 'records') await loadRecords(token)
     if (tab.value === 'config') {
       const loaded = useConfig(await api.getGovernance())
+      if (token !== loadToken) return
       config.value = loaded
       allowedHosts.value = loaded.values.model_policy.allowed_hosts.join('\n')
       localHosts.value = loaded.values.model_policy.local_hosts.join('\n')
-      retention.value = await api.getRetentionReport()
+      const report = await api.getRetentionReport()
+      if (token !== loadToken) return
+      retention.value = report
     }
     if (tab.value === 'operations') {
       const params = {...auditParams(), page: auditPage.value}
-      const [stats, audit] = await Promise.all([api.getOperations(), api.listAudit(params), loadNotifications()])
+      const [stats, audit] = await Promise.all([api.getOperations(), api.listAudit(params), loadNotifications(token)])
+      if (token !== loadToken) return
       operations.value = stats; logs.value = audit.items; auditTotal.value = audit.total
       auditScope.value = audit.scope_note ?? ''
+      // 审计列表查询成功即冻结参数，导出与页面显示同一批记录。
+      lastAuditParams = {...params}
+      delete lastAuditParams.page
       // 运行日志与审计查询同一页展示：排障时"谁点了什么"和"任务跑成什么样"要能对上时间
-      await Promise.all([loadRunLogs(), loadVersionTrail()])
+      await Promise.all([loadRunLogs(token), loadVersionTrail(token)])
     }
-  } catch (err) { fail(err) } finally { loading.value = false }
+  } catch (err) { fail(err) } finally { if (token === loadToken) loading.value = false }
 }
 onMounted(async () => {
   if (canManage.value) {
@@ -304,16 +461,32 @@ onMounted(async () => {
   }
   await loadTab()
 })
-watch(tab, () => { if (!busy.value) void loadTab() })
+watch(tab, () => { notice.value = ''; if (!busy.value) void loadTab() })
 watch(selectedTenant, () => { if (tab.value === 'identity') void loadTab() })
+watch(reviewStatus, () => { reviewPage.value = 1; if (tab.value === 'reviews' && !busy.value) void loadTab() })
 function open(type: string, row?: OrgRecord | UserRecord | TenantRecord): void {
   error.value = ''; notice.value = ''; editingId.value = row?.id ?? null
   Object.assign(form, {name:'', username:'', password:'', role:'member', org_unit_id:'',
     org_type:'department', parent_id:'', is_active:true, source_kind:'score', source_id:'',
-    year:new Date().getFullYear(), round:1, opinion:'', decision:'approved', kind:'member_reminders',
+    year:new Date().getFullYear(), round:1, opinion:'', decision:'', kind:'member_reminders',
     document_ids:'', dedup_key:uuid(), evidence:'', enabled:false, tenant_type:'school'})
   if (row) Object.assign(form, row)
-  if (type === 'tenant' && !row) form.parent_id = session.state.user?.tenant_id ?? ''
+  if (type === 'tenant' && !row) {
+    const options = parentTenantOptions.value
+    const current = session.state.user?.tenant_id ?? ''
+    form.parent_id = options.some(row => row.id === current) ? current : (options[0]?.id ?? '')
+  }
+  // 还没有学校根组织时，新增组织只能先建学校，不能默认停在“院系”上等一个不存在的父级。
+  if (type === 'organization' && !row && !activeOrgs.value.some(row => row.org_type === 'school')) {
+    form.org_type = 'school'
+  }
+  // 只提供当前角色真能提交的业务类型与任务类型，避免选项点下去必然 403。
+  if (type === 'submit' && !reviewKindOptions.value.some(row => row.value === form.source_kind)) {
+    form.source_kind = reviewKindOptions.value[0]?.value ?? ''
+  }
+  if (type === 'job' && !jobKindOptions.value.some(row => row.value === form.kind)) {
+    form.kind = jobKindOptions.value[0]?.value ?? ''
+  }
   if (type === 'archive') {
     form.enabled = config.value?.archive_policy?.enabled ?? false
     form.evidence = config.value?.archive_policy?.evidence ?? ''
@@ -329,6 +502,10 @@ async function submit(): Promise<void> {
   // 组织与角色必须成对：缺组织时服务端会拒绝，先在这里给出可读提示，别让它变成红色报错条。
   if (dialog.value === 'user' && form.role !== 'system_admin' && !form.org_unit_id) {
     error.value = '请为该角色选择所属组织'; return
+  }
+  // 人工结论必须由审核人明确选择：默认“通过”会把一次疏忽变成一次批准。
+  if (dialog.value === 'decision' && !form.decision) {
+    error.value = '请选择人工结论'; return
   }
   busy.value = true; error.value = ''
   try {
@@ -359,6 +536,9 @@ async function submit(): Promise<void> {
       await api.saveArchivePolicy({enabled:form.enabled,
         expected_revision:config.value?.archive_policy?.revision ?? 0, evidence:form.evidence})
     }
+    // 新提交的审核/任务在最前面一页：停在旧页码会让用户以为“保存后不见了”。
+    if (dialog.value === 'submit' && reviewStatus.value === '') reviewPage.value = 1
+    if (dialog.value === 'job') jobPage.value = 1
     dialog.value = ''; form.password = ''; notice.value = '已保存。'; await loadTab()
   } catch (err) { fail(err) } finally { busy.value = false }
 }
@@ -435,13 +615,15 @@ function formatDate(value: string | null): string {
         </section>
       </section>
       <section v-else-if="tab === 'reviews'" class="wb-stack">
-        <div class="wb-toolbar"><div><h2 class="u-title-sub">人工审核台账</h2><p class="wb-note">提交人不能自审。源内容变化后须重新提交。</p></div><button type="button" class="btn btn--primary" @click="open('submit')">提交审核</button></div>
+        <div class="wb-toolbar"><div><h2 class="u-title-sub">人工审核台账</h2><p class="wb-note">提交人不能自审。源内容变化后须重新提交。</p></div><div class="wb-actions">
+          <label class="wb-field"><span>状态</span><select class="select" v-model="reviewStatus"><option value="">全部状态</option><option value="pending">待审核</option><option value="approved">已通过</option><option value="returned">已退回</option></select></label>
+          <button type="button" class="btn btn--primary" @click="open('submit')">提交审核</button></div></div>
         <div v-if="reviews.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>业务</th><th>对象编号</th><th>当前状态</th><th>提交时间</th><th>审核</th></tr></thead><tbody>
-          <tr v-for="row in reviews" :key="row.id"><td>{{ kindText[row.source_kind] }}</td><td class="governance__id">{{ row.source_id }}</td>
-            <td>{{ row.stale ? '源内容已变更，须重新提交' : statusText[row.effective_status] }}</td><td>{{ formatDate(row.created_at) }}</td>
+          <tr v-for="row in reviews" :key="row.id"><td>{{ kindText[row.source_kind] ?? row.source_kind }}</td><td class="governance__id">{{ row.source_id }}</td>
+            <td>{{ row.stale ? '源内容已变更，须重新提交' : statusText[row.effective_status] ?? row.effective_status }}</td><td>{{ formatDate(row.created_at) }}</td>
             <td><button type="button" class="btn btn--quiet" @click="viewReview(row)">查看材料</button></td></tr>
-        </tbody></table></div><p v-else class="wb-empty">当前页没有可访问的审核记录。</p>
-        <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="reviewPage===1" @click="reviewPage--; loadTab()">上一页</button><span>第 {{ reviewPage }} 页</span>
+        </tbody></table></div><p v-else class="wb-empty">当前条件下没有可访问的审核记录。</p>
+        <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="reviewPage===1" @click="reviewPage--; loadTab()">上一页</button><span>第 {{ reviewPage }} 页 · 共 {{ reviewsTotal }} 条</span>
           <button class="btn btn--quiet" type="button" :disabled="!reviewHasMore" @click="reviewPage++; loadTab()">下一页</button></div>
       </section>
       <form v-else-if="tab === 'config' && config" class="wb-stack" @submit.prevent="saveConfig">
@@ -492,18 +674,24 @@ function formatDate(value: string | null): string {
         <label class="wb-field"><span>本次变更说明</span><input class="input" v-model="configReason" required maxlength="500" /></label>
         <div><button class="btn btn--primary" type="submit" :disabled="busy">{{ busy ? '保存中…' : '保存学校配置' }}</button></div>
       </form>
+      <section v-else-if="tab === 'config'" class="wb-stack">
+        <p class="wb-empty">{{ error ? '学校配置未能加载，请按上方提示处理后重试。' : '正在读取学校配置…' }}</p>
+        <div><button class="btn btn--quiet" type="button" :disabled="loading || busy" @click="loadTab">重新加载</button></div>
+      </section>
       <section v-else-if="tab === 'jobs'" class="wb-stack"><div class="wb-toolbar"><h2 class="u-title-sub">我的任务</h2><button class="btn btn--primary" type="button" @click="open('job')">创建任务</button></div>
         <p class="wb-note">提醒与批量处理持久保存。同一去重编号的重试复用原任务；执行时重新检查当前权限。</p>
         <div v-if="jobs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>任务</th><th>状态</th><th>已尝试</th><th>结果</th><th>创建时间</th></tr></thead><tbody>
           <tr v-for="row in jobs" :key="row.id"><td>{{ kindText[row.kind] }}</td><td>{{ statusText[row.status] }}</td><td>{{ row.attempts }} / {{ row.max_attempts }}</td>
             <td>{{ row.result?.processed ?? (row.error_code ? '失败记录已保存，请联系管理员核对' : '待执行') }}</td><td>{{ formatDate(row.created_at) }}</td></tr></tbody></table></div>
         <p v-else class="wb-empty">暂无任务。任务创建后会在此显示执行状态。</p>
+        <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="jobPage===1" @click="jobPage--; loadTab()">上一页</button><span>第 {{ jobPage }} 页 · 共 {{ jobTotal }} 条</span>
+          <button class="btn btn--quiet" type="button" :disabled="jobPage*40>=jobTotal" @click="jobPage++; loadTab()">下一页</button></div>
       </section>
       <section v-else-if="tab === 'operations' && operations" class="wb-stack"><section class="wb-section"><h2>运行概况 · 最近 24 小时</h2>
         <dl class="governance__facts"><div><dt>待审核</dt><dd>{{ operations.reviews.pending ?? 0 }}</dd></div><div><dt>待执行任务</dt><dd>{{ (operations.jobs.queued ?? 0)+(operations.jobs.retry ?? 0) }}</dd></div><div><dt>审计待重放</dt><dd>{{ operations.audit_spool_pending }}</dd></div></dl>
         <p v-if="!operations.model_usage.length" class="wb-note">当前时间窗暂无模型调用记录。性能验收需要批准的模型和真实负载。</p>
-        <p v-for="row in operations.model_usage" :key="row.type+row.result">{{ row.type }} · {{ statusText[row.result] }} {{ row.calls }} 次 · 平均 {{ row.mean_seconds.toFixed(2) }} 秒</p>
-        <p v-for="row in operations.alerts" :key="row.action+row.result" class="wb-error">异常活动：{{ row.action }} / {{ statusText[row.result] }} {{ row.count }} 次，可按下方动作筛选追查。</p>
+        <p v-for="row in operations.model_usage" :key="row.type+row.result">{{ modelTypeText[row.type] ?? row.type }} · {{ resultText[row.result] ?? row.result }} {{ row.calls }} 次 · 平均 {{ row.mean_seconds.toFixed(2) }} 秒</p>
+        <p v-for="row in operations.alerts" :key="row.action+row.result" class="wb-error">异常活动：{{ actionText[row.action] ?? row.action }} / {{ resultText[row.result] ?? row.result }} {{ row.count }} 次，可按下方动作筛选追查。</p>
       </section>
         <form class="wb-section wb-stack" @submit.prevent="auditPage=1; loadTab()"><h2>审计查询</h2>
           <p class="wb-note">按动作 / 对象 / 级别 / 结果 / 时间查看本租户审计记录；跨租户检索仅平台系统管理员，填租户编号即可。导出为对账包：台账 CSV + 导出说明（口径 / 条数 / 导出人 / 时区），导出的就是下方这批记录，导出动作同样写入审计。</p>
@@ -515,8 +703,8 @@ function formatDate(value: string | null): string {
           <label class="wb-field"><span>开始时间（北京时间）</span><input class="input" v-model="auditFilters.start_at" type="datetime-local" /></label><label class="wb-field"><span>结束时间（北京时间）</span><input class="input" v-model="auditFilters.end_at" type="datetime-local" /></label>
         </div><div class="wb-actions"><button class="btn btn--primary" type="submit">查询审计记录</button><button class="btn btn--quiet" type="button" @click="resetAuditFilters">清空条件</button><button class="btn btn--quiet" type="button" :disabled="busy || !logs.length" @click="exportAudit">{{ busy ? '导出中…' : '导出当前筛选（对账包）' }}</button></div></form>
         <p v-if="auditScope" class="wb-note">当前口径：{{ auditScope }}。页面与导出用同一批条件；台账按北京时间正序排列，便于按时间轴对账。</p>
-        <div v-if="logs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>用户编号</th><th>动作 / 对象</th><th>结果</th><th>请求编号</th></tr></thead><tbody>
-          <tr v-for="row in logs" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td class="governance__id">{{ row.user_id }}</td><td>{{ row.action }} / {{ row.resource_type }}<small>{{ row.resource_id }}</small></td><td>{{ statusText[row.result] ?? row.result }}</td><td class="governance__id">{{ row.request_id }}</td></tr></tbody></table></div>
+        <div v-if="logs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>操作人</th><th>动作 / 对象</th><th>结果</th><th>请求编号</th></tr></thead><tbody>
+          <tr v-for="row in logs" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td>{{ row.user_name || '—' }}<small class="governance__id">{{ row.user_id }}</small></td><td>{{ actionText[row.action] ?? row.action }} / {{ resourceTypeText[row.resource_type] ?? row.resource_type }}<small>{{ row.resource_id }}</small></td><td>{{ resultText[row.result] ?? row.result }}</td><td class="governance__id">{{ row.request_id }}</td></tr></tbody></table></div>
         <p v-else class="wb-empty">没有符合条件的审计记录。</p><div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="auditPage===1" @click="auditPage--; loadTab()">上一页</button><span>第 {{ auditPage }} 页 · 共 {{ auditTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="auditPage*40>=auditTotal" @click="auditPage++; loadTab()">下一页</button></div>
         <section class="wb-section wb-stack"><h2>运行日志</h2>
           <p class="wb-note">任务执行与定时扫描的经过：每次入队、每次尝试失败（第几次 / 错误类型 / 耗时）、每次完成（处理条数 / 耗时）以及三处定时扫描的结果。失败只记错误类型与状态，不记供应商错误正文；任务类型以任务台账为准，按类型筛时不显示定时扫描（扫描不属于某一条任务，用事件筛可单独看）。</p>
@@ -530,7 +718,7 @@ function formatDate(value: string | null): string {
           <div class="wb-actions"><button class="btn btn--primary" type="button" :disabled="loading" @click="runLogPage=1; loadRunLogs()">查询运行日志</button><button class="btn btn--quiet" type="button" @click="resetRunFilters">清空条件</button></div>
           <p v-if="runLogScope" class="wb-note">当前口径：{{ runLogScope }}。列表最新在前；耗时能区分"秒挂"和"跑到超时"。</p>
           <div v-if="runLogs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>时间</th><th>事件</th><th>任务类型</th><th>结果</th><th>第几次</th><th>耗时</th><th>处理条数</th><th>失败原因</th><th>任务编号</th></tr></thead><tbody>
-            <tr v-for="row in runLogs" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td>{{ row.event_text }}</td><td>{{ row.kind ? (kindText[row.kind] ?? row.kind) : '—' }}</td><td>{{ statusText[row.result] ?? row.result }}</td><td>{{ row.attempt ?? '—' }}</td><td>{{ row.duration_ms === null ? '—' : row.duration_ms + ' 毫秒' }}</td><td>{{ row.processed ?? row.reminder_count ?? '—' }}</td><td>{{ row.error_code ?? '—' }}</td><td class="governance__id">{{ row.resource_id ?? '—' }}</td></tr></tbody></table></div>
+            <tr v-for="row in runLogs" :key="row.id"><td>{{ formatDate(row.created_at) }}</td><td>{{ row.event_text }}</td><td>{{ row.kind ? (kindText[row.kind] ?? row.kind) : '—' }}</td><td>{{ resultText[row.result] ?? row.result }}</td><td>{{ row.attempt ?? '—' }}</td><td>{{ row.duration_ms === null ? '—' : row.duration_ms + ' 毫秒' }}</td><td>{{ row.processed ?? row.reminder_count ?? '—' }}</td><td>{{ row.error_code ?? '—' }}</td><td class="governance__id">{{ row.resource_id ?? '—' }}</td></tr></tbody></table></div>
           <p v-else class="wb-empty">没有符合条件的运行记录。任务入队、执行与定时扫描都会在此留痕。</p>
           <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="runLogPage===1" @click="runLogPage--; loadRunLogs()">上一页</button><span>第 {{ runLogPage }} 页 · 共 {{ runLogTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="runLogPage*40>=runLogTotal" @click="runLogPage++; loadRunLogs()">下一页</button></div>
         </section>
@@ -593,29 +781,34 @@ function formatDate(value: string | null): string {
         <template v-if="['organization','user','tenant'].includes(dialog)">
           <label class="wb-field"><span>名称</span><input class="input" v-model="form.name" required :maxlength="dialog==='user' ? 50 : 100" /></label>
           <template v-if="dialog==='organization'"><label v-if="!editingId" class="wb-field"><span>组织类型</span><select class="select" v-model="form.org_type"><option value="school">学校</option><option value="department">院系</option><option value="branch">支部</option></select></label>
-            <label class="wb-field"><span>上级组织</span><select class="select" v-model="form.parent_id" aria-label="上级组织"><option value="">无上级（学校根组织）</option><option v-for="row in activeOrgs.filter(row=>row.id!==editingId)" :key="row.id" :value="row.id">{{ row.name }}</option></select></label></template>
+            <label v-if="form.org_type!=='school'" class="wb-field"><span>上级组织</span><select class="select" v-model="form.parent_id" aria-label="上级组织" required><option value="">请选择上级组织</option><option v-for="row in orgParentOptions" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
+            <p v-if="form.org_type==='school'" class="wb-note">学校是根组织，没有上级。</p>
+            <p v-if="form.org_type!=='school' && !orgParentOptions.length" class="wb-note">当前租户没有可用的上级组织，请先登记{{ form.org_type==='department' ? '学校' : '学校或院系' }}。</p></template>
           <template v-if="dialog==='user'"><label v-if="!editingId" class="wb-field"><span>登录账号</span><input class="input" v-model="form.username" required minlength="3" maxlength="50" autocomplete="off" /></label>
             <label v-if="!editingId" class="wb-field"><span>初始密码（至少 8 字符）</span><input class="input" v-model="form.password" type="password" required minlength="8" maxlength="72" autocomplete="new-password" /></label>
             <label v-else class="wb-field"><span>重置密码（留空表示不修改）</span><input class="input" v-model="form.password" type="password" minlength="8" maxlength="72" autocomplete="new-password" placeholder="至少 8 字符，保存后立即生效" /></label>
-            <label class="wb-field"><span>授权角色</span><select class="select" v-model="form.role"><option v-for="role in roles" :key="role" :value="role">{{ ROLE_LABELS[role] }}</option></select></label>
+            <label class="wb-field"><span>授权角色</span><select class="select" v-model="form.role"><option v-for="role in assignableRoles" :key="role" :value="role">{{ ROLE_LABELS[role] }}</option></select></label>
             <label class="wb-field"><span>所属组织{{ ROLE_ORG_TYPES[form.role] ? '（须为' + orgTypeText[ROLE_ORG_TYPES[form.role]!] + '）' : '' }}</span><select class="select" v-model="form.org_unit_id"><option value="">待绑定</option><option v-for="row in formOrgs" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
-            <p v-if="!formOrgs.length" class="wb-note">当前租户没有可绑定「{{ ROLE_LABELS[form.role] }}」的组织，请先在组织目录登记对应层级的组织。</p></template>
+            <p v-if="form.role==='system_admin'" class="wb-note">系统管理员是平台级账号，可不绑定学校组织。</p>
+            <p v-else-if="!formOrgs.length" class="wb-note">当前租户没有可绑定「{{ ROLE_LABELS[form.role] }}」的组织，请先在组织目录登记对应层级的组织。</p></template>
           <template v-if="dialog==='tenant' && !editingId"><label class="wb-field"><span>租户类型</span><select class="select" v-model="form.tenant_type"><option value="school">学校</option><option value="department">院系</option><option value="branch">支部</option></select></label>
-            <label class="wb-field"><span>父租户（由租户类型决定，学校只能挂在平台下）</span><select class="select" v-model="form.parent_id" required><option v-for="row in parentTenants" :key="row.id" :value="row.id">{{ row.name }}</option></select></label></template>
+            <label class="wb-field"><span>父租户（学校挂平台，院系挂学校，支部挂院系）</span><select class="select" v-model="form.parent_id" required><option value="" disabled>请选择父租户</option><option v-for="row in parentTenantOptions" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
+            <p v-if="!parentTenantOptions.length" class="wb-note">当前没有符合层级要求的父租户，请先登记上一级租户。</p></template>
           <label v-if="editingId" class="wb-check"><input v-model="form.is_active" type="checkbox" />保持有效（取消将停用）</label>
         </template>
-        <template v-else-if="dialog==='submit'"><label class="wb-field"><span>业务类型</span><select class="select" v-model="form.source_kind"><option v-for="kind in ['score','vote','meeting','study_activity','study_plan','assessment_report','assessment_plan']" :key="kind" :value="kind">{{ kindText[kind] }}</option></select></label>
+        <template v-else-if="dialog==='submit'"><label class="wb-field"><span>业务类型</span><select class="select" v-model="form.source_kind" required><option value="" disabled>请选择业务类型</option><option v-for="row in reviewKindOptions" :key="row.value" :value="row.value">{{ row.label }}</option></select></label>
           <label class="wb-field"><span>{{ form.source_kind==='vote' ? '选优批次编号' : '业务对象编号' }}</span><input class="input" v-model="form.source_id" required maxlength="200" /></label><label class="wb-field"><span>统计年度</span><input class="input" v-model.number="form.year" type="number" min="2000" max="2100" required /></label>
-          <label v-if="form.source_kind==='vote'" class="wb-field"><span>投票轮次</span><input class="input" v-model.number="form.round" type="number" min="1" max="100" required /></label><p class="wb-note">审核材料由系统读取当前授权内容，提交后保留该版本快照。</p></template>
-        <template v-else-if="dialog==='decision' && detail"><p>{{ kindText[detail.source_kind] }} · {{ statusText[detail.effective_status] }} · {{ detail.source_id }}</p>
-          <article class="governance__snapshot">{{ snapshotText || '请核对以下材料和来源。' }}</article>
+          <label v-if="form.source_kind==='vote'" class="wb-field"><span>投票轮次</span><input class="input" v-model.number="form.round" type="number" min="1" max="100" required /></label><p class="wb-note">审核材料由系统读取当前授权内容，提交后保留该版本快照。只列出当前角色有审核权限的业务类型。</p></template>
+        <template v-else-if="dialog==='decision' && detail"><p>{{ kindText[detail.source_kind] ?? detail.source_kind }} · {{ statusText[detail.effective_status] ?? detail.effective_status }} · {{ detail.source_id }}</p>
+          <dl v-if="summaryRows.length" class="governance__summary"><div v-for="(row, index) in summaryRows" :key="index"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div></dl>
+          <article v-else class="governance__snapshot">请核对以下材料和来源。</article>
           <details><summary>完整材料与依据</summary><pre class="governance__snapshot">{{ JSON.stringify(detail.snapshot,null,2) }}</pre></details>
           <p v-if="detail.stale" class="wb-error">源内容已变化，当前快照不能继续审核，请重新提交。</p>
           <p v-if="detail.submitted_by===session.state.user?.id" class="wb-note">你是此版本提交人，须由另一位授权人员审核。</p>
           <p v-if="detail.opinion">既有意见：{{ detail.opinion }}</p>
-          <template v-if="detail.status==='pending' && !detail.stale && detail.submitted_by!==session.state.user?.id"><label class="wb-field"><span>人工结论</span><select class="select" v-model="form.decision"><option value="approved">通过</option><option value="returned">退回补充</option></select></label><label class="wb-field"><span>审核意见</span><textarea class="textarea" v-model="form.opinion" required rows="4" maxlength="2000" /></label></template>
+          <template v-if="detail.status==='pending' && !detail.stale && detail.submitted_by!==session.state.user?.id"><label class="wb-field"><span>人工结论</span><select class="select" v-model="form.decision" required><option value="" disabled>请选择结论</option><option value="approved">通过</option><option value="returned">退回补充</option></select></label><label class="wb-field"><span>审核意见</span><textarea class="textarea" v-model="form.opinion" required rows="4" maxlength="2000" /></label></template>
         </template>
-        <template v-else-if="dialog==='job'"><label class="wb-field"><span>任务类型</span><select class="select" v-model="form.kind"><option value="member_reminders">发展党员提醒扫描</option><option value="assessment_reminders">考核提醒扫描</option><option value="embedding">文档批量向量化</option></select></label><label class="wb-field"><span>去重编号</span><input class="input" v-model="form.dedup_key" required maxlength="160" /></label>
+        <template v-else-if="dialog==='job'"><label class="wb-field"><span>任务类型</span><select class="select" v-model="form.kind" required><option value="" disabled>请选择任务类型</option><option v-for="row in jobKindOptions" :key="row.value" :value="row.value">{{ row.label }}</option></select></label><label class="wb-field"><span>去重编号</span><input class="input" v-model="form.dedup_key" required maxlength="160" /></label>
           <label v-if="form.kind==='embedding'" class="wb-field"><span>文档内部编号（每行一个，最多 50 个）</span><textarea class="textarea" v-model="form.document_ids" required rows="4" /></label></template>
         <template v-else-if="dialog==='archive'"><p class="wb-note">只有学校授权人员完成正式确认后，才启用电子归档。未确认时保持关闭。</p><label class="wb-check"><input v-model="form.enabled" type="checkbox" />学校已确认电子记录效力</label><label class="wb-field"><span>学校确认或撤销依据</span><textarea class="textarea" v-model="form.evidence" required maxlength="2000" rows="4" /></label></template>
         <div class="wb-actions"><button v-if="dialog!=='decision' || (detail?.status==='pending' && !detail.stale && detail.submitted_by!==session.state.user?.id)" class="btn btn--primary" type="submit" :disabled="busy">{{ busy ? '保存中…' : dialog==='decision' ? '保存人工结论' : '保存' }}</button>
@@ -640,6 +833,10 @@ function formatDate(value: string | null): string {
 /* 版本变更单元格：同一次配置提交可能同时改了多个提示词，逐条成行显示 */
 .governance__change { display:block; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .governance__snapshot { white-space:pre-wrap; overflow-wrap:anywhere; max-height:400px; overflow:auto; padding:var(--space-4); border:var(--border); border-radius:var(--radius-sm); font-size:var(--text-sm); }
+.governance__summary { display:grid; gap:var(--space-3); padding:var(--space-4); border:var(--border); border-radius:var(--radius-sm); background:var(--paper-raised); }
+.governance__summary div { display:grid; grid-template-columns:minmax(6em, 9em) minmax(0, 1fr); gap:var(--space-3); }
+.governance__summary dt { color:var(--ink-soft); font-size:var(--text-sm); }
+.governance__summary dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--text-sm); }
 small { display:block; color:var(--ink-soft); overflow-wrap:anywhere; }
 details summary { cursor:pointer; margin-bottom:var(--space-3); }
 </style>

@@ -447,15 +447,20 @@ async def jobs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict[str, Any]]:
-    stmt = select(DurableJob).where(
+    conditions = (
         DurableJob.tenant_id == str(user.tenant_id),
         DurableJob.actor_id == str(user.id),
         DurableJob.is_deleted.is_(False),
     )
+    total = (
+        await db.execute(select(func.count()).select_from(DurableJob).where(*conditions))
+    ).scalar_one()
     rows = (
         (
             await db.execute(
-                stmt.order_by(DurableJob.created_at.desc(), DurableJob.id)
+                select(DurableJob)
+                .where(*conditions)
+                .order_by(DurableJob.created_at.desc(), DurableJob.id)
                 .offset((page - 1) * 40)
                 .limit(40)
             )
@@ -463,7 +468,9 @@ async def jobs(
         .scalars()
         .all()
     )
-    return response(request, {"items": [job_view(row) for row in rows], "page": page})
+    return response(
+        request, {"items": [job_view(row) for row in rows], "page": page, "total": total}
+    )
 
 
 @router.get("/admin/run-logs")

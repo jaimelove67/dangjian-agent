@@ -91,7 +91,7 @@ async function page(width=1440, readonly=false) {
       snapshot:stale?null:review.snapshot}
     else if (path==='/admin/reviews/review/decision') data={...review,status:body.decision,
       effective_status:body.decision,opinion:body.opinion}
-    else if (path==='/admin/jobs' && method==='GET') data={items:[]}
+    else if (path==='/admin/jobs' && method==='GET') data={items:[],page:1,total:0}
     else if (path==='/admin/jobs' && method==='POST') data={id:'job',...body,status:'queued'}
     else if (path==='/admin/operations') data={jobs:{queued:1},reviews:{pending:1},model_usage:[],
       alerts:[{action:'query',result:'denied',count:5,window_hours:24}],audit_spool_pending:0}
@@ -147,6 +147,7 @@ try {
   checks.push('审核分页按服务端has_more终止')
   await tab.getByRole('button',{name:'查看材料',exact:true}).click()
   await tab.getByLabel('审核意见', {exact:true}).fill('已核对界面验收材料。')
+  await tab.getByLabel('人工结论', {exact:true}).selectOption('approved')
   await tab.getByRole('button',{name:'保存人工结论',exact:true}).click()
   assert.equal(mutations.at(-1).body.source_version,'a'.repeat(64))
   assert.equal(mutations.at(-1).body.decision,'approved')
