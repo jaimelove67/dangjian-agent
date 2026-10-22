@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, List, Optional
 
@@ -136,6 +137,17 @@ class MemberCreateRequest(BaseModel):
     @classmethod
     def trim_name(cls, value: Any) -> Any:
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("id_card_no")
+    @classmethod
+    def check_id_card(cls, value: Optional[str]) -> Optional[str]:
+        """身份证号即登录账号，格式必须能用来登录：18 位，末位可为 X。"""
+        if not value:
+            return None
+        text = value.strip().upper()
+        if not re.fullmatch(r"\d{17}[\dX]", text):
+            raise ValueError("身份证号须为 18 位，末位可为 X")
+        return text
 
     @field_validator("stage_joined_on")
     @classmethod

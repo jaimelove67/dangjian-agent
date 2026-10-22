@@ -47,7 +47,12 @@ const STAGE_LABELS: Record<string, string> = {
 // 反过来把积极分子当党员会放宽知识库可见范围，属于提权，不能默认。
 const APPLICANT_STAGES = ['applicant', 'activist', 'candidate']
 // 档案已有身份证号时，登录账号就用它：学校习惯这么登录，也免去手敲 18 位。
+const ID_CARD_PATTERN = /^\d{17}[\dXx]$/
 const usernameLocked = computed(() => Boolean(selectedMember.value?.id_card_masked))
+// 登录账号统一用身份证号：档案缺号时先补录，别在这里编一个用户名。
+const memberMissingIdCard = computed(() =>
+  Boolean(selectedMember.value) && !usernameLocked.value,
+)
 watch(selectedMember, (member) => {
   form.username = ''
   if (!member) return
@@ -72,11 +77,9 @@ const passwordValid = computed(() =>
   new TextEncoder().encode(form.password).length <= 72,
 )
 const passwordsMismatch = computed(() => !!form.confirm_password && form.password !== form.confirm_password)
-const usernameOk = computed(() =>
-  usernameLocked.value || (!!form.username.trim() && !/\s/u.test(form.username.trim())),
-)
+const usernameOk = computed(() => usernameLocked.value || ID_CARD_PATTERN.test(form.username.trim()))
 const valid = computed(() =>
-  usernameOk.value && !!form.name.trim() &&
+  usernameOk.value && !memberMissingIdCard.value && !!form.name.trim() &&
   availableOrganizations.value.some((org) => org.id === form.org_unit_id) &&
   passwordValid.value && form.password === form.confirm_password,
 )
@@ -186,7 +189,7 @@ async function submit(): Promise<void> {
           <select id="account-member" v-model="selectedMemberId" class="select">
             <option value="">手动填写新人员</option>
             <option v-for="m in members" :key="m.id" :value="m.id">
-              {{ m.name }} · {{ m.org_name }} · {{ STAGE_LABELS[m.current_stage] ?? m.current_stage }}
+              {{ m.name }} · {{ m.org_name }} · {{ STAGE_LABELS[m.current_stage] ?? m.current_stage }}{{ m.id_card_masked ? '' : '（缺身份证，暂不可开户）' }}
             </option>
           </select>
           <p class="field__hint">
@@ -199,12 +202,16 @@ async function submit(): Promise<void> {
         <fieldset class="form-grid" :disabled="creating">
           <legend class="u-sr">新账号信息</legend>
           <div class="field">
-            <label for="account-username" class="field__label">登录账号{{ usernameLocked ? '（身份证号）' : '' }}</label>
-            <input id="account-username" v-model="form.username" class="input" maxlength="50" autocomplete="off" :required="!usernameLocked" :disabled="usernameLocked" :placeholder="usernameLocked ? (selectedMember?.id_card_masked ?? '') : ''" aria-describedby="username-hint" />
+            <label for="account-username" class="field__label">登录账号（身份证号）</label>
+            <input id="account-username" v-model="form.username" class="input" maxlength="18" autocomplete="off" :required="!usernameLocked" :disabled="usernameLocked" :placeholder="usernameLocked ? (selectedMember?.id_card_masked ?? '') : '18 位身份证号'" :aria-invalid="!usernameLocked && !!form.username && !usernameOk" aria-describedby="username-hint" />
             <p v-if="usernameLocked" id="username-hint" class="field__hint">
               使用档案身份证号登录（{{ selectedMember?.id_card_masked }}），完整号码不出网，登录时输入完整 18 位即可。
             </p>
-            <p v-else id="username-hint" class="field__hint">最多 50 个字符，不能包含空白；用于登录。</p>
+            <p v-else-if="memberMissingIdCard" id="username-hint" class="field__error" role="alert">
+              该人员档案没有身份证号，无法开户。请先到<RouterLink to="/members">党员发展</RouterLink>补录身份证号。
+            </p>
+            <p v-else-if="form.username && !usernameOk" id="username-hint" class="field__error" role="alert">请填写完整的 18 位身份证号，末位可为 X。</p>
+            <p v-else id="username-hint" class="field__hint">18 位，末位可为 X；这就是登录账号。</p>
           </div>
           <div class="field">
             <label for="account-name" class="field__label">姓名</label>

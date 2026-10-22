@@ -88,7 +88,13 @@ const registration = reactive({
   name: '', id_card_no: '', org_unit_id: '', current_stage: 'applicant' as MemberStage,
   stage_joined_on: '', materials: '', pending: 0,
 })
-const registrationValid = computed(() => registration.name.trim().length > 0 && registration.org_unit_id.length > 0)
+// 身份证号是开户时的登录账号来源，登记时必须给全，避免建号时才发现缺字段。
+const ID_CARD_PATTERN = /^\d{17}[\dXx]$/
+const idCardValid = computed(() => ID_CARD_PATTERN.test(registration.id_card_no.trim()))
+const idCardTouched = ref(false)
+const registrationValid = computed(() =>
+  registration.name.trim().length > 0 && idCardValid.value && registration.org_unit_id.length > 0,
+)
 
 /** 校验用输入，跟随选中成员初始化，允许人工调整 */
 const form = reactive({
@@ -516,8 +522,9 @@ const todoTone: Record<TodoItem['category'], string> = {
           <div class="field"><label for="new-name" class="field__label">姓名</label><input id="new-name" v-model="registration.name" class="input" maxlength="50" required /></div>
           <div class="field">
             <label for="new-id-card" class="field__label">身份证号</label>
-            <input id="new-id-card" v-model="registration.id_card_no" class="input" maxlength="32" autocomplete="off" aria-describedby="new-id-card-hint" />
-            <p id="new-id-card-hint" class="field__hint">填写后开户时可直接用身份证号作登录账号；列表与审计只显示脱敏值。</p>
+            <input id="new-id-card" v-model="registration.id_card_no" class="input" maxlength="18" required autocomplete="off" :aria-invalid="idCardTouched && !idCardValid" aria-describedby="new-id-card-hint" @blur="idCardTouched = true" />
+            <p id="new-id-card-hint" class="field__hint">18 位，末位可为 X。开户时直接作为登录账号；列表与审计只显示脱敏值。</p>
+            <p v-if="idCardTouched && !idCardValid" class="field__error" role="alert">请填写完整的 18 位身份证号。</p>
           </div>
           <div class="field">
             <label for="new-org" class="field__label">所属组织</label>
