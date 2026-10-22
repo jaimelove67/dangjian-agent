@@ -19,6 +19,7 @@
 - 名册登记表单（`MembersView`）身份证号**必填**且按 18 位校验（`MemberCreateRequest.check_id_card`，末位 X 统一大写）；开户页登录账号也按 18 位校验，档案缺号时禁用提交并提示去补录（5679e56）。
 - **档案补录身份证（2026-10-22 已上线）**：`ProfileUpdate` 已含可选 `id_card_no`（18 位、空串 422、同租户档案唯一 + 不撞账号登录名，冲突 409）；前端两处入口——`MemberFilePanel`「补录/更正身份证号」、`AccountsView` 缺号时就地补录。补录**不改**已开户账号的登录名（`UserUpdate` 无 username 字段）。档案读接口统一走 `member_full.profile_payload()`：`id_card_no` → `id_card_masked`，版本快照同样脱敏（此前详情接口与审计是**明文**）。
 - `audit_logs` 对 422 只记 route/method/status/duration，不记错误正文。
+- **扫描归档（2026-10-22 已上线，迁移 025）**：干事在档案面板「扫描件归档」上传 PDF/PNG/JPG，走 `POST /member-full/profiles/{id}/materials/scan`。**影像件不存库**：落 `<FILE_STORAGE_DIR>/<租户>/archives/<material_id>__h<sha>.bin`（加密、内容寻址），库里只存 `file_path` + sha + 大小；`member_materials` 新增 `extracted_text`(deferred) / `ocr_status` / `ocr_pages`。识别复用 `ocr_service`：文字层优先，`cloud_ocr` 未勾选只存影像（skipped），**敏感/涉密材料按 `cloud_allowed()` 拒绝出网**，失败只标 failed 不丢原件。识别文本出口 `GET /member-full/materials/{id}/text` 过 `mask_text`（身份证/手机号脱敏）。下载走 `read_member_archive`，与本人自传件同一出口（`_download` 兼容 content 与 file_path）。
 
 ## 前端（frontend/）
 
