@@ -132,11 +132,11 @@ async def seed(tenant: str, org_unit_id: str) -> None:
                         id=str(uuid.uuid4()),
                         tenant_id=tenant,
                         org_unit_id=org_unit_id,
-                        **{**item, "name": "合成" + item["name"], "org_name": org.name},
+                        **{**item, "org_name": org.name},
                     )
                 )
             await db.commit()
-            print(f"[ok] 已导入 {len(_SEED)} 名合成培养对象 -> tenant={tenant}")
+            print(f"[ok] 已导入 {len(_SEED)} 名演示培养对象 -> tenant={tenant}")
 
 
 def main() -> None:

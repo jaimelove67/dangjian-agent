@@ -15,6 +15,7 @@ from app.api.audit import audit_operation
 from app.core.audit import ANONYMOUS_TENANT, AuditQuery, audit_view
 from app.core.config import tenant_config
 from app.core.constants import DataLevel
+from app.core.desensitization import mask_id_card
 from app.core.security import Permission, hash_password
 from app.core.tenant import bypass_tenant_filter
 from app.core.timeutil import as_utc_naive
@@ -118,6 +119,7 @@ async def member_candidates(
                 org_name=row.org_name,
                 org_unit_id=str(row.org_unit_id) if row.org_unit_id else None,
                 current_stage=row.current_stage,
+                id_card_masked=mask_id_card(row.id_card_no) if row.id_card_no else None,
             )
             for row in rows
         ],
@@ -187,9 +189,19 @@ async def create_account(
         if expected_types and organization.org_type not in expected_types:
             raise HTTPException(status_code=422, detail="所选角色与组织类型不匹配")
 
+        # 登录账号优先取档案身份证号：学校习惯用身份证登录，也省掉手敲 18 位的错误。
+        username = (
+            profile.id_card_no
+            if profile is not None and profile.id_card_no
+            else (body.username or "")
+        )
+        if not username:
+            raise HTTPException(
+                status_code=422, detail="请填写登录账号，或选择已登记身份证号的党员档案"
+            )
         existing = (
             await db.execute(
-                select(User.id).where(User.tenant_id == target, User.username == body.username)
+                select(User.id).where(User.tenant_id == target, User.username == username)
             )
         ).scalar_one_or_none()
     if existing is not None:
@@ -197,7 +209,7 @@ async def create_account(
 
     account = User(
         tenant_id=target,
-        username=body.username,
+        username=username,
         name=profile.name if profile is not None else body.name,
         password_hash=await run_in_threadpool(hash_password, body.password.get_secret_value()),
         role=body.role,

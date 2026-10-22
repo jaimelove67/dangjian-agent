@@ -13,7 +13,8 @@ class AccountCreateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    username: str = Field(..., min_length=1, max_length=50, pattern=r"^\S+$")
+    # 选名册开户且档案已有身份证号时可省略：服务端直接用身份证号作登录账号。
+    username: str | None = Field(None, min_length=1, max_length=50, pattern=r"^\S+$")
     name: str = Field(..., min_length=1, max_length=50)
     password: SecretStr = Field(..., min_length=8, max_length=72)
     role: UserRole
@@ -52,13 +53,17 @@ class AccountOrgOption(BaseModel):
 
 
 class AccountMemberOption(BaseModel):
-    """尚未绑定登录账号的党员档案，作为开户时的人员候选。"""
+    """尚未绑定登录账号的党员档案，作为开户时的人员候选。
+
+    身份证号只回脱敏值，完整号留在服务端用于生成登录账号，不出网。
+    """
 
     id: str
     name: str
     org_name: str
     org_unit_id: str | None
     current_stage: str
+    id_card_masked: str | None = None
 
 
 class AccountCreated(UserInfo):

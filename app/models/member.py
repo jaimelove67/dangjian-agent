@@ -33,6 +33,8 @@ class MemberProfile(Base):
     )
 
     name: Mapped[str] = mapped_column(String(50), nullable=False)
+    # 身份证号：学校用它做登录账号，故存明文可读；对外展示一律经 mask_id_card 脱敏。
+    id_card_no: Mapped[str | None] = mapped_column(String(32), nullable=True)
     user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     org_name: Mapped[str] = mapped_column(String(200), nullable=False)
     org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

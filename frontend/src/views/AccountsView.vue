@@ -46,7 +46,10 @@ const STAGE_LABELS: Record<string, string> = {
 // 预备党员与正式党员同等授权——系统没有表决类权限点，二者能力差异只存在于流程。
 // 反过来把积极分子当党员会放宽知识库可见范围，属于提权，不能默认。
 const APPLICANT_STAGES = ['applicant', 'activist', 'candidate']
+// 档案已有身份证号时，登录账号就用它：学校习惯这么登录，也免去手敲 18 位。
+const usernameLocked = computed(() => Boolean(selectedMember.value?.id_card_masked))
 watch(selectedMember, (member) => {
+  form.username = ''
   if (!member) return
   form.name = member.name
   if (member.org_unit_id) form.org_unit_id = member.org_unit_id
@@ -69,8 +72,11 @@ const passwordValid = computed(() =>
   new TextEncoder().encode(form.password).length <= 72,
 )
 const passwordsMismatch = computed(() => !!form.confirm_password && form.password !== form.confirm_password)
+const usernameOk = computed(() =>
+  usernameLocked.value || (!!form.username.trim() && !/\s/u.test(form.username.trim())),
+)
 const valid = computed(() =>
-  !!form.username.trim() && !/\s/u.test(form.username.trim()) && !!form.name.trim() &&
+  usernameOk.value && !!form.name.trim() &&
   availableOrganizations.value.some((org) => org.id === form.org_unit_id) &&
   passwordValid.value && form.password === form.confirm_password,
 )
@@ -126,7 +132,8 @@ async function submit(): Promise<void> {
   try {
     createdLinked.value = Boolean(selectedMemberId.value)
     created.value = await createAccount({
-      username: form.username.trim(), name: form.name.trim(), role: form.role,
+      ...(usernameLocked.value ? {} : { username: form.username.trim() }),
+      name: form.name.trim(), role: form.role,
       org_unit_id: form.org_unit_id, password: form.password,
       ...(selectedMemberId.value ? { member_id: selectedMemberId.value } : {}),
     }, activeTenant.value || undefined)
@@ -192,9 +199,12 @@ async function submit(): Promise<void> {
         <fieldset class="form-grid" :disabled="creating">
           <legend class="u-sr">新账号信息</legend>
           <div class="field">
-            <label for="account-username" class="field__label">用户名</label>
-            <input id="account-username" v-model="form.username" class="input" maxlength="50" autocomplete="off" required aria-describedby="username-hint" />
-            <p id="username-hint" class="field__hint">最多 50 个字符，不能包含空白；用于登录。</p>
+            <label for="account-username" class="field__label">登录账号{{ usernameLocked ? '（身份证号）' : '' }}</label>
+            <input id="account-username" v-model="form.username" class="input" maxlength="50" autocomplete="off" :required="!usernameLocked" :disabled="usernameLocked" :placeholder="usernameLocked ? (selectedMember?.id_card_masked ?? '') : ''" aria-describedby="username-hint" />
+            <p v-if="usernameLocked" id="username-hint" class="field__hint">
+              使用档案身份证号登录（{{ selectedMember?.id_card_masked }}），完整号码不出网，登录时输入完整 18 位即可。
+            </p>
+            <p v-else id="username-hint" class="field__hint">最多 50 个字符，不能包含空白；用于登录。</p>
           </div>
           <div class="field">
             <label for="account-name" class="field__label">姓名</label>

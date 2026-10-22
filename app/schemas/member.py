@@ -122,6 +122,8 @@ class MemberRosterResponse(BaseModel):
 
 class MemberCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=50)
+    # 身份证号：开户时用作登录账号；历史档案可为空，不强制补录。
+    id_card_no: Optional[str] = Field(None, max_length=32)
     org_unit_id: Optional[str] = Field(None, min_length=1, max_length=36)
     # 兼容协作者请求；真实组织名称始终由数据库中的组织单元生成。
     org_name: Optional[str] = Field(None, max_length=200)

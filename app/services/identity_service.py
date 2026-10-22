@@ -1,5 +1,6 @@
 """租户和身份管理。平台管理员跨校授权必须由真实平台租户验证。"""
 
+import re
 import uuid
 from typing import Any
 
@@ -7,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.desensitization import mask_id_card
 from app.core.security import hash_password
 from app.core.tenant import bypass_tenant_filter
 from app.models.org import OrgUnit
@@ -27,13 +29,25 @@ ROLE_ORG_TYPES: dict[UserRole, set[str]] = {
 }
 
 
+_ID_CARD_PATTERN = re.compile(r"^\d{17}[\dXx]$")
+
+
+def masked_username(value: str) -> str:
+    """登录名是身份证号时按 6+4 脱敏；其余账号（工号、英文名）原样返回。"""
+    return mask_id_card(value) if _ID_CARD_PATTERN.fullmatch(value) else value
+
+
 def public_record(row: Any) -> dict[str, Any]:
     fields = {
         Tenant: ("id", "name", "tenant_type", "parent_id", "is_active", "config_version"),
         OrgUnit: ("id", "name", "org_type", "parent_id", "is_active", "path"),
         User: ("id", "username", "name", "role", "org_unit_id", "is_active"),
     }[type(row)]
-    return {key: getattr(row, key) for key in fields}
+    data = {key: getattr(row, key) for key in fields}
+    # 身份证号不出网：列表、审计、编辑回显统一用脱敏值，登录匹配仍用库里完整号。
+    if isinstance(row, User) and data.get("username"):
+        data["username"] = masked_username(str(data["username"]))
+    return data
 
 
 async def is_platform_admin(db: AsyncSession, user: User) -> bool:

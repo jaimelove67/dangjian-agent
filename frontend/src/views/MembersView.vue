@@ -85,7 +85,7 @@ const organizationsLoading = ref(false)
 const organizationsError = ref<unknown>(null)
 const canCreate = computed(() => session.can('member.stage_transition'))
 const registration = reactive({
-  name: '', org_unit_id: '', current_stage: 'applicant' as MemberStage,
+  name: '', id_card_no: '', org_unit_id: '', current_stage: 'applicant' as MemberStage,
   stage_joined_on: '', materials: '', pending: 0,
 })
 const registrationValid = computed(() => registration.name.trim().length > 0 && registration.org_unit_id.length > 0)
@@ -255,13 +255,14 @@ async function registerMember(): Promise<void> {
   createSuccess.value = ''
   try {
     const created = await createMember({
-      name: registration.name.trim(), org_unit_id: registration.org_unit_id,
+      name: registration.name.trim(), id_card_no: registration.id_card_no.trim() || undefined,
+      org_unit_id: registration.org_unit_id,
       current_stage: registration.current_stage, stage_joined_on: registration.stage_joined_on || undefined,
       materials: registration.materials.split('\n').map((name) => name.trim()).filter(Boolean),
       pending: registration.pending,
     })
     createSuccess.value = `已登记：${created.name}。规则分析仅提供建议，阶段变更仍须人工确认。`
-    Object.assign(registration, { name: '', current_stage: 'applicant', stage_joined_on: '', materials: '', pending: 0 })
+    Object.assign(registration, { name: '', id_card_no: '', current_stage: 'applicant', stage_joined_on: '', materials: '', pending: 0 })
     createOpen.value = false
     selectedId.value = created.id
     page.value = 1
@@ -513,6 +514,11 @@ const todoTone: Record<TodoItem['category'], string> = {
       <form class="registration__body" @submit.prevent="registerMember">
         <div class="form-grid">
           <div class="field"><label for="new-name" class="field__label">姓名</label><input id="new-name" v-model="registration.name" class="input" maxlength="50" required /></div>
+          <div class="field">
+            <label for="new-id-card" class="field__label">身份证号</label>
+            <input id="new-id-card" v-model="registration.id_card_no" class="input" maxlength="32" autocomplete="off" aria-describedby="new-id-card-hint" />
+            <p id="new-id-card-hint" class="field__hint">填写后开户时可直接用身份证号作登录账号；列表与审计只显示脱敏值。</p>
+          </div>
           <div class="field">
             <label for="new-org" class="field__label">所属组织</label>
             <select id="new-org" v-model="registration.org_unit_id" class="select" :disabled="organizationsLoading" required>

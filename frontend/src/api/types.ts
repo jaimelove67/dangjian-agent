@@ -92,7 +92,8 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 
 /** app/schemas/admin.py —— 账号归属由系统管理员登录态确定。 */
 export interface AccountCreateRequest {
-  username: string
+  /** 选了带身份证号的档案时可省略：服务端直接用身份证号作登录账号 */
+  username?: string
   name: string
   password: string
   role: UserRole
@@ -114,6 +115,8 @@ export interface AccountMemberOption {
   org_name: string
   org_unit_id: string | null
   current_stage: string
+  /** 身份证号脱敏值；非空表示可直接用身份证号开户 */
+  id_card_masked: string | null
 }
 
 export interface AccountCreated extends UserInfo {
@@ -590,6 +593,8 @@ export interface MemberRosterResponse {
 
 export interface MemberCreateRequest {
   name: string
+  /** 身份证号：开户时可直接作为登录账号 */
+  id_card_no?: string
   org_unit_id?: string
   current_stage: MemberStage
   stage_joined_on?: string

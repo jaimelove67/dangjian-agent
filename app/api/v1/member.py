@@ -236,6 +236,7 @@ async def create_member(
     profile = MemberProfile(
         tenant_id=str(user.tenant_id),
         name=body.name,
+        id_card_no=body.id_card_no or None,
         org_unit_id=str(organization.id),
         org_name=organization.name,
         current_stage=body.current_stage.value,
