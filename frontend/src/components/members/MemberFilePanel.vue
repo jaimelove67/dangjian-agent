@@ -83,6 +83,22 @@ const scanReady = computed(
 // 识别文本按材料缓存：同一份材料反复展开不重复请求
 const texts = reactive<Record<string, MaterialText | 'loading'>>({})
 const fileBusy = ref('')
+
+/** 抽取建议的一句话摘要：材料类型 · 落款日期 · 所属人 · 出具单位 */
+function suggestionText(item: MemberMaterial): string {
+  const fields = item.extracted_fields
+  if (!fields) return ''
+  return [fields.material_type, fields.doc_date, fields.subject_name, fields.issuer]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** 系统认出的材料类型与归档人选的类型不一致时提示核对（不自动改选） */
+function suggestionMismatch(item: MemberMaterial): string {
+  const suggestion = item.extracted_fields?.material_type
+  return suggestion && suggestion !== item.material_type ? suggestion : ''
+}
+
 const reviewing = ref<MemberMaterial | null>(null)
 const review = reactive({
   review_status: 'approved' as 'approved' | 'rejected',
@@ -229,7 +245,11 @@ async function submitScan(): Promise<void> {
     scan.cloud_ocr = false
     await load()
     emit('updated')
-    message.value = '扫描件已归档。材料状态为待核验，是否通过仍须人工审核。'
+    const suggestion = created.extracted_fields?.material_type
+    message.value =
+      suggestion && suggestion !== created.material_type
+        ? `扫描件已归档。系统建议这份材料是「${suggestion}」，与所选「${created.material_type}」不一致，请核对。`
+        : '扫描件已归档。材料状态为待核验，是否通过仍须人工审核。'
   } catch (err) {
     scan.error = err
   } finally {
@@ -568,6 +588,12 @@ async function archiveCheck(): Promise<void> {
                       : '未识别文字，仅影像件可用'
                 }}
               </p>
+              <p v-if="suggestionText(item)" class="u-meta">
+                系统建议：{{ suggestionText(item) }}
+                <span v-if="suggestionMismatch(item)" class="badge badge--warn"
+                  >与所选类型「{{ item.material_type }}」不一致，请核对</span
+                >
+              </p>
               <div v-if="item.has_file && item.id" class="wb-actions">
                 <button
                   class="btn btn--ghost btn--sm"
@@ -590,6 +616,14 @@ async function archiveCheck(): Promise<void> {
                 <p v-if="texts[item.id] === 'loading'" class="u-meta">正在读取识别文本…</p>
                 <template v-else>
                   <p class="wb-note">{{ (texts[item.id] as MaterialText).note }}</p>
+                  <ul
+                    v-if="(texts[item.id] as MaterialText).fields?.key_points?.length"
+                    class="u-meta"
+                  >
+                    <li v-for="(point, i) in (texts[item.id] as MaterialText).fields.key_points" :key="i">
+                      {{ point }}
+                    </li>
+                  </ul>
                   <pre class="scan-text">{{ (texts[item.id] as MaterialText).text || '（没有识别出文字）' }}</pre>
                 </template>
               </div>

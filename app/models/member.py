@@ -109,6 +109,9 @@ class MemberMaterial(Base):
     # none（无文件的纯登记）/ done / skipped（未开启识别或未同意出网）/ failed
     ocr_status: Mapped[str] = mapped_column(String(20), nullable=False, default="none")
     ocr_pages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 结构化抽取建议值（材料类型/所属人/落款日期/出具单位/要点）：只是核对辅助，
+    # 不写台账字段——材料类型仍由归档人选定，模型判断不能直接变成组织记录。
+    extracted_fields: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class MemberStageHistory(Base):

@@ -14,14 +14,125 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
+from typing import Any
 
+from app.llm.base import DataLevel, TaskType
+from app.llm.service import get_model_service
 from app.rag.loader import IMAGE_EXTENSIONS, default_registry
 from app.services.ocr_service import normalize_ocr_text, ocr_enabled, ocr_image_file, ocr_pdf
 
 logger = logging.getLogger(__name__)
+
+#: 卷内目录：与前端 ARCHIVE_MATERIAL_TYPES 是同一份清单（改一处必须改另一处）
+ARCHIVE_MATERIAL_TYPES: tuple[str, ...] = (
+    "入党申请书",
+    "党组织谈话记录",
+    "思想汇报",
+    "培养考察记录",
+    "群众评议材料",
+    "党课培训证明",
+    "政治审查材料",
+    "公示情况报告",
+    "支部大会决议",
+    "上级审批意见",
+    "转正申请书",
+    "预备期考察记录",
+)
+
+#: 送进抽取模型的最大字数：超长材料前 8 千字通常已含抬头与落款
+MAX_EXTRACT_CHARS = 8000
+
+EXTRACT_PROMPT = """你是党员档案登记助手。下面是一份档案材料的识别文本，可能有识别误差。
+只抽取文本中**明确写出**的信息；找不到就留空，禁止推断、补全或编造。
+material_type 只能从给定选项里选一个最匹配的，无法判断就留空。
+
+可选类型：{options}
+
+只输出 JSON，不要任何解释、不要代码块标记：
+{{"material_type": "", "subject_name": "", "doc_date": "YYYY-MM-DD 或空", "issuer": "", "key_points": ["最多3条，原文摘录"]}}
+
+识别文本：
+<<<
+{text}
+>>>"""
+
+
+def _loads_json(raw: str) -> dict[str, Any]:
+    """模型输出可能带代码块或前后废话，只取第一个完整对象。"""
+    text = (raw or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _squash(value: Any, limit: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())[:limit]
+
+
+def clean_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """收敛抽取结果：类型必须在卷内目录内，日期须合法且不在未来，要点最多 3 条。"""
+    material_type = _squash(data.get("material_type"), 50)
+    if material_type not in ARCHIVE_MATERIAL_TYPES:
+        material_type = ""
+
+    doc_date = ""
+    raw_date = _squash(data.get("doc_date"), 20).replace("/", "-").replace(".", "-")
+    if raw_date:
+        try:
+            parsed = date.fromisoformat(raw_date)
+        except ValueError:
+            parsed = None
+        # 晚于今天的"落款日期"多半是识别错位，宁可不给也不误导核对人
+        if parsed and date(1900, 1, 1) <= parsed <= date.today():
+            doc_date = parsed.isoformat()
+
+    points: list[str] = []
+    for item in (data.get("key_points") or [])[:3]:
+        text = _squash(item, 100)
+        if text:
+            points.append(text)
+
+    return {
+        "material_type": material_type,
+        "subject_name": _squash(data.get("subject_name"), 50),
+        "doc_date": doc_date,
+        "issuer": _squash(data.get("issuer"), 100),
+        "key_points": points,
+    }
+
+
+async def extract_material_fields(text: str, *, context: dict | None = None) -> dict[str, Any]:
+    """从识别文本里抽建议值；任何失败都返回空对象，不影响归档。"""
+    body = (text or "").strip()
+    if not body:
+        return {}
+    prompt = EXTRACT_PROMPT.format(
+        options="、".join(ARCHIVE_MATERIAL_TYPES), text=body[:MAX_EXTRACT_CHARS]
+    )
+    try:
+        response = await get_model_service().generate(
+            prompt,
+            data_level=DataLevel.INTERNAL,
+            task_type=TaskType.EXTRACT,
+            context={"scene": "member_archive_extract", **(context or {})},
+        )
+    except Exception as exc:  # 模型不可用、闸门拦截都不该让归档失败
+        logger.warning("档案字段抽取失败：%s", exc)
+        return {}
+    return clean_fields(_loads_json(getattr(response, "content", "")))
+
 
 #: 扫描仪与手机常见的输出格式；扩展名不改，识别时按内容重新编码
 SCAN_EXTENSIONS = frozenset({".pdf", ".png", ".jpg", ".jpeg"})

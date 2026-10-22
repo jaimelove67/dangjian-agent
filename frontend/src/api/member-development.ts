@@ -46,6 +46,16 @@ export interface MemberMaterial {
   ocr_status?: string
   ocr_pages?: number
   file_name?: string
+  extracted_fields?: ExtractedFields
+}
+
+/** 结构化抽取的建议值；只是核对辅助，材料类型仍以归档人选定为准 */
+export interface ExtractedFields {
+  material_type?: string
+  subject_name?: string
+  doc_date?: string
+  issuer?: string
+  key_points?: string[]
 }
 
 /** 扫描件识别文本；text 已由服务端脱敏，note 是必须随文展示的边界说明 */
@@ -55,6 +65,7 @@ export interface MaterialText {
   ocr_status: string
   ocr_pages: number
   text: string
+  fields: ExtractedFields
   note: string
 }
 export interface StageHistory {

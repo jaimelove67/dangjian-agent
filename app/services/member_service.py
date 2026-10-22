@@ -54,7 +54,7 @@ from app.schemas.member_ext import (
     VoteBatch,
 )
 from app.services.file_store import save_member_archive
-from app.services.member_archive_service import extract_scan_text
+from app.services.member_archive_service import extract_material_fields, extract_scan_text
 from app.services.org_scope import visible_org_units
 from app.utils.snapshot import record_snapshot as row_data
 
@@ -279,6 +279,18 @@ class MemberDevelopment:
         notes = list(scan.notes)
         if cloud_ocr and not cloud:
             notes.insert(0, "该材料按密级不允许出网识别，已只保存影像件。")
+        # 识别成功才抽字段：同一次同意、同一份材料再出网一次文本（不含影像）。
+        # 抽到的是建议值，只为帮人核对，不写进任何台账字段。
+        fields: dict[str, Any] = {}
+        if scan.done and cloud:
+            fields = await extract_material_fields(
+                scan.text,
+                context={
+                    "tenant_id": self.tenant_id,
+                    "user_id": str(self.user.id),
+                    "material_id": material_id,
+                },
+            )
         material = MemberMaterial(
             id=material_id,
             tenant_id=self.tenant_id,
@@ -302,6 +314,7 @@ class MemberDevelopment:
             extracted_text=scan.text,
             ocr_status=scan.status,
             ocr_pages=scan.pages,
+            extracted_fields=fields,
         )
         self.db.add(material)
         await self.db.flush()
@@ -331,6 +344,8 @@ class MemberDevelopment:
             "ocr_status": record.ocr_status,
             "ocr_pages": record.ocr_pages,
             "text": mask_text(record.extracted_text or ""),
+            # 抽取建议值随文本一起给：界面并排展示"原件说了什么 / 系统认成什么"
+            "fields": record.extracted_fields or {},
             "note": OCR_BOUNDARY_NOTE,
         }
 

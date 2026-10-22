@@ -11,8 +11,11 @@ import pytest
 from app.core.desensitization import mask_text
 from app.rules.data_sensitivity import cloud_allowed
 from app.services.member_archive_service import (
+    ARCHIVE_MATERIAL_TYPES,
     OCR_NOTE,
     SKIPPED_CONSENT_NOTE,
+    _loads_json,
+    clean_fields,
     extract_scan_text,
     scan_supported,
 )
@@ -56,6 +59,55 @@ class TestSensitiveMaterialNeverLeaves:
         assert cloud_allowed("sensitive") is False
         assert cloud_allowed("classified") is False
         assert cloud_allowed("internal") is True
+
+
+class TestJsonTolerance:
+    def test_plain_object(self):
+        assert _loads_json('{"material_type": "思想汇报"}') == {"material_type": "思想汇报"}
+
+    def test_code_block_wrapped(self):
+        raw = '```json\n{"doc_date": "2024-03-05"}\n```'
+        assert _loads_json(raw) == {"doc_date": "2024-03-05"}
+
+    def test_chatter_around_object(self):
+        assert _loads_json('好的，结果如下：{"a": 1}\n以上。') == {"a": 1}
+
+    def test_garbage_returns_empty(self):
+        assert _loads_json("我无法判断") == {}
+        assert _loads_json("") == {}
+
+
+class TestCleanFields:
+    def test_keeps_known_type_and_date(self):
+        out = clean_fields({"material_type": "思想汇报", "doc_date": "2024-03-05"})
+        assert out["material_type"] == "思想汇报"
+        assert out["doc_date"] == "2024-03-05"
+
+    def test_accepts_slash_and_dot_dates(self):
+        assert clean_fields({"doc_date": "2024/03/05"})["doc_date"] == "2024-03-05"
+        assert clean_fields({"doc_date": "2024.03.05"})["doc_date"] == "2024-03-05"
+
+    def test_drops_type_outside_catalogue(self):
+        """模型自己编一个类型名不能进结果：类型只认卷内目录。"""
+        assert clean_fields({"material_type": "入党积极分子推荐表"})["material_type"] == ""
+
+    def test_every_catalogue_type_is_accepted(self):
+        for name in ARCHIVE_MATERIAL_TYPES:
+            assert clean_fields({"material_type": name})["material_type"] == name
+
+    def test_drops_future_and_absurd_dates(self):
+        assert clean_fields({"doc_date": "2099-01-01"})["doc_date"] == ""
+        assert clean_fields({"doc_date": "1800-01-01"})["doc_date"] == ""
+        assert clean_fields({"doc_date": "去年三月"})["doc_date"] == ""
+
+    def test_limits_key_points(self):
+        out = clean_fields({"key_points": ["一", "二", "三", "四"]})
+        assert out["key_points"] == ["一", "二", "三"]
+
+    def test_truncates_long_text(self):
+        out = clean_fields({"subject_name": "张" * 80, "issuer": "组" * 300})
+        assert len(out["subject_name"]) <= 50
+        assert len(out["issuer"]) <= 100
 
 
 class TestMaskText:
