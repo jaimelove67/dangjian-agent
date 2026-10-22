@@ -36,6 +36,8 @@
 ## 工程陷阱
 
 - **Git 远程**：`origin` = `manice2005/dangjian-agent`（只有一条 `Initial commit`、与本地无共同历史，别往那推）；日常推送用 `git push jaimelove67 master`（`jaimelove67/dangjian-agent` 与本地 master 同主线）。`.workbuddy/` 虽在 .gitignore 内，但 `memory/*.md` 已被跟踪，改完要 `git add -f` 才提交得进去。
+- **⚠️ `.git` 会被环境清理工具破坏（2026-10-22 实测）**：safe-delete shim（genie-trash）曾把 `.git/refs/*` 与 `objects/pack/*.pack` 删掉，`git status` 直接变「No commits yet」、文件全成 staged `new file`。**见到这个症状立刻停手**：不要 `git add -A`、不要 `reset --hard`、不要 `gc/prune`。恢复顺序：①`tar czf tmp/git-broken-<date>.tgz .git` 备份现场 → ②确认工作区源码完好 → ③`git fetch jaimelove67 "+refs/heads/*:refs/remotes/jaimelove67/*" --force`（refspec 必须写全，`refs/remotes` 已空时普通 fetch 不建）→ ④从 `.git/logs/HEAD` reflog 末行取 sha，`git update-ref refs/heads/master <sha>` → ⑤`git reset --mixed <sha>` 修 index（不动工作区）→ ⑥`git fsck` 确认无 missing/corrupt。只在本地那几天的提交会随 pack 消失（远端通常有）。
+- **`pytest` 本机必须带 `--basetemp=tmp/pt-<唯一后缀>`**：默认 `%TEMP%\pytest-of-<user>` 报 `WinError 5 拒绝访问`；basetemp 目录**不能复用**（报 `WinError 183` + shim 清理失败把 setup 打成 ERROR）。判测试真假失败前，先建 `git worktree` 在基线 commit 上跑同一套做对照——`module6_security_ops`/`module6_backup_edges`/`modules123_review_regressions` 有 8 个用例在多文件连跑时必挂、单独跑能过，属既有干扰，不是回归。
 - 镜像源不进代码，全部 ARG/环境变量注入：`DOCKERHUB_MIRROR`（默认 docker.io）、`GHCR_MIRROR`（默认 ghcr.io）、`BASE_IMAGE`、`APT_MIRROR`、`PIP_INDEX_URL`、`NODE_IMAGE`、`NGINX_IMAGE`、`NPM_REGISTRY`。**ARG 坑：stage 内 RUN 用某 ARG，必须在 FROM 之后再声明一次。**
 - 国内拉镜像可靠源：`swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io`（华为云）。DaoCloud/1ms/腾讯内网加速器都不可靠，坏源返回 HTML 会让整次拉取失败且不回退。
 - `scripts/*.sh` 用 LF（写完 `sed -i 's/\r$//'`）；文档统一 `bash scripts/xxx.sh`。
@@ -59,4 +61,4 @@
 ## 演示数据（docs/DEMO_DATA.md）
 
 - 种子：`scripts/seed_demo_school.py`（租户/组织/账号）、`seed_demo_business.py`（学习依据+考核）、`seed_demo_study_finish.py`（计划→活动→纪要→审核）。走真实 API、幂等；容器内需 `docker cp`（无 scripts 目录）。
-- 造数硬约束：① 学习只认 `effective` 资料（seed 文档默认 expired，先 PATCH 状态）；② 依据要计划级+条目级两级 `source_doc_ids`；③ 写操作带 `expected_revision`，每步重读；④ 纪要三栏目走 `generate-minutes`；⑤ 考核 `formula=sum` 只能配 `source=manual` + `measure=sum`；⑥ 任务须逐条审核；⑦ 新建用户口令 ≥12 位；⑧ 审核不能自审，需第二个管理员。
+- 造数硬约束：① 学习只认 `effective` 资料（seed 文档默认 expired，先 PATCH 状态）；② 依据要计划级+条目级两级 `source_doc_ids`；③ 写操作带 `expected_revision`，每步重读；④ 纪要三栏目走 `generate-minutes`；⑤ 考核 `formula=sum` 只能配 `source=manual` + `measure=sum`；⑥ 任务须逐条审核；⑦ 新建用户口令 ≥8 位（`UserCreate` 已于 2026-10-22 由 12 放宽到 8，与 `/admin/users` 对齐）；⑧ 审核不能自审，需第二个管理员。
