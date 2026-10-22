@@ -42,12 +42,15 @@ const STAGE_LABELS: Record<string, string> = {
   applicant: '入党申请人', activist: '入党积极分子', candidate: '发展对象',
   probationary: '预备党员', member: '正式党员',
 }
+// 未转为预备党员之前（申请人 / 积极分子 / 发展对象）按申请人授权：只能读公开制度；
+// 预备党员与正式党员同等授权——系统没有表决类权限点，二者能力差异只存在于流程。
+// 反过来把积极分子当党员会放宽知识库可见范围，属于提权，不能默认。
+const APPLICANT_STAGES = ['applicant', 'activist', 'candidate']
 watch(selectedMember, (member) => {
   if (!member) return
   form.name = member.name
   if (member.org_unit_id) form.org_unit_id = member.org_unit_id
-  // 申请人只能落 applicant；其余阶段先按党员给，管理角色再手动改。
-  form.role = member.current_stage === 'applicant' ? 'applicant' : 'member'
+  form.role = APPLICANT_STAGES.includes(member.current_stage) ? 'applicant' : 'member'
 })
 const ROLE_ORG_TYPES: Partial<Record<UserRole, AccountOrgOption['org_type']>> = {
   school_admin: 'school', department_admin: 'department', branch_secretary: 'branch',
@@ -179,7 +182,12 @@ async function submit(): Promise<void> {
               {{ m.name }} · {{ m.org_name }} · {{ STAGE_LABELS[m.current_stage] ?? m.current_stage }}
             </option>
           </select>
-          <p class="field__hint">选中后姓名与所属组织以档案为准，账号创建时一并完成档案关联。</p>
+          <p class="field__hint">
+            选中后姓名与所属组织以档案为准，账号创建时一并完成档案关联。
+            <template v-if="selectedMember">
+              已按「{{ STAGE_LABELS[selectedMember.current_stage] ?? selectedMember.current_stage }}」推断角色为「{{ ROLE_LABELS[form.role] }}」，可按需调整。
+            </template>
+          </p>
         </div>
         <fieldset class="form-grid" :disabled="creating">
           <legend class="u-sr">新账号信息</legend>
