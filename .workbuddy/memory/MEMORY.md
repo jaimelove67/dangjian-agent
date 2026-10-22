@@ -1,5 +1,12 @@
 # MEMORY.md — 党建工作智能体 项目长期约定
 
+## 交付形态（2026-10-22 确认）
+
+- 目标：**给学校私有化部署**（校内机房、数据不出校）。129.204.32.148 只是开发/演示环境，不是最终形态。
+- 私有化差距（代码层）：① 四个模型只有 `dashscope` provider，本地模型需新增 OpenAI 兼容 provider（chat/embed/rerank/vision）+ `init_models` 按 `MODEL_BACKEND` 切换；② 模型权重与镜像需**离线导入**；③ `ENV=production` 会强制 DB/Redis TLS，校内单机做不到就得留 development——但 development 下 `gateway` 对本地模型的 `ALLOWED_LOCAL_MODEL_HOSTS` 校验**不生效**（`if settings.ENV == "production" and ...`），只有 `or policy` 分支仍校验，交付时要讲清这个取舍。
+- GPU：四个模型全本地需**单 48G（L20/A6000）或双 24G**；单 24G 放不下视觉 OCR（切换加载 1–2 分钟，不可用于生产）。
+- 切换 embedding 模型会让历史向量全部作废（维度不一致且不报错），必须全量重新入库。
+
 ## 运行环境（本地开发）
 
 - 后端端口 **18000**（`.env: APP_PORT=18000`）；8000 属于别的项目，别混。启动：
