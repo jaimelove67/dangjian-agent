@@ -2,13 +2,14 @@
 
 import logging
 from collections.abc import Mapping
+from contextlib import nullcontext
 from typing import TypeGuard
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import BS_ALL, BS_BRANCH, BS_DEPARTMENT, BS_SCHOOL, get_role_profile
-from app.core.tenant import TenantIsolationError
+from app.core.tenant import TenantIsolationError, bypass_tenant_filter
 from app.models.org import OrgUnit
 from app.models.user import User
 
@@ -242,4 +243,9 @@ async def accessible_org_units(
                 select(OrgUnit.id).join(tree, OrgUnit.parent_id == tree.c.id).where(*conditions)
             )
             statement = statement.where(OrgUnit.id.in_(select(tree.c.id)))
-    return list((await db.execute(statement.order_by(OrgUnit.path, OrgUnit.id))).scalars().all())
+    # 跨租户查询必须绕过自动租户过滤：否则 ORM 会再叠加一条"登录者租户"条件，
+    # 平台管理员查学校租户的组织永远得到空列表。
+    cross_tenant = scope_tenant != str(user.tenant_id)
+    context = bypass_tenant_filter() if cross_tenant else nullcontext()
+    with context:
+        return list((await db.execute(statement.order_by(OrgUnit.path, OrgUnit.id))).scalars().all())
