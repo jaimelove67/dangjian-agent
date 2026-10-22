@@ -233,6 +233,17 @@ async def create_member(
     organization = next((org for org in organizations if str(org.id) == org_id), None)
     if organization is None:
         raise HTTPException(status_code=403, detail="请选择权限范围内的有效组织")
+    # 身份证号即登录账号：同租户一人一号。先查一次给出可读提示，
+    # 否则会撞唯一索引变成 500，用户看不出是哪个号重复了。
+    if body.id_card_no:
+        existing = await db.scalar(
+            select(MemberProfile.name).where(
+                MemberProfile.tenant_id == str(user.tenant_id),
+                MemberProfile.id_card_no == body.id_card_no,
+            )
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail=f"该身份证号已登记在「{existing}」的档案中，请勿重复登记")
     profile = MemberProfile(
         tenant_id=str(user.tenant_id),
         name=body.name,

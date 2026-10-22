@@ -582,6 +582,8 @@ export interface MemberRosterItem {
   relation_status?: RelationStatus
   year?: number | null
   batch_no?: string | null
+  // 身份证号只回脱敏值；为空表示档案未补录，开户前必须先补
+  id_card_masked?: string | null
 }
 
 export interface MemberRosterResponse {

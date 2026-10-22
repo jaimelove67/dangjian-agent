@@ -623,6 +623,11 @@ const todoTone: Record<TodoItem['category'], string> = {
                 <span class="roster__name">{{ m.name }}</span>
                 <span class="badge">{{ STAGE_LABELS[m.stage] }}</span>
                 <span
+                  v-if="!m.id_card_masked"
+                  class="badge badge--warn"
+                  title="档案缺身份证号，开户前需在右侧档案里补录"
+                >缺身份证</span>
+                <span
                   v-if="m.relation_status && m.relation_status !== 'in_place'"
                   class="badge"
                   :class="RELATION_STATUS_TONE[m.relation_status] === 'quiet' ? '' : `badge--${RELATION_STATUS_TONE[m.relation_status]}`"

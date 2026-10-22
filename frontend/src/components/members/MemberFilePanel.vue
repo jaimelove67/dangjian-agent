@@ -54,6 +54,10 @@ function materialLevelNote(item: MemberMaterial): string {
   return `${parts.join('，')}。`
 }
 const assignment = reactive({ year: new Date().getFullYear(), batch_no: '', reason: '' })
+// 身份证号是开户时的登录账号来源：历史档案常常缺号，这里提供补录与更正入口。
+const identity = reactive({ id_card_no: '', reason: '' })
+const ID_CARD_PATTERN = /^\d{17}[\dXx]$/
+const identityValid = computed(() => ID_CARD_PATTERN.test(identity.id_card_no.trim()))
 const material = reactive({
   material_type: '',
   file_version: '',
@@ -168,6 +172,18 @@ async function saveAssignment(): Promise<void> {
     '年度批次归属已保存。',
   )
 }
+async function saveIdentity(): Promise<void> {
+  const value = identity.id_card_no.trim().toUpperCase()
+  if (!ID_CARD_PATTERN.test(value)) return
+  await action(async () => {
+    await api.updateProfile(props.profileId, {
+      id_card_no: value,
+      reason: identity.reason.trim(),
+    })
+    Object.assign(identity, { id_card_no: '', reason: '' })
+  }, '身份证号已保存。它只用于开户时生成登录账号；已开户人员的登录名不会自动变更。')
+}
+
 async function addMaterial(): Promise<void> {
   await action(async () => {
     await api.addMaterial(props.profileId, {
@@ -285,6 +301,10 @@ async function archiveCheck(): Promise<void> {
           <dt>进入阶段日期</dt>
           <dd>{{ profile.stage_joined_on }}</dd>
         </div>
+        <div>
+          <dt>身份证号</dt>
+          <dd>{{ profile.id_card_masked || '未补录' }}</dd>
+        </div>
       </dl>
       <WorkspaceTabs v-model="tab" :items="tabs" label="培养对象办理功能" :disabled="busy">
         <div v-if="tab === 'materials'" class="wb-stack">
@@ -323,6 +343,38 @@ async function archiveCheck(): Promise<void> {
                   :disabled="busy || !assignment.reason.trim()"
                 >
                   保存批次归属
+                </button>
+              </div>
+            </form>
+          </details>
+          <details v-if="canManage" class="wb-disclosure">
+            <summary>{{ profile.id_card_masked ? '更正身份证号' : '补录身份证号' }}</summary>
+            <form class="wb-stack" @submit.prevent="saveIdentity">
+              <label class="wb-field"
+                ><span>身份证号</span
+                ><input
+                  v-model="identity.id_card_no"
+                  class="input"
+                  maxlength="18"
+                  autocomplete="off"
+                  required
+                /><small
+                  >18 位，末位可为 X。开户时直接作为登录账号；保存后界面与审计只显示脱敏值{{
+                    profile.id_card_masked ? `（当前 ${profile.id_card_masked}）` : ''
+                  }}。</small
+                ></label
+              >
+              <label class="wb-field"
+                ><span>{{ profile.id_card_masked ? '更正理由' : '补录说明' }}</span
+                ><input v-model="identity.reason" class="input" maxlength="2000" required
+              /></label>
+              <div class="wb-actions">
+                <button
+                  type="submit"
+                  class="btn btn--primary"
+                  :disabled="busy || !identityValid || !identity.reason.trim()"
+                >
+                  保存身份证号
                 </button>
               </div>
             </form>

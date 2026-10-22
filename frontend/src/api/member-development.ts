@@ -81,6 +81,8 @@ export interface MemberProfile {
   stage_joined_on: string
   year: number | null
   batch_no: string | null
+  // 身份证号只回脱敏值，完整号不出网；为空说明档案还没补录，开户前必须先补
+  id_card_masked: string | null
   is_active: boolean
   pending: number
   materials: MemberMaterial[]
@@ -292,7 +294,14 @@ export const memberDevelopmentApi = {
   },
   updateProfile(
     id: string,
-    body: { year: number; batch_no: string; reason: string },
+    body: {
+      year?: number
+      batch_no?: string
+      name?: string
+      // 补录 / 更正身份证号；它是开户时的登录账号来源
+      id_card_no?: string
+      reason: string
+    },
   ): Promise<MemberProfile> {
     return http.patch(profileURL(id), body)
   },

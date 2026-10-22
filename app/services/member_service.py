@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import tenant_config
 from app.core.decision_boundary import ASSISTED_REFERENCE_NOTE, STAGE_TRANSITION_NOTE, evidence_note
+from app.core.desensitization import mask_id_card
 from app.models.meeting import ContentRevision
 from app.models.member import (
     MemberArchiveCheck,
@@ -200,6 +201,8 @@ class MemberDevelopment:
                 raise HTTPException(422, "请先建立年度批次，或选择既有批次")
         if body.name is not None:
             profile.name = body.name
+        if body.id_card_no is not None:
+            await self._assign_id_card(profile, body.id_card_no)
         if body.batch_no is not None:
             profile.batch_no = body.batch_no
         if body.year is not None:
@@ -208,6 +211,32 @@ class MemberDevelopment:
             profile.is_active = body.is_active
         await self.save_profile_revision(profile, "revise", body.reason)
         return profile
+
+    async def _assign_id_card(self, profile: MemberProfile, id_card_no: str) -> None:
+        """补录或更正身份证号。
+
+        身份证号是开户时的登录账号来源，因此必须租户内唯一，也不能撞上已有账号的登录名。
+        但它只影响"以后开户用哪个号"：既有账号的登录名不跟着改——
+        档案更正不等于账号变更，改登录名目前不开放（UserUpdate 不含 username），
+        静默改名会把正在使用的人挡在门外。
+        """
+        if profile.id_card_no == id_card_no:
+            return
+        occupied_by = await self.db.scalar(
+            select(MemberProfile.name).where(
+                MemberProfile.tenant_id == profile.tenant_id,
+                MemberProfile.id_card_no == id_card_no,
+                MemberProfile.id != profile.id,
+            )
+        )
+        if occupied_by:
+            raise HTTPException(409, f"该身份证号已登记在「{occupied_by}」的档案中，请先核对")
+        account_conditions = [User.username == id_card_no]
+        if profile.user_id:
+            account_conditions.append(User.id != profile.user_id)
+        if await self.db.scalar(select(User.id).where(*account_conditions)):
+            raise HTTPException(409, "该身份证号已被其他账号用作登录名，请先核对")
+        profile.id_card_no = id_card_no
 
     async def save_profile_revision(self, profile: MemberProfile, action: str, reason: str) -> None:
         latest = await self.db.scalar(
@@ -227,10 +256,18 @@ class MemberDevelopment:
                 action=action,
                 actor_id=str(self.user.id),
                 reason=reason,
-                snapshot=row_data(profile),
+                snapshot=self._snapshot(profile),
             )
         )
         await self.db.flush()
+
+    @staticmethod
+    def _snapshot(profile: MemberProfile) -> dict[str, Any]:
+        """版本快照：身份证号只留脱敏值，完整号不落版本表。"""
+        data = row_data(profile)
+        raw = data.get("id_card_no")
+        data["id_card_no"] = mask_id_card(raw) if raw else None
+        return data
 
     # ==================== 材料记录 ====================
 

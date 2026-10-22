@@ -13,6 +13,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.decision_boundary import STAGE_TRANSITION_NOTE
+from app.core.desensitization import mask_id_card
 from app.rules.member_stages import MemberStage
 
 DECISION_BOUNDARY_NOTE = STAGE_TRANSITION_NOTE
@@ -94,6 +95,8 @@ class MemberRosterItem(BaseModel):
 
     year: Optional[int] = None
     batch_no: Optional[str] = None
+    # 身份证号只回脱敏值：完整号不出网。为空表示档案还没补录，此时不能开户。
+    id_card_masked: Optional[str] = None
 
     @classmethod
     def from_profile(cls, profile: Any) -> "MemberRosterItem":
@@ -111,6 +114,11 @@ class MemberRosterItem(BaseModel):
             relation_status=getattr(profile, "relation_status", None) or "in_place",
             year=profile.year,
             batch_no=profile.batch_no,
+            id_card_masked=(
+                mask_id_card(profile.id_card_no)
+                if getattr(profile, "id_card_no", None)
+                else None
+            ),
         )
 
 

@@ -1,9 +1,10 @@
 """发展党员全流程输入契约；阶段结论、审核状态与租户不能由请求伪造。"""
 
+import re
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Label = Annotated[str, Field(min_length=1, max_length=200)]
 Reason = Annotated[str, Field(min_length=1, max_length=2000)]
@@ -23,10 +24,24 @@ class BatchCreate(MemberInput):
 
 class ProfileUpdate(MemberInput):
     name: str | None = Field(default=None, min_length=1, max_length=50)
+    # 身份证号即开户时的登录账号来源：历史档案缺号时在此补录，录错可更正，但不允许清空。
+    id_card_no: str | None = Field(default=None, max_length=32)
     batch_no: str | None = Field(default=None, max_length=20)
     year: int | None = Field(default=None, ge=2000, le=2100)
     is_active: bool | None = None
     reason: Reason
+
+    @field_validator("id_card_no")
+    @classmethod
+    def check_id_card(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip().upper()
+        if not text:
+            raise ValueError("身份证号不能留空；如为更正，请填写新的 18 位号码")
+        if not re.fullmatch(r"\d{17}[\dX]", text):
+            raise ValueError("身份证号须为 18 位，末位可为 X")
+        return text
 
 
 class MaterialCreate(MemberInput):

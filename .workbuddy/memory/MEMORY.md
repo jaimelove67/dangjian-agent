@@ -10,8 +10,14 @@
 - 组织树硬规则（`identity_service.validate_tree`）：同租户只能一个 school 根；school 无父级；department 父级必须是 school；branch 父级是 school/department。
 - **租户层级硬规则**（`identity_service.TENANT_PARENTS`）：`school→platform`、`department→school`、`branch→department`。所以学校租户的父租户**只能是** platform 类型的「党建平台」，不是可选项。
 - 租户 `parent_id` 只用于**管辖链**（`IdentityService.tenant()` 跨租户时沿 parent 向上爬，必须爬到操作者租户否则 403「租户不属于当前平台」；`list_tenants()` 用 parent_id BFS 决定下拉可见范围），**不参与业务数据可见性**——业务隔离只看 `tenant_id`。
-- `admin` 是 platform + system_admin，**有权限管所有下级租户**（`/governance` 切「管理租户」即可）。`/accounts` 页无租户切换、组织列表按登录者自身租户取，所以 admin 在那页恒为空——是入口问题，不是权限问题。
+- `admin` 是 platform + system_admin，**有权限管所有下级租户**（`/governance` 切「管理租户」即可）。
 - 租户**没有 DELETE 接口**，只能 `is_active=false`（字段 `is_deleted` 存在但未开放）；`update_tenant` 不能改 `parent_id`。
+- **管理员重置密码（2026-10-22 上线）**：`PATCH /admin/users/{id}` 的 `UserUpdate` 已含可选 `password`（8–72 字节），留空不改；审计 `new_value` 只加 `password_reset: true`，不落明文/哈希。前端在治理页「维护用户」编辑态显示「重置密码」输入框。重置**不会踢掉已登录会话**（token 到期自然失效）。
+- 角色-组织映射统一在 `identity_service.ROLE_ORG_TYPES`（school_admin=school / department_admin=department / branch_secretary,member,applicant=branch / organizer=branch+department），开户与编辑共用；前端 `GovernanceView.formOrgs`、`AccountsView.availableOrganizations` 按同一口径过滤下拉。
+- `GET /admin/org-units` 支持 `?tenant_id=`（平台管理员跨租户）；`/accounts` 页有「开户租户」下拉，**不预选**，只有唯一可选租户时才自动选中。
+- **身份证号 = 登录账号（2026-10-22，迁移 024）**：`member_profiles.id_card_no`（VARCHAR 32，明文，登录名必须可核对）。档案有号时开户可省略 `username`，服务端直接用它；候选接口 `GET /admin/member-candidates` 只回 `id_card_masked`（前 6 + **** + 后 4），完整号不出网。列表/审计/编辑回显统一走 `identity_service.masked_username`（18 位身份证才脱敏，工号原样）。实测：不传 username 建号 201、列表显示 `430102********9999`。
+- 名册登记表单（`MembersView`）身份证号**必填**且按 18 位校验（`MemberCreateRequest.check_id_card`，末位 X 统一大写）；开户页登录账号也按 18 位校验，档案缺号时禁用提交并提示去补录（5679e56）。
+- **档案补录身份证（2026-10-22，本地已改未部署）**：`ProfileUpdate` 已含可选 `id_card_no`（18 位、空串 422、同租户档案唯一 + 不撞账号登录名，冲突 409）；前端两处入口——`MemberFilePanel`「补录/更正身份证号」、`AccountsView` 缺号时就地补录。补录**不改**已开户账号的登录名（`UserUpdate` 无 username 字段）。档案读接口统一走 `member_full.profile_payload()`：`id_card_no` → `id_card_masked`，版本快照同样脱敏（此前详情接口与审计是**明文**）。
 - `audit_logs` 对 422 只记 route/method/status/duration，不记错误正文。
 
 ## 前端（frontend/）
@@ -36,6 +42,9 @@
 - 本仓库存在并行工作流，**产出后立即提交**；用平铺分支名；判断提交在不在历史只信 `git rev-list HEAD | grep <sha>`（`branch --contains` 会给错答案）。
 - 本环境执行 `.py` 脚本文件会被静默拦截（exit 1、无输出），**必须 `python -c '<代码>'` 内联**。
 - md→docx：`render_markdown` + `add_cover`，只能内联跑；中文字体需同时设 `run.font.name` 和 `w:eastAsia`；长内联 Python 塞 bash 会 `unexpected EOF`，写 `tmp/xxx.sh` + heredoc 才稳。中文输出路径先落 ASCII 再 `mv`。
+- **`npm run build` 在本机会失败**：环境里装了 WorkBuddy 的 safe-delete shim，vite 清空 `dist/` 时调 `genie-trash win32-x64.exe` 超时报 `ETIMEDOUT`（与代码无关）。验证构建改用 `npx vite build --outDir ../tmp/dist-check`；服务器容器内 build 不受影响。
+- 本机 `tar` 写 `/tmp` 会被沙箱静默拦截（exit 2、无输出），打包产物一律写项目内 `tmp/`（已 gitignore）。
+- 本地无 Docker（Desktop 启动被沙箱拒绝）→ `tests/integration` 全部因连不上 postgres 而 ERROR，属环境限制；验证以「导入检查 + OpenAPI 契约 + 部署后真实接口」为准。
 
 ## 服务器（129.204.32.148 上线，2026-10-17）
 

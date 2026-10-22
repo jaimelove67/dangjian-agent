@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { createAccount, listAccountOrganizations, listMemberCandidates } from '@/api/admin'
 import { listTenants, type TenantRecord } from '@/api/governance'
+import { ApiError } from '@/api/http'
+import { memberDevelopmentApi } from '@/api/member-development'
 import { ROLE_LABELS, type AccountCreated, type AccountMemberOption, type AccountOrgOption, type UserRole } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -53,6 +55,41 @@ const usernameLocked = computed(() => Boolean(selectedMember.value?.id_card_mask
 const memberMissingIdCard = computed(() =>
   Boolean(selectedMember.value) && !usernameLocked.value,
 )
+// 开户时才发现档案缺身份证：就地补录，别让人在两个页面之间来回找人。
+// 补录走的是档案接口，权限与「党员发展」里补录完全一致，不额外开后门。
+const idCardDraft = reactive({
+  value: '', saving: false, error: null as unknown, message: '',
+})
+const idCardDraftValid = computed(() => ID_CARD_PATTERN.test(idCardDraft.value.trim()))
+watch(selectedMemberId, () => {
+  idCardDraft.value = ''
+  idCardDraft.error = null
+  idCardDraft.message = ''
+})
+
+async function saveIdCard(): Promise<void> {
+  const member = selectedMember.value
+  const value = idCardDraft.value.trim().toUpperCase()
+  if (!member || !ID_CARD_PATTERN.test(value) || idCardDraft.saving) return
+  idCardDraft.saving = true
+  idCardDraft.error = null
+  idCardDraft.message = ''
+  try {
+    await memberDevelopmentApi.updateProfile(member.id, {
+      id_card_no: value,
+      reason: '开户前在创建账号页补录身份证号',
+    })
+    // 补录后重取候选：脱敏值和"能否开户"都由后端算，前端不自己拼。
+    await loadMembers()
+    selectedMemberId.value = member.id
+    await nextTick()
+    idCardDraft.message = '身份证号已补录，登录账号将使用该号码。'
+  } catch (error) {
+    idCardDraft.error = error
+  } finally {
+    idCardDraft.saving = false
+  }
+}
 watch(selectedMember, (member) => {
   form.username = ''
   if (!member) return
@@ -207,9 +244,34 @@ async function submit(): Promise<void> {
             <p v-if="usernameLocked" id="username-hint" class="field__hint">
               使用档案身份证号登录（{{ selectedMember?.id_card_masked }}），完整号码不出网，登录时输入完整 18 位即可。
             </p>
-            <p v-else-if="memberMissingIdCard" id="username-hint" class="field__error" role="alert">
-              该人员档案没有身份证号，无法开户。请先到<RouterLink to="/members">党员发展</RouterLink>补录身份证号。
-            </p>
+            <div v-else-if="memberMissingIdCard" id="username-hint" role="alert">
+              <p class="field__error">
+                该人员档案没有身份证号，无法开户。可在此补录，或到<RouterLink to="/members">党员发展</RouterLink>处理。
+              </p>
+              <div class="inline-idcard">
+                <input
+                  id="account-id-card"
+                  v-model="idCardDraft.value"
+                  class="input"
+                  maxlength="18"
+                  autocomplete="off"
+                  placeholder="18 位身份证号"
+                  aria-label="补录身份证号"
+                />
+                <button
+                  type="button"
+                  class="btn btn--quiet"
+                  :disabled="!idCardDraftValid || idCardDraft.saving"
+                  @click="saveIdCard"
+                >
+                  {{ idCardDraft.saving ? '保存中' : '补录并用于开户' }}
+                </button>
+              </div>
+              <p v-if="idCardDraft.error" class="field__error">
+                {{ idCardDraft.error instanceof ApiError ? idCardDraft.error.message : '补录失败，请重试' }}
+              </p>
+              <p v-if="idCardDraft.message" class="field__hint">{{ idCardDraft.message }}</p>
+            </div>
             <p v-else-if="form.username && !usernameOk" id="username-hint" class="field__error" role="alert">请填写完整的 18 位身份证号，末位可为 X。</p>
             <p v-else id="username-hint" class="field__hint">18 位，末位可为 X；这就是登录账号。</p>
           </div>
@@ -268,6 +330,9 @@ async function submit(): Promise<void> {
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); border: 0; padding: 0; min-width: 0; }
 .field { min-width: 0; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+/* 缺身份证时就地补录：输入框与按钮同一行，避免和下方正式表单混淆 */
+.inline-idcard { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.inline-idcard .input { max-width: 220px; }
 .success { padding: var(--space-4) var(--space-5); border-color: var(--ok-edge); background: var(--ok-wash); overflow-wrap: anywhere; }
 .success__title { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); font-size: var(--text-base); color: var(--ok-ink); }
 .success p { margin-top: var(--space-2); font-size: var(--text-sm); }

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.audit import audit_operation
+from app.core.desensitization import mask_id_card
 from app.core.security import Permission
 from app.db.session import get_db
 from app.deps import require_permissions
@@ -39,6 +40,18 @@ async def member_service(
     db: AsyncSession = Depends(get_db), user: User = Depends(_query)
 ) -> MemberDevelopment:
     return await MemberDevelopment(db, user).initialize()
+
+
+def profile_payload(profile: Any) -> dict[str, Any]:
+    """档案对外快照：身份证号只出脱敏值，完整号不出网，也不落审计。
+
+    身份证号是登录账号来源，属于高敏字段；查看者要核对号码应走身份核验，
+    而不是让完整号在浏览器和审计日志里各留一份。
+    """
+    data = row_data(profile)
+    raw = data.pop("id_card_no", None)
+    data["id_card_masked"] = mask_id_card(raw) if raw else None
+    return data
 
 
 async def respond(
@@ -131,7 +144,7 @@ async def profile_detail(
     profile_id: str, request: Request, service: MemberDevelopment = Depends(member_service)
 ) -> APIResponse[dict]:
     profile = await service.profile(profile_id)
-    data = row_data(profile)
+    data = profile_payload(profile)
     data["materials"] = await service.list_materials(profile_id)
     data["stage_history"] = await service.stage_history(profile_id)
     data["cultivation"] = await service.cultivation(profile_id)
@@ -151,7 +164,7 @@ async def update_profile(
     service: MemberDevelopment = Depends(member_service),
 ) -> APIResponse[dict]:
     profile = await service.update_profile(profile_id, body)
-    return await respond(request, service, row_data(profile), "revise", "member", profile_id)
+    return await respond(request, service, profile_payload(profile), "revise", "member", profile_id)
 
 
 @router.post(
@@ -166,7 +179,7 @@ async def transition(
     service: MemberDevelopment = Depends(member_service),
 ) -> APIResponse[dict]:
     profile = await service.transition(profile_id, body)
-    data = row_data(profile)
+    data = profile_payload(profile)
     data["stage_history"] = await service.stage_history(profile_id)
     data["boundary"] = DECISION_BOUNDARY
     return await respond(request, service, data, "transition", "member", profile_id)
