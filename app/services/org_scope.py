@@ -207,10 +207,18 @@ async def visible_org_units(db: AsyncSession, user: User) -> list[OrgUnit]:
     return [org for org in tree.values() if str(org.id) in visible]
 
 
-async def accessible_org_units(db: AsyncSession, user: User) -> list[OrgUnit]:
-    """支部只含本支部；院系和学校包含本组织及有效后代，系统管理员限本租户。"""
+async def accessible_org_units(
+    db: AsyncSession, user: User, tenant_id: str | None = None
+) -> list[OrgUnit]:
+    """支部只含本支部；院系和学校包含本组织及有效后代，系统管理员限本租户。
+
+    ``tenant_id`` 仅供平台系统管理员跨租户查看（调用方须先用
+    ``IdentityService.tenant`` 校验归属）；其余角色的根组织固定在自身租户内，
+    传其他租户只会得到空列表。
+    """
+    scope_tenant = str(tenant_id or user.tenant_id)
     conditions = (
-        OrgUnit.tenant_id == str(user.tenant_id),
+        OrgUnit.tenant_id == scope_tenant,
         OrgUnit.is_deleted.is_(False),
         OrgUnit.is_active.is_(True),
     )

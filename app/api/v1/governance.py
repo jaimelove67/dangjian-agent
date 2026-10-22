@@ -81,7 +81,9 @@ async def changed(
     row: User | OrgUnit | Tenant,
     action: str,
     kind: str,
+    extra: dict[str, Any] | None = None,
 ) -> APIResponse:
+    """写入审计后返回公开字段；``extra`` 只放"发生了什么"的标记，不放密文或明文。"""
     try:
         data = public_record(row)
         await audit_operation(
@@ -91,7 +93,7 @@ async def changed(
             action=action,
             resource_type=kind,
             resource_id=str(row.id),
-            new_value=data,
+            new_value={**data, **extra} if extra else data,
         )
         await db.commit()
     except IntegrityError:
@@ -197,10 +199,11 @@ async def update_user(
     user: User = Depends(identity_admin),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict[str, Any]]:
-    row = await IdentityService(db, user).save_user(
-        tenant_id, body.model_dump(exclude_unset=True), record_id
-    )
-    return await changed(db, request, user, row, "update", "user")
+    values = body.model_dump(exclude_unset=True)
+    row = await IdentityService(db, user).save_user(tenant_id, values, record_id)
+    # 审计只标注"密码被重置"，绝不落明文或哈希。
+    extra = {"password_reset": True} if values.get("password") else None
+    return await changed(db, request, user, row, "update", "user", extra=extra)
 
 
 @router.get("/admin/governance")

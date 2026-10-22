@@ -27,23 +27,13 @@ from app.schemas.admin import AccountCreated, AccountCreateRequest, AccountOrgOp
 from app.schemas.auth import UserInfo
 from app.schemas.common import APIResponse, ErrorCode
 from app.services.audit_export import MAX_EXPORT_ROWS, build_audit_package
-from app.services.identity_service import IdentityService, is_platform_admin
+from app.services.identity_service import ROLE_ORG_TYPES, IdentityService, is_platform_admin
 from app.services.org_scope import accessible_org_units
 
 router = APIRouter()
 _require_config = require_permissions(Permission.CONFIG_MANAGE)
 _require_audit = require_permissions(Permission.AUDIT_QUERY)
 _require_system_admin = require_roles(UserRole.SYSTEM_ADMIN)
-
-# 与角色的业务范围一致；系统管理员可以绑定当前租户内的任意有效组织。
-_ROLE_ORG_TYPES = {
-    UserRole.SCHOOL_ADMIN: "school",
-    UserRole.DEPARTMENT_ADMIN: "department",
-    UserRole.BRANCH_SECRETARY: "branch",
-    UserRole.ORGANIZER: "branch",
-    UserRole.MEMBER: "branch",
-    UserRole.APPLICANT: "branch",
-}
 
 
 @router.get(
@@ -53,11 +43,19 @@ _ROLE_ORG_TYPES = {
 )
 async def account_org_units(
     request: Request,
+    tenant_id: Optional[str] = Query(
+        None, max_length=36, description="跨租户开户仅平台系统管理员可用"
+    ),
     user: User = Depends(_require_system_admin),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[list[AccountOrgOption]]:
-    """仅系统管理员可获取当前租户的有效组织选项。"""
-    organizations = await accessible_org_units(db, user)
+    """仅系统管理员可获取当前租户的有效组织选项。
+
+    省略 ``tenant_id`` 时按登录租户返回，与开户接口默认口径一致；
+    显式传入时先校验该租户确实归当前平台管辖，否则 403。
+    """
+    target = await IdentityService(db, user).tenant(tenant_id)
+    organizations = await accessible_org_units(db, user, str(target.id))
     return APIResponse(
         data=[
             AccountOrgOption(
@@ -106,8 +104,8 @@ async def create_account(
         ).scalar_one_or_none()
         if organization is None:
             raise HTTPException(status_code=403, detail="请选择当前租户内的有效组织")
-        expected_type = _ROLE_ORG_TYPES.get(body.role)
-        if expected_type and organization.org_type != expected_type:
+        expected_types = ROLE_ORG_TYPES.get(body.role)
+        if expected_types and organization.org_type not in expected_types:
             raise HTTPException(status_code=422, detail="所选角色与组织类型不匹配")
 
         existing = (

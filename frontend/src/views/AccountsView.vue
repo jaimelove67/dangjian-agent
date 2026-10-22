@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { createAccount, listAccountOrganizations } from '@/api/admin'
+import { listTenants, type TenantRecord } from '@/api/governance'
 import { ROLE_LABELS, type AccountCreated, type AccountOrgOption, type UserRole } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -12,6 +13,11 @@ import PageHeader from '@/components/PageHeader.vue'
 import { session } from '@/stores/session'
 
 const organizations = ref<AccountOrgOption[]>([])
+// 平台管理员的登录租户（平台租户）本身没有组织树，必须显式选一个学校租户才能开户；
+// 学校管理员只看到自己租户，下拉隐藏。
+const isPlatformAdmin = computed(() => session.state.user?.role === 'system_admin')
+const tenants = ref<TenantRecord[]>([])
+const selectedTenant = ref(session.state.user?.tenant_id ?? '')
 const loading = ref(true)
 const loadError = ref<unknown>(null)
 const creating = ref(false)
@@ -51,15 +57,33 @@ watch(availableOrganizations, (options) => {
   form.org_unit_id = options.find((org) => org.id === session.state.user?.org_unit_id)?.id ?? ''
 })
 
+/** 只有平台管理员会把租户显式带给接口；其他角色始终落在自己的租户。 */
+const activeTenant = computed(() => (isPlatformAdmin.value ? selectedTenant.value : ''))
+
+async function loadTenants(): Promise<void> {
+  if (!isPlatformAdmin.value) return
+  try {
+    // 只有学校租户有组织树，院系/支部租户开户另走治理页，这里不列。
+    const rows = (await listTenants()).items.filter(row => row.is_active && row.tenant_type === 'school')
+    tenants.value = rows
+    if (!rows.some(row => row.id === selectedTenant.value)) selectedTenant.value = rows[0]?.id ?? ''
+  } catch (error) { loadError.value = error }
+}
+
 async function loadOrganizations(): Promise<void> {
   loading.value = true
   loadError.value = null
-  try { organizations.value = await listAccountOrganizations() }
+  try { organizations.value = await listAccountOrganizations(activeTenant.value || undefined) }
   catch (error) { loadError.value = error }
   finally { loading.value = false }
 }
 
-onMounted(() => { void loadOrganizations() })
+watch(selectedTenant, () => { void loadOrganizations() })
+
+onMounted(async () => {
+  await loadTenants()
+  await loadOrganizations()
+})
 
 async function submit(): Promise<void> {
   if (!valid.value || creating.value) return
@@ -70,7 +94,7 @@ async function submit(): Promise<void> {
     created.value = await createAccount({
       username: form.username.trim(), name: form.name.trim(), role: form.role,
       org_unit_id: form.org_unit_id, password: form.password,
-    })
+    }, activeTenant.value || undefined)
     Object.assign(form, { username: '', name: '', password: '', confirm_password: '' })
   } catch (error) {
     createError.value = error
@@ -96,13 +120,20 @@ async function submit(): Promise<void> {
 
     <section class="u-card account-card">
       <header class="u-panel-head"><h2 class="card-title">账号信息</h2><span class="badge">仅系统管理员</span></header>
+      <div v-if="isPlatformAdmin" class="field">
+        <label for="account-tenant" class="field__label">开户租户</label>
+        <select id="account-tenant" v-model="selectedTenant" class="select">
+          <option v-for="row in tenants" :key="row.id" :value="row.id">{{ row.name }}</option>
+        </select>
+        <p class="field__hint">平台管理员须先选择学校租户；组织与账号都归属该租户，切换后组织列表随之刷新。</p>
+      </div>
       <LoadingBlock v-if="loading" variant="list" :rows="3" />
       <ErrorState v-else-if="loadError" :error="loadError">
         <button class="btn btn--ghost" type="button" @click="loadOrganizations">重新加载组织</button>
       </ErrorState>
-      <EmptyState v-else-if="!organizations.length" title="尚未配置组织" body="请先由维护人员登记本单位的学校、院系或支部，再创建账号。" icon="people" />
+      <EmptyState v-else-if="!organizations.length" title="尚未配置组织" :body="isPlatformAdmin ? '所选租户还没有登记组织。切换开户租户，或先到「管理与审核 → 组织与账号」登记组织。' : '请先由维护人员登记本单位的学校、院系或支部，再创建账号。'" icon="people" />
       <form v-else class="account-form" @submit.prevent="submit">
-        <p class="account-form__intro">账号归属当前单位。请按人员职责选择角色，所属组织决定其业务范围。</p>
+        <p class="account-form__intro">账号归属{{ isPlatformAdmin ? '所选租户' : '当前单位' }}。请按人员职责选择角色，所属组织决定其业务范围。</p>
         <fieldset class="form-grid" :disabled="creating">
           <legend class="u-sr">新账号信息</legend>
           <div class="field">

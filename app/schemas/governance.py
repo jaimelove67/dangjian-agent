@@ -54,6 +54,15 @@ class UserUpdate(StrictInput):
     role: UserRole | None = None
     org_unit_id: str | None = Field(None, max_length=36)
     is_active: bool | None = None
+    # 管理员重置密码：留空表示不改；下限与 POST /admin/users 保持一致。
+    password: str | None = Field(None, min_length=8, max_length=72, repr=False)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str | None) -> str | None:
+        if value is not None and len(value.encode("utf-8")) > 72:
+            raise ValueError("密码 UTF-8 编码不能超过 72 字节")
+        return value
 
 
 class ReviewSubmit(StrictInput):

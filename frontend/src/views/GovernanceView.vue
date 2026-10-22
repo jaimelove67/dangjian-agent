@@ -83,6 +83,22 @@ const approvalText: Record<string,string> = {registration:'真实组织登记', 
   it_approval:'信息化部门评审', secrecy_approval:'保密部门评审', pilot_scope:'批准的试点范围'}
 const approvals = ['registration','organization_approval','it_approval','secrecy_approval'] as const
 const roles = Object.keys(ROLE_LABELS) as UserRole[]
+// 角色可绑定的组织类型（与服务端 ROLE_ORG_TYPES 同口径）：先在前端挡掉必然 422 的组合，
+// 否则用户会在填完整个表单后才发现"所选角色与组织类型不匹配"。
+const ROLE_ORG_TYPES: Partial<Record<UserRole, OrgRecord['org_type']>> = {
+  school_admin: 'school', department_admin: 'department', branch_secretary: 'branch',
+  organizer: 'branch', member: 'branch', applicant: 'branch',
+}
+const orgTypeText: Record<string, string> = {school: '学校', department: '院系', branch: '支部'}
+const formOrgs = computed(() => {
+  const type = ROLE_ORG_TYPES[form.role]
+  return type ? activeOrgs.value.filter(row => row.org_type === type) : activeOrgs.value
+})
+// 只列 platform 租户：学校/院系的父级有固定层级，列出来只会得到 422。
+const parentTenants = computed(() => tenants.value.filter(row => row.is_active && row.tenant_type === 'platform'))
+watch(() => form.role, () => {
+  if (form.org_unit_id && !formOrgs.value.some(row => row.id === form.org_unit_id)) form.org_unit_id = ''
+})
 /** 供给机制（T-KB-13）：五类权威来源固定成行——缺行就不显示，等于把机制藏起来。 */
 const supplyRows = computed(() => DOC_AUTHORITY_ORDER.map(authority => ({
   authority,
@@ -310,6 +326,10 @@ async function viewReview(row: ReviewRecord): Promise<void> {
 }
 async function submit(): Promise<void> {
   if (busy.value) return
+  // 组织与角色必须成对：缺组织时服务端会拒绝，先在这里给出可读提示，别让它变成红色报错条。
+  if (dialog.value === 'user' && form.role !== 'system_admin' && !form.org_unit_id) {
+    error.value = '请为该角色选择所属组织'; return
+  }
   busy.value = true; error.value = ''
   try {
     if (dialog.value === 'organization') {
@@ -317,8 +337,11 @@ async function submit(): Promise<void> {
         : {name:form.name, org_type:form.org_type, parent_id:form.parent_id || null}
       await api.saveOrg(editingId.value, body, selectedTenant.value)
     } else if (dialog.value === 'user') {
+      // 编辑时密码留空表示不改；只有填了才随 PATCH 一起提交（管理员重置口令）。
       const body = {name:form.name, role:form.role, org_unit_id:form.org_unit_id || null,
-        ...(editingId.value ? {is_active:form.is_active} : {username:form.username, password:form.password})}
+        ...(editingId.value
+          ? {is_active:form.is_active, ...(form.password ? {password:form.password} : {})}
+          : {username:form.username, password:form.password})}
       await api.saveUser(editingId.value, body, selectedTenant.value)
     } else if (dialog.value === 'tenant') {
       if (editingId.value) await api.updateTenant(editingId.value, {name:form.name, is_active:form.is_active})
@@ -572,11 +595,13 @@ function formatDate(value: string | null): string {
           <template v-if="dialog==='organization'"><label v-if="!editingId" class="wb-field"><span>组织类型</span><select class="select" v-model="form.org_type"><option value="school">学校</option><option value="department">院系</option><option value="branch">支部</option></select></label>
             <label class="wb-field"><span>上级组织</span><select class="select" v-model="form.parent_id" aria-label="上级组织"><option value="">无上级（学校根组织）</option><option v-for="row in activeOrgs.filter(row=>row.id!==editingId)" :key="row.id" :value="row.id">{{ row.name }}</option></select></label></template>
           <template v-if="dialog==='user'"><label v-if="!editingId" class="wb-field"><span>登录账号</span><input class="input" v-model="form.username" required minlength="3" maxlength="50" autocomplete="off" /></label>
-            <label v-if="!editingId" class="wb-field"><span>初始密码（至少 12 字符）</span><input class="input" v-model="form.password" type="password" required minlength="12" maxlength="72" autocomplete="new-password" /></label>
+            <label v-if="!editingId" class="wb-field"><span>初始密码（至少 8 字符）</span><input class="input" v-model="form.password" type="password" required minlength="8" maxlength="72" autocomplete="new-password" /></label>
+            <label v-else class="wb-field"><span>重置密码（留空表示不修改）</span><input class="input" v-model="form.password" type="password" minlength="8" maxlength="72" autocomplete="new-password" placeholder="至少 8 字符，保存后立即生效" /></label>
             <label class="wb-field"><span>授权角色</span><select class="select" v-model="form.role"><option v-for="role in roles" :key="role" :value="role">{{ ROLE_LABELS[role] }}</option></select></label>
-            <label class="wb-field"><span>所属组织</span><select class="select" v-model="form.org_unit_id"><option value="">待绑定</option><option v-for="row in activeOrgs" :key="row.id" :value="row.id">{{ row.name }}</option></select></label></template>
+            <label class="wb-field"><span>所属组织{{ ROLE_ORG_TYPES[form.role] ? '（须为' + orgTypeText[ROLE_ORG_TYPES[form.role]!] + '）' : '' }}</span><select class="select" v-model="form.org_unit_id"><option value="">待绑定</option><option v-for="row in formOrgs" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
+            <p v-if="!formOrgs.length" class="wb-note">当前租户没有可绑定「{{ ROLE_LABELS[form.role] }}」的组织，请先在组织目录登记对应层级的组织。</p></template>
           <template v-if="dialog==='tenant' && !editingId"><label class="wb-field"><span>租户类型</span><select class="select" v-model="form.tenant_type"><option value="school">学校</option><option value="department">院系</option><option value="branch">支部</option></select></label>
-            <label class="wb-field"><span>父租户</span><select class="select" v-model="form.parent_id" required><option v-for="row in tenants.filter(row=>row.is_active)" :key="row.id" :value="row.id">{{ row.name }}</option></select></label></template>
+            <label class="wb-field"><span>父租户（由租户类型决定，学校只能挂在平台下）</span><select class="select" v-model="form.parent_id" required><option v-for="row in parentTenants" :key="row.id" :value="row.id">{{ row.name }}</option></select></label></template>
           <label v-if="editingId" class="wb-check"><input v-model="form.is_active" type="checkbox" />保持有效（取消将停用）</label>
         </template>
         <template v-else-if="dialog==='submit'"><label class="wb-field"><span>业务类型</span><select class="select" v-model="form.source_kind"><option v-for="kind in ['score','vote','meeting','study_activity','study_plan','assessment_report','assessment_plan']" :key="kind" :value="kind">{{ kindText[kind] }}</option></select></label>

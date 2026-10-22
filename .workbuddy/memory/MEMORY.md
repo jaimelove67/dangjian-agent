@@ -29,6 +29,7 @@
 
 ## 工程陷阱
 
+- **Git 远程**：`origin` = `manice2005/dangjian-agent`（只有一条 `Initial commit`、与本地无共同历史，别往那推）；日常推送用 `git push jaimelove67 master`（`jaimelove67/dangjian-agent` 与本地 master 同主线）。`.workbuddy/` 虽在 .gitignore 内，但 `memory/*.md` 已被跟踪，改完要 `git add -f` 才提交得进去。
 - 镜像源不进代码，全部 ARG/环境变量注入：`DOCKERHUB_MIRROR`（默认 docker.io）、`GHCR_MIRROR`（默认 ghcr.io）、`BASE_IMAGE`、`APT_MIRROR`、`PIP_INDEX_URL`、`NODE_IMAGE`、`NGINX_IMAGE`、`NPM_REGISTRY`。**ARG 坑：stage 内 RUN 用某 ARG，必须在 FROM 之后再声明一次。**
 - 国内拉镜像可靠源：`swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io`（华为云）。DaoCloud/1ms/腾讯内网加速器都不可靠，坏源返回 HTML 会让整次拉取失败且不回退。
 - `scripts/*.sh` 用 LF（写完 `sed -i 's/\r$//'`）；文档统一 `bash scripts/xxx.sh`。

@@ -15,6 +15,16 @@ from app.models.user import User, UserRole
 
 TENANT_PARENTS = {"school": "platform", "department": "school", "branch": "department"}
 ORG_PARENTS = {"school": set(), "department": {"school"}, "branch": {"school", "department"}}
+# 角色可绑定的组织类型：开户（admin.py）与编辑（save_user）共用一份口径，
+# 避免同一个人"新建能过、编辑报错"这类两端口径漂移。
+ROLE_ORG_TYPES: dict[UserRole, set[str]] = {
+    UserRole.SCHOOL_ADMIN: {"school"},
+    UserRole.DEPARTMENT_ADMIN: {"department"},
+    UserRole.BRANCH_SECRETARY: {"branch"},
+    UserRole.ORGANIZER: {"branch", "department"},
+    UserRole.MEMBER: {"branch"},
+    UserRole.APPLICANT: {"branch"},
+}
 
 
 def public_record(row: Any) -> dict[str, Any]:
@@ -263,18 +273,12 @@ class IdentityService:
                 raise HTTPException(403, "不能授予或维护系统管理员角色")
         orgs = {str(item.id): item for item in await self.orgs(str(tenant.id))}
         org = orgs.get(str(row.org_unit_id))
-        required_type = {
-            UserRole.SCHOOL_ADMIN: {"school"},
-            UserRole.DEPARTMENT_ADMIN: {"department"},
-            UserRole.BRANCH_SECRETARY: {"branch"},
-            UserRole.ORGANIZER: {"branch", "department"},
-        }.get(row.role)
-        if row.role != UserRole.SYSTEM_ADMIN and (
-            org is None
-            or not org.is_active
-            or (required_type is not None and org.org_type not in required_type)
-        ):
-            raise HTTPException(422, "用户必须绑定有效组织，管理角色须匹配组织类型")
+        required_types = ROLE_ORG_TYPES.get(row.role)
+        if row.role != UserRole.SYSTEM_ADMIN:
+            if org is None or not org.is_active:
+                raise HTTPException(422, "请选择当前租户内的有效组织")
+            if required_types and org.org_type not in required_types:
+                raise HTTPException(422, "所选角色与组织类型不匹配")
         admin_roles = {UserRole.SYSTEM_ADMIN, UserRole.SCHOOL_ADMIN}
         if record_id and any(item.role in admin_roles and item.is_active for item in users):
             remaining = [
