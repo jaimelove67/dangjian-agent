@@ -21,9 +21,16 @@ from app.core.timeutil import as_utc_naive
 from app.db.session import get_db
 from app.deps import require_permissions, require_roles
 from app.models.audit import AuditLog
+from app.models.member import MemberProfile
 from app.models.org import OrgUnit
 from app.models.user import User, UserRole
-from app.schemas.admin import AccountCreated, AccountCreateRequest, AccountOrgOption, AccountOrgType
+from app.schemas.admin import (
+    AccountCreated,
+    AccountCreateRequest,
+    AccountMemberOption,
+    AccountOrgOption,
+    AccountOrgType,
+)
 from app.schemas.auth import UserInfo
 from app.schemas.common import APIResponse, ErrorCode
 from app.services.audit_export import MAX_EXPORT_ROWS, build_audit_package
@@ -68,6 +75,56 @@ async def account_org_units(
     )
 
 
+@router.get(
+    "/admin/member-candidates",
+    response_model=APIResponse[list[AccountMemberOption]],
+    summary="可开户的党员档案",
+)
+async def member_candidates(
+    request: Request,
+    tenant_id: Optional[str] = Query(
+        None, max_length=36, description="跨租户开户仅平台系统管理员可用"
+    ),
+    user: User = Depends(_require_system_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[list[AccountMemberOption]]:
+    """列出尚未绑定登录账号的党员档案，供开户页直接选人。
+
+    只回候选与定位信息，不含身份证号等档案内容；已关联账号的档案不再出现，
+    避免"一个档案两个账号"。
+    """
+    target = await IdentityService(db, user).tenant(tenant_id)
+    with bypass_tenant_filter():
+        rows = (
+            (
+                await db.execute(
+                    select(MemberProfile)
+                    .where(
+                        MemberProfile.tenant_id == str(target.id),
+                        MemberProfile.user_id.is_(None),
+                        MemberProfile.is_active.is_(True),
+                    )
+                    .order_by(MemberProfile.org_name, MemberProfile.name)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return APIResponse(
+        data=[
+            AccountMemberOption(
+                id=str(row.id),
+                name=row.name,
+                org_name=row.org_name,
+                org_unit_id=str(row.org_unit_id) if row.org_unit_id else None,
+                current_stage=row.current_stage,
+            )
+            for row in rows
+        ],
+        trace_id=getattr(request.state, "trace_id", None),
+    )
+
+
 @router.post(
     "/admin/users",
     response_model=APIResponse[AccountCreated],
@@ -90,11 +147,33 @@ async def create_account(
     """
     target = str((await IdentityService(db, user).tenant(tenant_id)).id)
     with bypass_tenant_filter():
+        # 指定党员档案时，人员的姓名与归属以档案为准：名册才是组织关系的事实来源，
+        # 开户表单里的同名/同组织输入只用于未选档案的手工开户。
+        profile: MemberProfile | None = None
+        if body.member_id:
+            profile = (
+                await db.execute(
+                    select(MemberProfile)
+                    .where(
+                        MemberProfile.id == body.member_id,
+                        MemberProfile.tenant_id == target,
+                        MemberProfile.is_active.is_(True),
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if profile is None:
+                raise HTTPException(status_code=404, detail="党员档案不存在或已停用")
+            if profile.user_id:
+                raise HTTPException(status_code=409, detail="该党员档案已关联其他账号")
+        effective_org_id = (
+            str(profile.org_unit_id) if profile is not None and profile.org_unit_id else body.org_unit_id
+        )
         organization = (
             await db.execute(
                 select(OrgUnit)
                 .where(
-                    OrgUnit.id == body.org_unit_id,
+                    OrgUnit.id == effective_org_id,
                     OrgUnit.tenant_id == target,
                     OrgUnit.is_deleted.is_(False),
                     OrgUnit.org_type.in_(["school", "department", "branch"]),
@@ -119,7 +198,7 @@ async def create_account(
     account = User(
         tenant_id=target,
         username=body.username,
-        name=body.name,
+        name=profile.name if profile is not None else body.name,
         password_hash=await run_in_threadpool(hash_password, body.password.get_secret_value()),
         role=body.role,
         org_unit_id=str(organization.id),
@@ -132,6 +211,10 @@ async def create_account(
         # 用户名全局唯一；同时处理跨租户重名与并发创建，不泄露已有账号归属。
         await db.rollback()
         raise HTTPException(status_code=409, detail="用户名不可用，请更换后重试") from exc
+    if profile is not None:
+        # 建号即关联：档案与账号在同一事务内绑定，避免"账号建了但档案还空着"。
+        profile.user_id = str(account.id)
+        await db.flush()
     await audit_operation(
         db,
         request,
@@ -139,7 +222,11 @@ async def create_account(
         action="create",
         resource_type="user",
         resource_id=str(account.id),
-        new_value={"role": account.role.value, "org_unit_id": account.org_unit_id},
+        new_value={
+            "role": account.role.value,
+            "org_unit_id": account.org_unit_id,
+            **({"member_profile_id": str(profile.id)} if profile is not None else {}),
+        },
     )
     await db.commit()
     return APIResponse(

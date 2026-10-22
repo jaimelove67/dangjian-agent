@@ -97,12 +97,23 @@ export interface AccountCreateRequest {
   password: string
   role: UserRole
   org_unit_id: string
+  /** 选了党员档案时，姓名与所属组织以档案为准 */
+  member_id?: string
 }
 
 export interface AccountOrgOption {
   id: string
   name: string
   org_type: 'school' | 'department' | 'branch'
+}
+
+/** 尚未绑定登录账号的党员档案，开户时可直接选人 */
+export interface AccountMemberOption {
+  id: string
+  name: string
+  org_name: string
+  org_unit_id: string | null
+  current_stage: string
 }
 
 export interface AccountCreated extends UserInfo {

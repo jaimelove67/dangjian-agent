@@ -2,9 +2,9 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
-import { createAccount, listAccountOrganizations } from '@/api/admin'
+import { createAccount, listAccountOrganizations, listMemberCandidates } from '@/api/admin'
 import { listTenants, type TenantRecord } from '@/api/governance'
-import { ROLE_LABELS, type AccountCreated, type AccountOrgOption, type UserRole } from '@/api/types'
+import { ROLE_LABELS, type AccountCreated, type AccountMemberOption, type AccountOrgOption, type UserRole } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -25,12 +25,30 @@ const loadError = ref<unknown>(null)
 const creating = ref(false)
 const createError = ref<unknown>(null)
 const created = ref<AccountCreated | null>(null)
+// 建号时是否已顺手关联名册档案：关联过就不再提示"去关联"。
+const createdLinked = ref(false)
 const form = reactive({
   username: '', name: '', role: 'member' as UserRole, org_unit_id: '',
   password: '', confirm_password: '',
 })
 const roles = Object.keys(ROLE_LABELS) as UserRole[]
 const ORG_LABELS = { school: '学校', department: '院系', branch: '支部' }
+// 名册里尚未开户的人：选中即带出姓名与组织，建号时一并完成档案关联。
+const members = ref<AccountMemberOption[]>([])
+const selectedMemberId = ref('')
+const selectedMember = computed(() => members.value.find((m) => m.id === selectedMemberId.value) ?? null)
+const memberLocked = computed(() => Boolean(selectedMember.value?.org_unit_id))
+const STAGE_LABELS: Record<string, string> = {
+  applicant: '入党申请人', activist: '入党积极分子', candidate: '发展对象',
+  probationary: '预备党员', member: '正式党员',
+}
+watch(selectedMember, (member) => {
+  if (!member) return
+  form.name = member.name
+  if (member.org_unit_id) form.org_unit_id = member.org_unit_id
+  // 申请人只能落 applicant；其余阶段先按党员给，管理角色再手动改。
+  form.role = member.current_stage === 'applicant' ? 'applicant' : 'member'
+})
 const ROLE_ORG_TYPES: Partial<Record<UserRole, AccountOrgOption['org_type']>> = {
   school_admin: 'school', department_admin: 'department', branch_secretary: 'branch',
   organizer: 'branch', member: 'branch', applicant: 'branch',
@@ -83,11 +101,18 @@ async function loadOrganizations(): Promise<void> {
   finally { loading.value = false }
 }
 
-watch(selectedTenant, () => { void loadOrganizations() })
+async function loadMembers(): Promise<void> {
+  selectedMemberId.value = ''
+  if (tenantMissing.value) { members.value = []; return }
+  try { members.value = await listMemberCandidates(activeTenant.value || undefined) }
+  catch { members.value = [] }
+}
+
+watch(selectedTenant, () => { void loadOrganizations(); void loadMembers() })
 
 onMounted(async () => {
   await loadTenants()
-  await loadOrganizations()
+  await Promise.all([loadOrganizations(), loadMembers()])
 })
 
 async function submit(): Promise<void> {
@@ -96,11 +121,15 @@ async function submit(): Promise<void> {
   createError.value = null
   created.value = null
   try {
+    createdLinked.value = Boolean(selectedMemberId.value)
     created.value = await createAccount({
       username: form.username.trim(), name: form.name.trim(), role: form.role,
       org_unit_id: form.org_unit_id, password: form.password,
+      ...(selectedMemberId.value ? { member_id: selectedMemberId.value } : {}),
     }, activeTenant.value || undefined)
     Object.assign(form, { username: '', name: '', password: '', confirm_password: '' })
+    // 已开户的人不再出现在候选里，重新拉一次名册。
+    await loadMembers()
   } catch (error) {
     createError.value = error
   } finally {
@@ -117,7 +146,8 @@ async function submit(): Promise<void> {
       <h2 class="success__title"><AppIcon name="check" :size="17" />账号创建成功</h2>
       <p>{{ created.name }}（{{ created.username }}） · {{ ROLE_LABELS[created.role] }} · {{ created.org_name }}</p>
       <p>该账号现在可使用设置的密码登录。</p>
-      <p v-if="created.role === 'member' || created.role === 'applicant'">
+      <p v-if="createdLinked">已同步关联党员档案，本人登录后即可查看自己的档案与提交材料。</p>
+      <p v-else-if="created.role === 'member' || created.role === 'applicant'">
         党员与申请人都需在名册中关联本人档案后，才能查看档案与提交个人材料。
         <RouterLink to="/members">前往党员发展关联档案</RouterLink>
       </p>
@@ -141,6 +171,16 @@ async function submit(): Promise<void> {
       <EmptyState v-else-if="!organizations.length" title="尚未配置组织" :body="isPlatformAdmin ? '所选租户还没有登记组织。切换开户租户，或先到「管理与审核 → 组织与账号」登记组织。' : '请先由维护人员登记本单位的学校、院系或支部，再创建账号。'" icon="people" />
       <form v-else class="account-form" @submit.prevent="submit">
         <p class="account-form__intro">账号归属{{ isPlatformAdmin ? '所选租户' : '当前单位' }}。请按人员职责选择角色，所属组织决定其业务范围。</p>
+        <div v-if="members.length" class="field">
+          <label for="account-member" class="field__label">从党员名册选人（可选）</label>
+          <select id="account-member" v-model="selectedMemberId" class="select">
+            <option value="">手动填写新人员</option>
+            <option v-for="m in members" :key="m.id" :value="m.id">
+              {{ m.name }} · {{ m.org_name }} · {{ STAGE_LABELS[m.current_stage] ?? m.current_stage }}
+            </option>
+          </select>
+          <p class="field__hint">选中后姓名与所属组织以档案为准，账号创建时一并完成档案关联。</p>
+        </div>
         <fieldset class="form-grid" :disabled="creating">
           <legend class="u-sr">新账号信息</legend>
           <div class="field">
@@ -150,7 +190,8 @@ async function submit(): Promise<void> {
           </div>
           <div class="field">
             <label for="account-name" class="field__label">姓名</label>
-            <input id="account-name" v-model="form.name" class="input" maxlength="50" autocomplete="off" required />
+            <input id="account-name" v-model="form.name" class="input" maxlength="50" autocomplete="off" required :readonly="Boolean(selectedMember)" aria-describedby="name-hint" />
+            <p v-if="selectedMember" id="name-hint" class="field__hint">来自党员名册，如需修改请先在「党员发展」更正档案。</p>
           </div>
           <div class="field">
             <label for="account-role" class="field__label">角色</label>
@@ -160,12 +201,13 @@ async function submit(): Promise<void> {
           </div>
           <div class="field">
             <label for="account-org" class="field__label">所属组织</label>
-            <select id="account-org" v-model="form.org_unit_id" class="select" :disabled="!availableOrganizations.length" required aria-describedby="org-hint">
+            <select id="account-org" v-model="form.org_unit_id" class="select" :disabled="!availableOrganizations.length || memberLocked" required aria-describedby="org-hint">
               <option value="">请选择组织</option>
               <option v-for="org in availableOrganizations" :key="org.id" :value="org.id">{{ org.name }} · {{ ORG_LABELS[org.org_type] }}</option>
             </select>
-            <p id="org-hint" class="field__hint">{{ organizationHint }}</p>
+            <p id="org-hint" class="field__hint">{{ memberLocked ? '来自党员名册，与档案保持一致。' : organizationHint }}</p>
             <p v-if="!availableOrganizations.length" class="field__error" role="status">当前没有此角色可用的组织，请先登记组织或选择其他角色。</p>
+            <p v-else-if="memberLocked && !availableOrganizations.some((org) => org.id === form.org_unit_id)" class="field__error" role="status">档案所在组织的层级与所选角色不匹配，请调整角色。</p>
           </div>
           <div class="field">
             <label for="account-password" class="field__label">密码</label>
