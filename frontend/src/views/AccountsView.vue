@@ -17,7 +17,9 @@ const organizations = ref<AccountOrgOption[]>([])
 // 学校管理员只看到自己租户，下拉隐藏。
 const isPlatformAdmin = computed(() => session.state.user?.role === 'system_admin')
 const tenants = ref<TenantRecord[]>([])
-const selectedTenant = ref(session.state.user?.tenant_id ?? '')
+// 平台管理员不预选租户：同名/测试租户并存时，默认值选错等于白填一张表单。
+const selectedTenant = ref(isPlatformAdmin.value ? '' : (session.state.user?.tenant_id ?? ''))
+const tenantMissing = computed(() => isPlatformAdmin.value && !selectedTenant.value)
 const loading = ref(true)
 const loadError = ref<unknown>(null)
 const creating = ref(false)
@@ -66,11 +68,14 @@ async function loadTenants(): Promise<void> {
     // 只有学校租户有组织树，院系/支部租户开户另走治理页，这里不列。
     const rows = (await listTenants()).items.filter(row => row.is_active && row.tenant_type === 'school')
     tenants.value = rows
-    if (!rows.some(row => row.id === selectedTenant.value)) selectedTenant.value = rows[0]?.id ?? ''
+    if (selectedTenant.value && !rows.some(row => row.id === selectedTenant.value)) selectedTenant.value = ''
+    // 只有一个可选租户时替他选上；多个租户必须由人确认，避免落进同名测试租户。
+    if (rows.length === 1) selectedTenant.value = rows[0].id
   } catch (error) { loadError.value = error }
 }
 
 async function loadOrganizations(): Promise<void> {
+  if (tenantMissing.value) { organizations.value = []; loading.value = false; loadError.value = null; return }
   loading.value = true
   loadError.value = null
   try { organizations.value = await listAccountOrganizations(activeTenant.value || undefined) }
@@ -123,6 +128,7 @@ async function submit(): Promise<void> {
       <div v-if="isPlatformAdmin" class="field">
         <label for="account-tenant" class="field__label">开户租户</label>
         <select id="account-tenant" v-model="selectedTenant" class="select">
+          <option value="">请选择开户租户</option>
           <option v-for="row in tenants" :key="row.id" :value="row.id">{{ row.name }}</option>
         </select>
         <p class="field__hint">平台管理员须先选择学校租户；组织与账号都归属该租户，切换后组织列表随之刷新。</p>
@@ -131,6 +137,7 @@ async function submit(): Promise<void> {
       <ErrorState v-else-if="loadError" :error="loadError">
         <button class="btn btn--ghost" type="button" @click="loadOrganizations">重新加载组织</button>
       </ErrorState>
+      <EmptyState v-else-if="tenantMissing" title="请先选择开户租户" body="平台管理员要先选定学校租户，组织与账号都会归属该租户；切换租户后组织列表会自动刷新。" icon="people" />
       <EmptyState v-else-if="!organizations.length" title="尚未配置组织" :body="isPlatformAdmin ? '所选租户还没有登记组织。切换开户租户，或先到「管理与审核 → 组织与账号」登记组织。' : '请先由维护人员登记本单位的学校、院系或支部，再创建账号。'" icon="people" />
       <form v-else class="account-form" @submit.prevent="submit">
         <p class="account-form__intro">账号归属{{ isPlatformAdmin ? '所选租户' : '当前单位' }}。请按人员职责选择角色，所属组织决定其业务范围。</p>
