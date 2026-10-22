@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Iterable, Optional
 
 # 默认需要脱敏的字段名（大小写不敏感）
@@ -42,6 +43,23 @@ def mask_id_card(value: Any) -> Any:
     if len(text) < 10:
         return "***"
     return f"{text[:6]}********{text[-4:]}"
+
+
+_ID_CARD_IN_TEXT = re.compile(r"(?<!\d)(\d{17}[\dXx])(?!\d)")
+_MOBILE_IN_TEXT = re.compile(r"(?<!\d)(1[3-9]\d{9})(?!\d)")
+
+
+def mask_text(value: Any) -> Any:
+    """长文本里就地把身份证号、手机号脱敏，其余内容原样保留。
+
+    档案扫描件的识别文本几乎必然写着本人和证明人的身份证号、联系方式；
+    整段文本给组织人员核对时，按字段脱敏而不是原文直出。
+    """
+    text = _as_text(value)
+    if not text:
+        return value
+    text = _ID_CARD_IN_TEXT.sub(lambda m: f"{m.group(1)[:6]}********{m.group(1)[-4:]}", text)
+    return _MOBILE_IN_TEXT.sub(lambda m: f"{m.group(1)[:3]}****{m.group(1)[-4:]}", text)
 
 
 def mask_phone(value: Any) -> Any:

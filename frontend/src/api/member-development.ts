@@ -41,6 +41,21 @@ export interface MemberMaterial {
   embedding_allowed?: boolean
   redacted_fields?: string[]
   review_history?: MaterialRevision[]
+  // 扫描归档：能否打开原件、识别状态（none/done/skipped/failed）与实际识别页数
+  has_file?: boolean
+  ocr_status?: string
+  ocr_pages?: number
+  file_name?: string
+}
+
+/** 扫描件识别文本；text 已由服务端脱敏，note 是必须随文展示的边界说明 */
+export interface MaterialText {
+  material_id: string
+  material_type: string
+  ocr_status: string
+  ocr_pages: number
+  text: string
+  note: string
 }
 export interface StageHistory {
   id: string
@@ -315,6 +330,32 @@ export const memberDevelopmentApi = {
     },
   ): Promise<MemberMaterial> {
     return http.post(`${profileURL(id)}/materials`, body)
+  },
+  /** 扫描件归档：影像进文件卷，可选云端识别。cloud_ocr 未确认时服务端不会发送材料 */
+  scanMaterial(
+    id: string,
+    form: { material_type: string; reason: string; note?: string; cloud_ocr: boolean; file: File },
+  ): Promise<MemberMaterial & { scan_notes?: string[] }> {
+    const data = new FormData()
+    data.append('file', form.file)
+    data.append('material_type', form.material_type)
+    data.append('reason', form.reason)
+    data.append('note', form.note ?? '')
+    data.append('cloud_ocr', String(form.cloud_ocr))
+    return http.post(`${profileURL(id)}/materials/scan`, data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 180000,
+    })
+  },
+  materialText(id: string): Promise<MaterialText> {
+    return http.get(`/member-full/materials/${encodeURIComponent(id)}/text`)
+  },
+  /** 取档案材料原件（干事扫描归档件与本人自传件同一出口，服务端会校验组织范围并写审计） */
+  materialFile(profileId: string, materialId: string): Promise<Blob> {
+    return http.get(
+      `/member/roster/${encodeURIComponent(profileId)}/materials/${encodeURIComponent(materialId)}/file`,
+      { responseType: 'blob' },
+    )
   },
   reviewMaterial(
     id: string,

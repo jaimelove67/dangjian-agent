@@ -6,10 +6,11 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.audit import audit_operation
+from app.core.config import settings
 from app.core.desensitization import mask_id_card
 from app.core.security import Permission
 from app.db.session import get_db
@@ -28,6 +29,7 @@ from app.schemas.member_ext import (
     TransitionRequest,
     VoteBatch,
 )
+from app.services.member_archive_service import scan_supported
 from app.services.member_service import DECISION_BOUNDARY, MemberDevelopment, row_data
 
 router = APIRouter()
@@ -219,6 +221,77 @@ async def add_material(
         "member_material",
         str(material.id),
     )
+
+
+@router.post(
+    "/member-full/profiles/{profile_id}/materials/scan",
+    response_model=APIResponse[dict],
+    summary="扫描件归档（组织干事代扫）",
+    description=(
+        "把纸质档案扫描件归到该人员档案下：影像件加密存入文件卷，可选云端识别出文字。"
+        "归档只登记「组织已收到这份材料」，材料状态为待核验，是否通过仍须人工审核。"
+    ),
+    tags=["党员发展"],
+    dependencies=[Depends(_transition)],
+)
+async def archive_scan(
+    profile_id: str,
+    request: Request,
+    file: UploadFile = File(..., description="扫描件：PDF / PNG / JPG"),
+    material_type: str = Form(..., description="卷内目录中的材料类型"),
+    reason: str = Form(..., description="归档说明（4–200 字），写入审计"),
+    note: str = Form("", description="备注，随材料保存"),
+    cloud_ocr: bool = Form(False, description="是否允许云端识别；材料会出网，敏感级材料一律不识别"),
+    service: MemberDevelopment = Depends(member_service),
+) -> APIResponse[dict]:
+    name = file.filename or ""
+    if not name or len(name) > 255 or any(ord(char) < 32 or char in "/\\:" for char in name):
+        raise HTTPException(422, "文件名无效")
+    if not scan_supported(name):
+        raise HTTPException(415, "扫描件支持 PDF、PNG、JPG（TIF 请先转成 PDF）")
+    kind = material_type.strip()
+    if not kind or len(kind) > 100:
+        raise HTTPException(422, "请选择或填写材料类型（不超过 100 字）")
+    why = reason.strip()
+    if not 4 <= len(why) <= 200:
+        raise HTTPException(422, "请填写 4–200 字的归档说明，会写入审计记录")
+    if len(note.strip()) > 500:
+        raise HTTPException(422, "备注不能超过 500 字")
+    content = await file.read(settings.MAX_UPLOAD_SIZE + 1)
+    if not content:
+        raise HTTPException(422, "扫描件是空文件，请重新导出")
+    if len(content) > settings.MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            413, f"扫描件超过 {settings.MAX_UPLOAD_SIZE // 1024 // 1024}MB，请降分辨率或拆分后重传"
+        )
+
+    material, notes = await service.attach_scan(
+        profile_id,
+        file_name=name,
+        content=content,
+        material_type=kind,
+        note=note.strip(),
+        cloud_ocr=cloud_ocr,
+    )
+    data = service.material_view(material)
+    data["scan_notes"] = notes
+    return await respond(request, service, data, "archive_scan", "member_material", str(material.id))
+
+
+@router.get(
+    "/member-full/materials/{material_id}/text",
+    response_model=APIResponse[dict],
+    summary="查看扫描件的识别文本",
+    description="识别文本只作核对辅助：身份证号、手机号已脱敏，结论仍以影像原件为准。",
+    tags=["党员发展"],
+)
+async def material_text(
+    material_id: str,
+    request: Request,
+    service: MemberDevelopment = Depends(member_service),
+) -> APIResponse[dict]:
+    data = await service.material_text(material_id)
+    return await respond(request, service, data, "read_material_text", "member_material", material_id)
 
 
 @router.post(

@@ -101,6 +101,14 @@ class MemberMaterial(Base):
     submission_key: Mapped[str | None] = mapped_column(String(36), nullable=True)
     content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     content: Mapped[bytes | None] = deferred(mapped_column(LargeBinary, nullable=True))
+    # 扫描件归档（干事代扫）：影像件落在加密文件卷里，库里只留相对路径与识别结果。
+    # 不把二进制塞进 bytea——一份扫描件 5–20MB，上千人再加每日 pg_dump 就是几十 GB。
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    # 识别文本可能几万字，默认不随材料列表加载，只在「查看识别文本」时单独取
+    extracted_text: Mapped[str] = deferred(mapped_column(Text, nullable=False, default=""))
+    # none（无文件的纯登记）/ done / skipped（未开启识别或未同意出网）/ failed
+    ocr_status: Mapped[str] = mapped_column(String(20), nullable=False, default="none")
+    ocr_pages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class MemberStageHistory(Base):

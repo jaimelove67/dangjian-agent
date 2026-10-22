@@ -567,6 +567,22 @@ export const RELATION_STATUS_TONE: Record<RelationStatus, 'ok' | 'warn' | 'quiet
   transferred_out: 'quiet',
 }
 
+/** 党员档案卷内目录：扫描归档、人工登记与阶段材料核对共用同一份清单，口径必须一致 */
+export const ARCHIVE_MATERIAL_TYPES = [
+  '入党申请书',
+  '党组织谈话记录',
+  '思想汇报',
+  '培养考察记录',
+  '群众评议材料',
+  '党课培训证明',
+  '政治审查材料',
+  '公示情况报告',
+  '支部大会决议',
+  '上级审批意见',
+  '转正申请书',
+  '预备期考察记录',
+] as const
+
 export interface MemberRosterItem {
   user_id?: string | null
   id: string

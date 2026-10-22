@@ -10,8 +10,9 @@ import {
   type MemberMaterial,
   type MemberProfile,
   type MemberScoring,
+  type MaterialText,
 } from '@/api/member-development'
-import { STAGE_LABELS, STAGE_ORDER, type MemberStage } from '@/api/types'
+import { STAGE_LABELS, STAGE_ORDER, ARCHIVE_MATERIAL_TYPES, type MemberStage } from '@/api/types'
 import ActionDialog from '@/components/ActionDialog.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingBlock from '@/components/LoadingBlock.vue'
@@ -64,6 +65,24 @@ const material = reactive({
   submit_date: todayISO(),
   reason: '',
 })
+// 扫描件归档：组织干事把纸质档案扫描后挂到该人员名下。
+// 云端识别是"材料出网"，默认关闭，必须由人主动勾选；敏感级材料服务端也会拒绝识别。
+const scan = reactive({
+  material_type: ARCHIVE_MATERIAL_TYPES[0] as string,
+  reason: '',
+  note: '',
+  cloud_ocr: false,
+  file: null as File | null,
+  busy: false,
+  error: null as unknown,
+  notes: [] as string[],
+})
+const scanReady = computed(
+  () => Boolean(scan.file) && scan.reason.trim().length >= 4 && !scan.busy,
+)
+// 识别文本按材料缓存：同一份材料反复展开不重复请求
+const texts = reactive<Record<string, MaterialText | 'loading'>>({})
+const fileBusy = ref('')
 const reviewing = ref<MemberMaterial | null>(null)
 const review = reactive({
   review_status: 'approved' as 'approved' | 'rejected',
@@ -182,6 +201,79 @@ async function saveIdentity(): Promise<void> {
     })
     Object.assign(identity, { id_card_no: '', reason: '' })
   }, '身份证号已保存。它只用于开户时生成登录账号；已开户人员的登录名不会自动变更。')
+}
+
+function chooseScanFile(event: Event): void {
+  scan.file = (event.target as HTMLInputElement).files?.[0] ?? null
+  scan.error = null
+  scan.notes = []
+}
+
+async function submitScan(): Promise<void> {
+  if (!scanReady.value || !scan.file) return
+  scan.busy = true
+  scan.error = null
+  scan.notes = []
+  try {
+    const created = await api.scanMaterial(props.profileId, {
+      material_type: scan.material_type,
+      reason: scan.reason.trim(),
+      note: scan.note.trim(),
+      cloud_ocr: scan.cloud_ocr,
+      file: scan.file,
+    })
+    scan.notes = created.scan_notes ?? []
+    scan.file = null
+    scan.reason = ''
+    scan.note = ''
+    scan.cloud_ocr = false
+    await load()
+    emit('updated')
+    message.value = '扫描件已归档。材料状态为待核验，是否通过仍须人工审核。'
+  } catch (err) {
+    scan.error = err
+  } finally {
+    scan.busy = false
+  }
+}
+
+/** 识别文本按材料缓存：同一份材料反复展开不重复请求，再点一次收起 */
+async function toggleText(item: MemberMaterial): Promise<void> {
+  if (!item.id) return
+  if (texts[item.id]) {
+    delete texts[item.id]
+    return
+  }
+  texts[item.id] = 'loading'
+  try {
+    texts[item.id] = await api.materialText(item.id)
+  } catch (err) {
+    delete texts[item.id]
+    error.value = err
+  }
+}
+
+/** 打开原件：pdf / 图片走浏览器内联预览，不做二次下载弹窗 */
+async function openOriginal(item: MemberMaterial): Promise<void> {
+  if (!item.id || fileBusy.value) return
+  fileBusy.value = item.id
+  try {
+    const blob = await api.materialFile(props.profileId, item.id)
+    const name = (item.file_name || '').toLowerCase()
+    const type = name.endsWith('.pdf')
+      ? 'application/pdf'
+      : name.endsWith('.png')
+        ? 'image/png'
+        : 'image/jpeg'
+    const url = URL.createObjectURL(new Blob([blob], { type }))
+    window.open(url, '_blank', 'noopener')
+    // 预览页接住后释放，避免一次会话攒下几十个 blob
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  } catch (err) {
+    error.value = err
+  } finally {
+    fileBusy.value = ''
+  }
 }
 
 async function addMaterial(): Promise<void> {
@@ -379,6 +471,66 @@ async function archiveCheck(): Promise<void> {
               </div>
             </form>
           </details>
+          <details v-if="canManage" class="wb-disclosure">
+            <summary>扫描件归档（纸质档案转电子件）</summary>
+            <form class="wb-stack" @submit.prevent="submitScan">
+              <p class="wb-note">
+                一份材料一个文件：扫描件按卷内目录逐份归档，系统靠材料名称判断阶段材料是否齐备，
+                整袋扫成一个 PDF 会让核验一直不齐。影像件加密存文件卷，库里只留识别文本与元数据。
+              </p>
+              <div class="wb-grid">
+                <label class="wb-field"
+                  ><span>材料类型</span
+                  ><select v-model="scan.material_type" class="select" :disabled="scan.busy">
+                    <option v-for="name in ARCHIVE_MATERIAL_TYPES" :key="name" :value="name">
+                      {{ name }}
+                    </option>
+                  </select></label
+                >
+                <label class="wb-field"
+                  ><span>扫描件（PDF / PNG / JPG）</span
+                  ><input
+                    class="input"
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    :disabled="scan.busy"
+                    @change="chooseScanFile"
+                /></label>
+              </div>
+              <label class="wb-field"
+                ><span>归档说明（4–200 字，写入审计）</span
+                ><input
+                  v-model="scan.reason"
+                  class="input"
+                  maxlength="200"
+                  placeholder="例如：2026-10-22 集中扫描，原件存支部档案柜 3 号"
+                  :disabled="scan.busy"
+                  required
+              /></label>
+              <label class="wb-field"
+                ><span>备注（选填）</span
+                ><input v-model="scan.note" class="input" maxlength="500" :disabled="scan.busy"
+              /></label>
+              <label class="wb-check"
+                ><input v-model="scan.cloud_ocr" type="checkbox" :disabled="scan.busy" /><span
+                  >允许云端识别这份扫描件的文字（材料会发送到外部模型；不勾选只保存影像）</span
+                ></label
+              >
+              <p class="wb-note">
+                政治审查材料等敏感级材料即使勾选也不会出网识别，系统按密级直接拒绝，
+                只保留影像件。
+              </p>
+              <ErrorState v-if="scan.error" :error="scan.error" />
+              <ul v-if="scan.notes.length" class="wb-note">
+                <li v-for="(line, i) in scan.notes" :key="i">{{ line }}</li>
+              </ul>
+              <div class="wb-actions">
+                <button type="submit" class="btn btn--primary" :disabled="!scanReady">
+                  {{ scan.busy ? '归档中（识别较慢，请勿关闭页面）' : '归档扫描件' }}
+                </button>
+              </div>
+            </form>
+          </details>
           <p class="wb-note">
             材料登记记录名称、版本和人工核验结果。原件按学校档案流程留存，登记名称不代表已经核验。
           </p>
@@ -407,6 +559,40 @@ async function archiveCheck(): Promise<void> {
               </p>
               <p v-if="materialLevelNote(item)" class="u-meta">{{ materialLevelNote(item) }}</p>
               <p v-if="item.note">{{ item.note }}</p>
+              <p v-if="item.ocr_status && item.ocr_status !== 'none'" class="u-meta">
+                {{
+                  item.ocr_status === 'done'
+                    ? `已识别文字${item.ocr_pages ? `（${item.ocr_pages} 页）` : ''}`
+                    : item.ocr_status === 'failed'
+                      ? '识别失败，仅影像件可用'
+                      : '未识别文字，仅影像件可用'
+                }}
+              </p>
+              <div v-if="item.has_file && item.id" class="wb-actions">
+                <button
+                  class="btn btn--ghost btn--sm"
+                  type="button"
+                  :disabled="fileBusy === item.id"
+                  @click="openOriginal(item)"
+                >
+                  {{ fileBusy === item.id ? '打开中' : '查看原件' }}
+                </button>
+                <button
+                  v-if="item.ocr_status === 'done'"
+                  class="btn btn--ghost btn--sm"
+                  type="button"
+                  @click="toggleText(item)"
+                >
+                  {{ texts[item.id] ? '收起识别文本' : '查看识别文本' }}
+                </button>
+              </div>
+              <div v-if="item.id && texts[item.id]" class="wb-section wb-stack">
+                <p v-if="texts[item.id] === 'loading'" class="u-meta">正在读取识别文本…</p>
+                <template v-else>
+                  <p class="wb-note">{{ (texts[item.id] as MaterialText).note }}</p>
+                  <pre class="scan-text">{{ (texts[item.id] as MaterialText).text || '（没有识别出文字）' }}</pre>
+                </template>
+              </div>
               <button
                 v-if="canManage && item.id"
                 class="btn btn--ghost btn--sm"
@@ -783,3 +969,22 @@ async function archiveCheck(): Promise<void> {
     </ActionDialog>
   </div>
 </template>
+
+<style scoped>
+/* 识别文本是"辅助核对"材料：等宽、可滚动、限高，避免一份长材料把面板撑到几屏 */
+.scan-text {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-3, 12px);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-dim);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+</style>

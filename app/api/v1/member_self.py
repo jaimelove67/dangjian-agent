@@ -42,6 +42,7 @@ from app.schemas.member_self import (
     PersonalArchive,
     PersonalMaterial,
 )
+from app.services.file_store import read_member_archive
 from app.services.member_review_service import own_reviews as own_review_records
 from app.services.org_scope import accessible_org_units
 
@@ -380,6 +381,12 @@ async def _download(
     ).scalar_one_or_none()
     if record is None:
         raise HTTPException(404, "材料不存在")
+    # 扫描归档的材料二进制在文件卷里，本人自传的小文件仍在库内 content
+    body = record.content
+    if body is None and record.file_path:
+        body = read_member_archive(record.file_path, record.content_sha256)
+    if body is None:
+        raise HTTPException(404, "该材料没有原件文件，可能只是台账登记")
     await audit_operation(
         db,
         request,
@@ -391,7 +398,7 @@ async def _download(
     )
     await db.commit()
     return Response(
-        content=record.content,
+        content=body,
         media_type="application/octet-stream",
         headers={
             "Content-Disposition": (

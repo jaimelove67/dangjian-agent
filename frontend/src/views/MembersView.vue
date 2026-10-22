@@ -25,7 +25,7 @@ import type {
   TodoSuggestionsResponse,
   TransitionSuggestion,
 } from '@/api/types'
-import { STAGE_LABELS, STAGE_ORDER, TODO_CATEGORY_LABELS, RELATION_STATUS_LABELS, RELATION_STATUS_TONE } from '@/api/types'
+import { STAGE_LABELS, STAGE_ORDER, TODO_CATEGORY_LABELS, RELATION_STATUS_LABELS, RELATION_STATUS_TONE, ARCHIVE_MATERIAL_TYPES } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -103,20 +103,8 @@ const form = reactive({
   materials: [] as string[],
 })
 
-const MATERIAL_POOL = [
-  '入党申请书',
-  '党组织谈话记录',
-  '思想汇报',
-  '培养考察记录',
-  '群众评议材料',
-  '党课培训证明',
-  '政治审查材料',
-  '公示情况报告',
-  '支部大会决议',
-  '上级审批意见',
-  '转正申请书',
-  '预备期考察记录',
-]
+// 卷内目录与扫描归档共用一份清单，避免两处材料名称对不上导致核验永远不齐
+const MATERIAL_POOL = [...ARCHIVE_MATERIAL_TYPES]
 
 const selected = computed(() => members.value.find((m) => m.id === selectedId.value) ?? null)
 const personalOpen = ref(false)

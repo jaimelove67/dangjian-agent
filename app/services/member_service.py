@@ -6,6 +6,7 @@
 
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import yaml
 from fastapi import HTTPException
@@ -13,10 +14,11 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
 from app.core.config import tenant_config
 from app.core.decision_boundary import ASSISTED_REFERENCE_NOTE, STAGE_TRANSITION_NOTE, evidence_note
-from app.core.desensitization import mask_id_card
+from app.core.desensitization import mask_id_card, mask_text
 from app.models.meeting import ContentRevision
 from app.models.member import (
     MemberArchiveCheck,
@@ -31,6 +33,8 @@ from app.models.member import (
 from app.models.user import User
 from app.rules.data_sensitivity import (
     annotate_level,
+    cloud_allowed,
+    level_at_least,
     material_level,
     redact_third_party,
     viewer_level,
@@ -49,11 +53,18 @@ from app.schemas.member_ext import (
     TransitionRequest,
     VoteBatch,
 )
+from app.services.file_store import save_member_archive
+from app.services.member_archive_service import extract_scan_text
 from app.services.org_scope import visible_org_units
 from app.utils.snapshot import record_snapshot as row_data
 
 DECISION_BOUNDARY = STAGE_TRANSITION_NOTE
 BATCH_RULES_PATH = "config/business_rules.yaml"
+#: 识别文本的边界说明：随文本一起返回，界面必须显示——识别不是原件
+OCR_BOUNDARY_NOTE = (
+    "以下文字由系统从扫描件识别/抽取，可能存在误差或错字；"
+    "材料内容与是否通过核验，仍以影像原件与人工核对为准。其中的身份证号、手机号已脱敏。"
+)
 
 
 def utc_now() -> datetime:
@@ -238,6 +249,91 @@ class MemberDevelopment:
             raise HTTPException(409, "该身份证号已被其他账号用作登录名，请先核对")
         profile.id_card_no = id_card_no
 
+    async def attach_scan(
+        self,
+        profile_id: str,
+        *,
+        file_name: str,
+        content: bytes,
+        material_type: str,
+        note: str = "",
+        cloud_ocr: bool = False,
+        submit_date: date | None = None,
+    ) -> tuple[MemberMaterial, list[str]]:
+        """干事代扫归档：影像进加密文件卷，识别文本入台账，材料记为待核验。
+
+        归档与核验是两件事：这里只登记"组织已经收到这份材料"，是否通过仍要人工审核。
+        """
+        profile = await self.profile(profile_id, lock=True)
+        material_id = str(uuid4())
+        stored = save_member_archive(self.tenant_id, material_id, content)
+        level = material_level(material_type)
+        # 敏感 / 涉密材料不出网：勾了云端识别也不发，只留影像
+        cloud = cloud_ocr and cloud_allowed(level)
+        scan = await extract_scan_text(
+            content,
+            file_name=file_name,
+            cloud_ocr=cloud,
+            context={"tenant_id": self.tenant_id, "user_id": str(self.user.id)},
+        )
+        notes = list(scan.notes)
+        if cloud_ocr and not cloud:
+            notes.insert(0, "该材料按密级不允许出网识别，已只保存影像件。")
+        material = MemberMaterial(
+            id=material_id,
+            tenant_id=self.tenant_id,
+            profile_id=str(profile.id),
+            org_unit_id=profile.org_unit_id or "",
+            stage=profile.current_stage,
+            material_type=material_type,
+            data_level=level.value,
+            file_version="扫描归档",
+            submit_date=submit_date or date.today(),
+            submitter_id=str(self.user.id),
+            review_status="pending",
+            note=note,
+            title=material_type,
+            category="archive",
+            description="组织扫描归档",
+            file_name=file_name,
+            file_size=stored["size"],
+            content_sha256=stored["sha256"],
+            file_path=stored["path"],
+            extracted_text=scan.text,
+            ocr_status=scan.status,
+            ocr_pages=scan.pages,
+        )
+        self.db.add(material)
+        await self.db.flush()
+        return material, notes
+
+    async def material_text(self, material_id: str) -> dict[str, Any]:
+        """读取识别文本：先校验材料属于本人可见档案，再单独取 deferred 列。"""
+        record = await self.db.scalar(
+            select(MemberMaterial)
+            .options(undefer(MemberMaterial.extracted_text))
+            .where(
+                MemberMaterial.id == material_id,
+                MemberMaterial.tenant_id == self.tenant_id,
+                MemberMaterial.is_deleted.is_(False),
+            )
+        )
+        if record is None:
+            raise HTTPException(404, "材料不存在")
+        await self.profile(str(record.profile_id))
+        level = record.data_level or material_level(record.material_type).value
+        viewer = viewer_level(self.user)
+        if not level_at_least(viewer, level):
+            raise HTTPException(403, "这份材料的敏感级别高于你的查看权限")
+        return {
+            "material_id": str(record.id),
+            "material_type": record.material_type,
+            "ocr_status": record.ocr_status,
+            "ocr_pages": record.ocr_pages,
+            "text": mask_text(record.extracted_text or ""),
+            "note": OCR_BOUNDARY_NOTE,
+        }
+
     async def save_profile_revision(self, profile: MemberProfile, action: str, reason: str) -> None:
         latest = await self.db.scalar(
             select(func.max(ContentRevision.revision)).where(
@@ -297,6 +393,10 @@ class MemberDevelopment:
         ``list_materials``。
         """
         data = row_data(material)
+        # 识别文本可能几万字：回显只给状态与页数，正文单独走 material_text
+        data.pop("extracted_text", None)
+        data.pop("file_path", None)
+        data["has_file"] = bool(getattr(material, "file_path", "") or data.get("content_sha256"))
         level = data.get("data_level") or material_level(data.get("material_type")).value
         data.update(annotate_level(level))
         return data
@@ -318,7 +418,15 @@ class MemberDevelopment:
             .scalars()
             .all()
         )
-        items = [row_data(record) for record in records]
+        items = []
+        for record in records:
+            data = row_data(record)
+            # 影像件在文件卷里，路径不对外露；界面只关心"能不能打开原件"。
+            # 识别正文可能几万字，列表不返回（同一个会话里对象被 undefer 过也要摘掉）
+            data.pop("file_path", None)
+            data.pop("extracted_text", None)
+            data["has_file"] = bool(record.file_path or record.content_sha256)
+            items.append(data)
         if records:
             revisions = (
                 (
