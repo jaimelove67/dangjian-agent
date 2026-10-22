@@ -44,8 +44,9 @@ export interface JobRecord {
   created_at: string; error_code: string | null; result: { processed?: number } | null
 }
 export interface AuditRecord {
-  id: string; user_id: string; action: string; resource_type: string; resource_id: string | null
+  id: string; user_id: string; user_name: string; action: string; resource_type: string; resource_id: string | null
   data_level: string; result: string; request_id: string; created_at: string; ip_address: string | null
+  old_value?: Record<string, unknown> | null; new_value?: Record<string, unknown> | null
 }
 export interface Operations {
   jobs: Record<string, number>; reviews: Record<string, number>
@@ -142,8 +143,10 @@ export const getGovernance = () => http.get<never, GovernanceConfig>('/admin/gov
 export const getRetentionReport = () => http.get<never, RetentionReport>('/admin/retention')
 export const saveGovernance = (body: {expected_version: number; reason: string; values: GovernanceValues}) =>
   http.patch<never, GovernanceConfig>('/admin/governance', body)
-export const listReviews = (page = 1) =>
-  http.get<never, {items: ReviewRecord[]; has_more: boolean; total: number}>('/admin/reviews', {params: {page}})
+export const listReviews = (page = 1, status = '') =>
+  http.get<never, {items: ReviewRecord[]; has_more: boolean; total: number}>('/admin/reviews', {
+    params: status ? { page, status } : { page },
+  })
 export const getReview = (id: string) =>
   http.get<never, ReviewRecord>('/admin/reviews/' + encodeURIComponent(id))
 export const submitReview = (body: {source_kind: string; source_id: string; year: number; round: number}) =>
@@ -151,7 +154,8 @@ export const submitReview = (body: {source_kind: string; source_id: string; year
 export const decideReview = (id: string, body: {decision: string; source_version: string; opinion: string}) =>
   http.post<never, ReviewRecord>('/admin/reviews/' + encodeURIComponent(id) + '/decision', body)
 export const getOperations = () => http.get<never, Operations>('/admin/operations')
-export const listJobs = () => http.get<never, {items: JobRecord[]}>('/admin/jobs')
+export const listJobs = (page = 1) =>
+  http.get<never, {items: JobRecord[]; page: number; total: number}>('/admin/jobs', {params: {page}})
 export const queueJob = (body: {kind: string; dedup_key: string; document_ids: string[]}) =>
   http.post<never, JobRecord>('/admin/jobs', body)
 export const listAudit = (params: Record<string, string | number>) =>

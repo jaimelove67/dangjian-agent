@@ -18,7 +18,8 @@ class AccountCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=50)
     password: SecretStr = Field(..., min_length=8, max_length=72)
     role: UserRole
-    org_unit_id: str = Field(..., min_length=1, max_length=36)
+    # 系统管理员不属于任何学校组织；其余角色必须绑定有效组织（服务层校验）。
+    org_unit_id: str | None = Field(None, min_length=1, max_length=36)
     # 从名册开户：指定既有党员档案后，姓名与所属组织以档案为准，并在同一事务内
     # 回写 member_profiles.user_id，省掉"先建号再关联"的第二步。
     member_id: str | None = Field(None, max_length=36, description="关联既有党员档案（可选）")

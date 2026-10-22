@@ -261,6 +261,15 @@ def test_system_admin_can_assign_each_supported_role(workspace, role, org):
     assert response.json()["data"]["role"] == role
 
 
+def test_system_admin_can_be_created_without_school_org(workspace):
+    """平台级账号不属于学校组织；此前接口强制要求 org_unit_id，治理页选了系统管理员必然 403。"""
+    response = create(workspace, role="system_admin", org_unit_id=None)
+    assert response.status_code == 201
+    assert response.json()["data"]["role"] == "system_admin"
+    assert response.json()["data"]["org_unit_id"] is None
+    assert response.json()["data"]["org_name"] == ""
+
+
 @pytest.mark.parametrize("organization", ["branch-b", "deleted-a", "invalid-a", "missing"])
 def test_foreign_deleted_or_missing_organization_is_rejected(workspace, organization):
     assert create(workspace, org_unit_id=organization).status_code == 403

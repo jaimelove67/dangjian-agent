@@ -136,6 +136,14 @@ class ReviewService:
         return current, service, source
 
     async def visible_reviews(self) -> list[dict[str, Any]]:
+        # 只取当前角色有权审核的业务类型：否则一条中心组学习审核就会让没有
+        # study.review 的支部书记在查看台账时整页 403。权限过滤前置到查询层，
+        # 不把“看不到”交给逐行 view() 抛异常。
+        allowed_kinds = [
+            kind
+            for kind, permission in PERMISSIONS.items()
+            if has_permission(self.user.role, permission)
+        ]
         # 历史量过大时明确拒绝全量统计，不能返回误导的审核积压。
         rows = list(
             (
@@ -144,6 +152,7 @@ class ReviewService:
                     .where(
                         HumanReview.tenant_id == str(self.user.tenant_id),
                         HumanReview.is_deleted.is_(False),
+                        HumanReview.source_kind.in_(allowed_kinds),
                     )
                     .order_by(HumanReview.created_at.desc(), HumanReview.id)
                     .limit(5001)
@@ -160,7 +169,9 @@ class ReviewService:
             try:
                 item = await self.view(row)
             except HTTPException as exc:
-                if exc.status_code == 404:
+                # 404：来源已删除或不在授权范围；403：角色没有该业务的审核权限。
+                # 两种情况都只代表"这条台账对我不可见"，不能让整页查询失败。
+                if exc.status_code in {403, 404}:
                     continue
                 raise
             key = fingerprint(row.snapshot["parameters"])

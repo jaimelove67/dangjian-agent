@@ -24,7 +24,7 @@ from app.core import request_audit
 from app.core.config import settings, tenant_config
 from app.core.tenant import bypass_tenant_filter, tenant_context
 from app.models.audit import AuditLog
-from app.models.governance import DurableJob
+from app.models.governance import DurableJob, HumanReview
 from app.models.member import MemberCultivation, MemberProfile, MemberVote
 from app.models.org import OrgUnit
 from app.models.tenant import Tenant
@@ -184,6 +184,37 @@ async def seed(db):
         db.add_all([school, root, branch, author, reviewer])
         await db.commit()
     return school, root, branch, author, reviewer
+
+
+async def test_review_list_skips_kinds_the_reviewer_cannot_audit(native):
+    """支部角色没有 study.review：租户里存在学习审核时，台账应跳过而不是整页 403。"""
+    _, maker = native
+    async with maker() as db:
+        school, _, _, author, reviewer = await seed(db)
+        with bypass_tenant_filter():
+            db.add(
+                HumanReview(
+                    tenant_id=school.id,
+                    source_kind="study_activity",
+                    source_id="not-authorized-source",
+                    source_version="a" * 64,
+                    snapshot={
+                        "parameters": {
+                            "source_kind": "study_activity",
+                            "source_id": "not-authorized-source",
+                            "year": 2026,
+                            "round": 1,
+                        },
+                        "content": {},
+                    },
+                    status="pending",
+                    submitted_by=str(reviewer.id),
+                )
+            )
+            await db.commit()
+        with tenant_context(school.id, author.id):
+            visible = await ReviewService(db, author).visible_reviews()
+        assert visible == []
 
 
 async def test_failed_business_transaction_keeps_independent_audit_and_rejects_mutation(native):

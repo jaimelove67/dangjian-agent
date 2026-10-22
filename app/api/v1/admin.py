@@ -171,23 +171,29 @@ async def create_account(
         effective_org_id = (
             str(profile.org_unit_id) if profile is not None and profile.org_unit_id else body.org_unit_id
         )
-        organization = (
-            await db.execute(
-                select(OrgUnit)
-                .where(
-                    OrgUnit.id == effective_org_id,
-                    OrgUnit.tenant_id == target,
-                    OrgUnit.is_deleted.is_(False),
-                    OrgUnit.org_type.in_(["school", "department", "branch"]),
+        organization: OrgUnit | None = None
+        if effective_org_id:
+            organization = (
+                await db.execute(
+                    select(OrgUnit)
+                    .where(
+                        OrgUnit.id == effective_org_id,
+                        OrgUnit.tenant_id == target,
+                        OrgUnit.is_deleted.is_(False),
+                        OrgUnit.org_type.in_(["school", "department", "branch"]),
+                    )
+                    .with_for_update()
                 )
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
-        if organization is None:
+            ).scalar_one_or_none()
+            if organization is None:
+                raise HTTPException(status_code=403, detail="请选择当前租户内的有效组织")
+        # 系统管理员是平台/租户级账号，不绑定学校组织；其余角色必须落在组织上。
+        if organization is None and body.role != UserRole.SYSTEM_ADMIN:
             raise HTTPException(status_code=403, detail="请选择当前租户内的有效组织")
-        expected_types = ROLE_ORG_TYPES.get(body.role)
-        if expected_types and organization.org_type not in expected_types:
-            raise HTTPException(status_code=422, detail="所选角色与组织类型不匹配")
+        if organization is not None:
+            expected_types = ROLE_ORG_TYPES.get(body.role)
+            if expected_types and organization.org_type not in expected_types:
+                raise HTTPException(status_code=422, detail="所选角色与组织类型不匹配")
 
         # 登录账号优先取档案身份证号：学校习惯用身份证登录，也省掉手敲 18 位的错误。
         username = (
@@ -213,7 +219,7 @@ async def create_account(
         name=profile.name if profile is not None else body.name,
         password_hash=await run_in_threadpool(hash_password, body.password.get_secret_value()),
         role=body.role,
-        org_unit_id=str(organization.id),
+        org_unit_id=str(organization.id) if organization is not None else None,
         is_active=True,
     )
     db.add(account)
@@ -242,7 +248,10 @@ async def create_account(
     )
     await db.commit()
     return APIResponse(
-        data=AccountCreated(**UserInfo.from_user(account).model_dump(), org_name=organization.name),
+        data=AccountCreated(
+            **UserInfo.from_user(account).model_dump(),
+            org_name=organization.name if organization is not None else "",
+        ),
         trace_id=getattr(request.state, "trace_id", None),
     )
 

@@ -109,4 +109,4 @@ docker compose -f docker-compose.server.yml down -v   # 删除数据卷
 - 纪要三栏目（学习要点 / 讨论共识 / 工作要求）必须走 `generate-minutes` 从原文抽取，手填 `transcript` 不算。
 - 考核指标口径：`formula=sum` 只能配 `source=manual` 且 `source_options.measure=sum`，否则 422。
 - 归集确认前，任务必须**逐条审核通过**，否则归集结果记「来源记录含未审核内容」，归集审核会被 409 拦住。
-- `POST /api/v1/admin/users` 密码最少 12 位（schema 约束），演示统一用 `Demo@2026hnky`。
+- `POST /api/v1/admin/users` 密码最少 8 位（schema 约束），演示统一用 `Demo@2026hnky`。
