@@ -17,7 +17,7 @@
 - `GET /admin/org-units` 支持 `?tenant_id=`（平台管理员跨租户）；`/accounts` 页有「开户租户」下拉，**不预选**，只有唯一可选租户时才自动选中。
 - **身份证号 = 登录账号（2026-10-22，迁移 024）**：`member_profiles.id_card_no`（VARCHAR 32，明文，登录名必须可核对）。档案有号时开户可省略 `username`，服务端直接用它；候选接口 `GET /admin/member-candidates` 只回 `id_card_masked`（前 6 + **** + 后 4），完整号不出网。列表/审计/编辑回显统一走 `identity_service.masked_username`（18 位身份证才脱敏，工号原样）。实测：不传 username 建号 201、列表显示 `430102********9999`。
 - 名册登记表单（`MembersView`）身份证号**必填**且按 18 位校验（`MemberCreateRequest.check_id_card`，末位 X 统一大写）；开户页登录账号也按 18 位校验，档案缺号时禁用提交并提示去补录（5679e56）。
-- **档案补录身份证（2026-10-22，本地已改未部署）**：`ProfileUpdate` 已含可选 `id_card_no`（18 位、空串 422、同租户档案唯一 + 不撞账号登录名，冲突 409）；前端两处入口——`MemberFilePanel`「补录/更正身份证号」、`AccountsView` 缺号时就地补录。补录**不改**已开户账号的登录名（`UserUpdate` 无 username 字段）。档案读接口统一走 `member_full.profile_payload()`：`id_card_no` → `id_card_masked`，版本快照同样脱敏（此前详情接口与审计是**明文**）。
+- **档案补录身份证（2026-10-22 已上线）**：`ProfileUpdate` 已含可选 `id_card_no`（18 位、空串 422、同租户档案唯一 + 不撞账号登录名，冲突 409）；前端两处入口——`MemberFilePanel`「补录/更正身份证号」、`AccountsView` 缺号时就地补录。补录**不改**已开户账号的登录名（`UserUpdate` 无 username 字段）。档案读接口统一走 `member_full.profile_payload()`：`id_card_no` → `id_card_masked`，版本快照同样脱敏（此前详情接口与审计是**明文**）。
 - `audit_logs` 对 422 只记 route/method/status/duration，不记错误正文。
 
 ## 前端（frontend/）
