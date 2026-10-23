@@ -65,6 +65,10 @@ class AccountMemberOption(BaseModel):
     org_unit_id: str | None
     current_stage: str
     id_card_masked: str | None = None
+    # 现任负责人职务（来自组织任职记录）：开户页据此预选角色，
+    # 否则书记也会被默认开成普通党员，登录后什么都管不了。
+    leader_title: str | None = None
+    leader_org_name: str | None = None
 
 
 class AccountCreated(UserInfo):

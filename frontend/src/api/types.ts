@@ -117,6 +117,9 @@ export interface AccountMemberOption {
   current_stage: string
   /** 身份证号脱敏值；非空表示可直接用身份证号开户 */
   id_card_masked: string | null
+  /** 现任负责人职务（来自组织任职记录），开户时据此预选角色 */
+  leader_title: string | null
+  leader_org_name: string | null
 }
 
 export interface AccountCreated extends UserInfo {

@@ -23,7 +23,7 @@ from app.db.session import get_db
 from app.deps import require_permissions, require_roles
 from app.models.audit import AuditLog
 from app.models.member import MemberProfile
-from app.models.org import OrgUnit
+from app.models.org import OrgLeaderTerm, OrgUnit
 from app.models.user import User, UserRole
 from app.schemas.admin import (
     AccountCreated,
@@ -111,6 +111,34 @@ async def member_candidates(
             .scalars()
             .all()
         )
+        # 现任负责人职务：开户页据此预选角色。任职记录只按姓名登记，
+        # 同名同组织时以最后一条在任记录为准（当前数据模型没有 profile_id 关联）。
+        leader_rows = (
+            (
+                await db.execute(
+                    select(OrgLeaderTerm).where(
+                        OrgLeaderTerm.tenant_id == str(target.id),
+                        OrgLeaderTerm.is_primary.is_(True),
+                        OrgLeaderTerm.ended_on.is_(None),
+                        OrgLeaderTerm.is_deleted.is_(False),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        leader_by_name = {row.name: row for row in leader_rows}
+        org_names = {
+            str(row.id): row.name
+            for row in (
+                await db.execute(
+                    select(OrgUnit).where(
+                        OrgUnit.tenant_id == str(target.id), OrgUnit.is_deleted.is_(False)
+                    )
+                )
+            )
+            .scalars()
+        }
     return APIResponse(
         data=[
             AccountMemberOption(
@@ -120,6 +148,12 @@ async def member_candidates(
                 org_unit_id=str(row.org_unit_id) if row.org_unit_id else None,
                 current_stage=row.current_stage,
                 id_card_masked=mask_id_card(row.id_card_no) if row.id_card_no else None,
+                leader_title=(leader_by_name.get(row.name).title if leader_by_name.get(row.name) else None),
+                leader_org_name=(
+                    org_names.get(str(leader_by_name[row.name].org_unit_id))
+                    if row.name in leader_by_name
+                    else None
+                ),
             )
             for row in rows
         ],

@@ -92,12 +92,23 @@ async function saveIdCard(): Promise<void> {
     idCardDraft.saving = false
   }
 }
+// 按任职职务预选角色：支部书记→支部管理员，党总支/院系书记→院系管理员，党委书记→学校管理员。
+// 否则名册里的书记会被默认开成普通党员，登录后连审批入口都看不到。
+function roleFromLeaderTitle(title: string | null | undefined): UserRole | null {
+  const text = (title ?? '').trim()
+  if (!text) return null
+  if (text.includes('支部')) return 'branch_secretary'
+  if (text.includes('总支') || text.includes('院系')) return 'department_admin'
+  if (text.includes('党委')) return 'school_admin'
+  return null
+}
 watch(selectedMember, (member) => {
   form.username = ''
   if (!member) return
   form.name = member.name
   if (member.org_unit_id) form.org_unit_id = member.org_unit_id
-  form.role = APPLICANT_STAGES.includes(member.current_stage) ? 'applicant' : 'member'
+  const byTitle = roleFromLeaderTitle(member.leader_title)
+  form.role = byTitle ?? (APPLICANT_STAGES.includes(member.current_stage) ? 'applicant' : 'member')
 })
 const ROLE_ORG_TYPES: Partial<Record<UserRole, AccountOrgOption['org_type']>> = {
   school_admin: 'school', department_admin: 'department', branch_secretary: 'branch',
@@ -228,13 +239,13 @@ async function submit(): Promise<void> {
           <select id="account-member" v-model="selectedMemberId" class="select">
             <option value="">手动填写新人员</option>
             <option v-for="m in members" :key="m.id" :value="m.id">
-              {{ m.name }} · {{ m.org_name }} · {{ STAGE_LABELS[m.current_stage] ?? m.current_stage }}{{ m.id_card_masked ? '' : '（缺身份证，暂不可开户）' }}
+              {{ m.name }} · {{ m.org_name }} · {{ m.leader_title || (STAGE_LABELS[m.current_stage] ?? m.current_stage) }}{{ m.id_card_masked ? '' : '（缺身份证，暂不可开户）' }}
             </option>
           </select>
           <p class="field__hint">
             选中后姓名与所属组织以档案为准，账号创建时一并完成档案关联。
             <template v-if="selectedMember">
-              已按「{{ STAGE_LABELS[selectedMember.current_stage] ?? selectedMember.current_stage }}」推断角色为「{{ ROLE_LABELS[form.role] }}」，可按需调整。
+              已按{{ selectedMember.leader_title ? `任职职务「${selectedMember.leader_title}」` : `「${STAGE_LABELS[selectedMember.current_stage] ?? selectedMember.current_stage}」` }}推断角色为「{{ ROLE_LABELS[form.role] }}」，可按需调整。
             </template>
           </p>
         </div>
