@@ -2,6 +2,7 @@
 
 import re
 import uuid
+from datetime import date
 from typing import Any
 
 from fastapi import HTTPException
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.desensitization import mask_id_card
 from app.core.security import hash_password
 from app.core.tenant import bypass_tenant_filter
-from app.models.org import OrgUnit
+from app.models.org import OrgLeaderTerm, OrgUnit
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 
@@ -38,9 +39,22 @@ def masked_username(value: str) -> str:
 
 
 def public_record(row: Any) -> dict[str, Any]:
+    # 任职记录有自己的对外形状（日期 ISO、is_current 推导），不走字段白名单
+    if isinstance(row, OrgLeaderTerm):
+        return leader_payload(row)
     fields = {
         Tenant: ("id", "name", "tenant_type", "parent_id", "is_active", "config_version"),
-        OrgUnit: ("id", "name", "org_type", "parent_id", "is_active", "path"),
+        OrgUnit: (
+            "id",
+            "name",
+            "org_type",
+            "parent_id",
+            "is_active",
+            "path",
+            "leader_name",
+            "leader_title",
+            "leader_phone",
+        ),
         User: ("id", "username", "name", "role", "org_unit_id", "is_active"),
     }[type(row)]
     data = {key: getattr(row, key) for key in fields}
@@ -48,6 +62,22 @@ def public_record(row: Any) -> dict[str, Any]:
     if isinstance(row, User) and data.get("username"):
         data["username"] = masked_username(str(data["username"]))
     return data
+
+
+def leader_payload(row: OrgLeaderTerm) -> dict[str, Any]:
+    """任职记录的对外形状：日期转 ISO 字符串，``is_current`` 由离任日期推导"""
+    return {
+        "id": row.id,
+        "org_unit_id": row.org_unit_id,
+        "name": row.name,
+        "title": row.title,
+        "phone": row.phone,
+        "started_on": row.started_on.isoformat() if row.started_on else None,
+        "ended_on": row.ended_on.isoformat() if row.ended_on else None,
+        "is_primary": row.is_primary,
+        "is_current": row.ended_on is None,
+        "remark": row.remark,
+    }
 
 
 async def is_platform_admin(db: AsyncSession, user: User) -> bool:
@@ -229,12 +259,219 @@ class IdentityService:
         if values.get("is_active") is False and row.id == self.user.org_unit_id:
             raise HTTPException(409, "不能停用当前管理员所在组织")
         for key, value in values.items():
-            if key != "parent_id" and value is None:
+            # 上级组织可空（学校是根）；负责人姓名/职务/电话是选填联络信息，允许清空。
+            if key not in {"parent_id", "leader_name", "leader_title", "leader_phone"} and value is None:
                 raise HTTPException(422, "字段不能为空")
             setattr(row, key, value)
         self.validate_tree(rows)
         await self.db.flush()
+        # 组织表单直接填的现任负责人，也要落到任职履历里，否则两个入口各写一套、互相打架
+        await self.ensure_primary_term(str(tenant.id), row)
+        await self.db.flush()
         return row
+
+    async def ensure_primary_term(self, tenant_id: str, org: OrgUnit) -> None:
+        """组织入口改写现任负责人时同步任职记录；没有在任记录就补一条"""
+        if not org.leader_name:
+            return
+        with bypass_tenant_filter():
+            current = await self.db.scalar(
+                select(OrgLeaderTerm).where(
+                    OrgLeaderTerm.tenant_id == tenant_id,
+                    OrgLeaderTerm.org_unit_id == org.id,
+                    OrgLeaderTerm.is_deleted.is_(False),
+                    OrgLeaderTerm.is_primary.is_(True),
+                    OrgLeaderTerm.ended_on.is_(None),
+                )
+            )
+        if current:
+            if (current.name, current.title, current.phone) != (
+                org.leader_name,
+                org.leader_title,
+                org.leader_phone,
+            ):
+                current.name = org.leader_name
+                current.title = org.leader_title or current.title
+                current.phone = org.leader_phone
+            return
+        self.db.add(
+            OrgLeaderTerm(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                org_unit_id=str(org.id),
+                name=org.leader_name,
+                title=org.leader_title or "负责人",
+                phone=org.leader_phone,
+                is_primary=True,
+            )
+        )
+
+    async def org_leaders(
+        self, target: str | None = None, org_unit_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """任职记录：默认返回本租户全部，按组织、在任优先、任职时间倒序"""
+        tenant = await self.tenant(target)
+        conditions = [
+            OrgLeaderTerm.tenant_id == tenant.id,
+            OrgLeaderTerm.is_deleted.is_(False),
+        ]
+        if org_unit_id:
+            conditions.append(OrgLeaderTerm.org_unit_id == org_unit_id)
+        # 跨租户管理（平台管理员管下级学校）时，ORM 的自动租户过滤按"操作者租户"生效，
+        # 会把目标租户的数据全部滤掉。租户隔离已由 where tenant_id == X 保证，这里显式绕过。
+        with bypass_tenant_filter():
+            rows = (
+                await self.db.execute(
+                    select(OrgLeaderTerm)
+                    .where(*conditions)
+                    .order_by(
+                        OrgLeaderTerm.org_unit_id,
+                        OrgLeaderTerm.ended_on.is_(None).desc(),
+                        OrgLeaderTerm.is_primary.desc(),
+                        OrgLeaderTerm.started_on.desc().nullslast(),
+                        OrgLeaderTerm.created_at.desc(),
+                    )
+                )
+            ).scalars()
+            return [leader_payload(row) for row in rows]
+
+    async def save_org_leader(
+        self, target: str | None, values: dict[str, Any], record_id: str | None = None
+    ) -> OrgLeaderTerm:
+        """新增或修改一段任职。
+
+        离任不删记录，只写 ``ended_on``；同一组织同时只能有一位在任主要负责人，
+        新设主要负责人会把同组织其他人的 ``is_primary`` 置否，避免出现"两个书记"。
+        """
+        tenant = await self.tenant(target, lock=True)
+        if not tenant.is_active:
+            raise HTTPException(409, "停用租户不能修改任职记录")
+        org_ids = {str(org.id) for org in await self.orgs(str(tenant.id))}
+        row: OrgLeaderTerm | None = None
+        if record_id:
+            with bypass_tenant_filter():
+                row = await self.db.scalar(
+                    select(OrgLeaderTerm).where(
+                        OrgLeaderTerm.id == record_id,
+                        OrgLeaderTerm.tenant_id == tenant.id,
+                        OrgLeaderTerm.is_deleted.is_(False),
+                    )
+                )
+            if row is None:
+                raise HTTPException(404, "任职记录不存在")
+        org_unit_id = values.get("org_unit_id") or (row.org_unit_id if row else None)
+        if org_unit_id not in org_ids:
+            raise HTTPException(422, "任职组织不在当前租户内")
+        if row is None:
+            row = OrgLeaderTerm(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant.id,
+                org_unit_id=str(org_unit_id),
+                is_primary=False,
+            )
+            self.db.add(row)
+        optional = {"org_unit_id", "phone", "started_on", "ended_on", "is_primary", "remark"}
+        for key, value in values.items():
+            if key not in optional and value is None:
+                raise HTTPException(422, "姓名与职务不能为空")
+            setattr(row, key, value)
+        if row.started_on and row.ended_on and row.ended_on < row.started_on:
+            raise HTTPException(422, "离任日期不能早于任职日期")
+        row.org_unit_id = str(org_unit_id)
+        if row.is_primary and row.ended_on is None:
+            with bypass_tenant_filter():
+                others = (
+                    await self.db.execute(
+                        select(OrgLeaderTerm).where(
+                            OrgLeaderTerm.tenant_id == tenant.id,
+                            OrgLeaderTerm.org_unit_id == row.org_unit_id,
+                            OrgLeaderTerm.is_deleted.is_(False),
+                            OrgLeaderTerm.id != row.id,
+                            OrgLeaderTerm.is_primary.is_(True),
+                            OrgLeaderTerm.ended_on.is_(None),
+                        )
+                    )
+                ).scalars()
+                for other in others:
+                    other.is_primary = False
+        await self.db.flush()
+        await self.sync_primary_leader(str(tenant.id), str(row.org_unit_id))
+        await self.db.flush()
+        return row
+
+    async def replace_primary(self, target: str | None, values: dict[str, Any]) -> dict[str, Any]:
+        """一键换人：现任主要负责人离任 + 新任一届，一个事务内完成。
+
+        履历仍落两条记录（谁干到哪天、谁从哪天接），只是省掉"先离任再新增"两次提交，
+        避免组织在两次提交之间短暂显示"无负责人"。
+        """
+        tenant = await self.tenant(target, lock=True)
+        if not tenant.is_active:
+            raise HTTPException(409, "停用租户不能修改任职记录")
+        org_ids = {str(org.id) for org in await self.orgs(str(tenant.id))}
+        org_unit_id = values.get("org_unit_id")
+        if org_unit_id not in org_ids:
+            raise HTTPException(422, "任职组织不在当前租户内")
+        today = date.today()
+        ended_on = values.get("ended_on_prev") or today
+        with bypass_tenant_filter():
+            current = await self.db.scalar(
+                select(OrgLeaderTerm).where(
+                    OrgLeaderTerm.tenant_id == tenant.id,
+                    OrgLeaderTerm.org_unit_id == str(org_unit_id),
+                    OrgLeaderTerm.is_deleted.is_(False),
+                    OrgLeaderTerm.is_primary.is_(True),
+                    OrgLeaderTerm.ended_on.is_(None),
+                )
+            )
+        departed = None
+        if current is not None:
+            if current.started_on and ended_on < current.started_on:
+                raise HTTPException(422, "离任日期不能早于原负责人任职日期")
+            current.ended_on = ended_on
+            departed = leader_payload(current)
+            await self.db.flush()
+        row = await self.save_org_leader(
+            str(tenant.id),
+            {
+                "org_unit_id": str(org_unit_id),
+                "name": values["name"],
+                "title": values["title"],
+                "phone": values.get("phone"),
+                "started_on": values.get("started_on") or today,
+                "is_primary": True,
+                "remark": values.get("remark"),
+            },
+        )
+        return {"departed": departed, "current": leader_payload(row)}
+
+    async def sync_primary_leader(self, tenant_id: str, org_unit_id: str) -> None:
+        """把该组织在任的主要负责人回写到 org_units 的现任快照；无人任则清空"""
+        with bypass_tenant_filter():
+            current = await self.db.scalar(
+                select(OrgLeaderTerm)
+                .where(
+                    OrgLeaderTerm.tenant_id == tenant_id,
+                    OrgLeaderTerm.org_unit_id == org_unit_id,
+                    OrgLeaderTerm.is_deleted.is_(False),
+                    OrgLeaderTerm.is_primary.is_(True),
+                    OrgLeaderTerm.ended_on.is_(None),
+                )
+                .order_by(OrgLeaderTerm.started_on.desc().nullslast())
+            )
+            org = await self.db.scalar(
+                select(OrgUnit).where(OrgUnit.id == org_unit_id, OrgUnit.tenant_id == tenant_id)
+            )
+        if org is None:
+            return
+        if current:
+            org.leader_name = current.name
+            org.leader_title = current.title
+            org.leader_phone = current.phone
+        else:
+            org.leader_name = None
+            org.leader_title = None
+            org.leader_phone = None
 
     async def users(self, target: str | None = None) -> list[User]:
         tenant = await self.tenant(target)

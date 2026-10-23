@@ -8,6 +8,14 @@ export interface TenantRecord {
 export interface OrgRecord {
   id: string; name: string; org_type: 'school' | 'department' | 'branch'
   parent_id: string | null; is_active: boolean; path: string
+  /** 现任主要负责人：姓名、职务、电话分开存，换职务不必改写姓名 */
+  leader_name: string | null; leader_title: string | null; leader_phone: string | null
+}
+/** 组织负责人任职记录：一条 = 一人在一个组织的一届任职；ended_on 为空表示在任 */
+export interface OrgLeaderTerm {
+  id: string; org_unit_id: string; name: string; title: string; phone: string | null
+  started_on: string | null; ended_on: string | null
+  is_primary: boolean; is_current: boolean; remark: string | null
 }
 export interface UserRecord {
   id: string; username: string; name: string; role: UserRole
@@ -136,6 +144,18 @@ export const updateTenant = (id: string, body: {name?: string; is_active?: boole
 export const saveOrg = (id: string | null, body: object, tenant_id?: string) =>
   id ? http.patch('/admin/organizations/' + encodeURIComponent(id), body, {params: target(tenant_id)})
     : http.post('/admin/organizations', body, {params: target(tenant_id)})
+export const listOrgLeaders = (org_unit_id: string, tenant_id?: string) =>
+  http.get<never, {items: OrgLeaderTerm[]}>('/admin/org-leaders',
+    { params: { org_unit_id, ...target(tenant_id) } })
+export const createOrgLeader = (body: object, tenant_id?: string) =>
+  http.post<never, OrgLeaderTerm>('/admin/org-leaders', body, {params: target(tenant_id)})
+/** 一键换人：原主要负责人离任 + 新任一届，一个事务内完成 */
+export const replaceOrgLeader = (body: object, tenant_id?: string) =>
+  http.post<never, {departed: OrgLeaderTerm | null; current: OrgLeaderTerm}>(
+    '/admin/org-leaders/replace', body, {params: target(tenant_id)})
+export const updateOrgLeader = (id: string, body: object, tenant_id?: string) =>
+  http.patch<never, OrgLeaderTerm>('/admin/org-leaders/' + encodeURIComponent(id), body,
+    {params: target(tenant_id)})
 export const saveUser = (id: string | null, body: object, tenant_id?: string) =>
   id ? http.patch('/admin/users/' + encodeURIComponent(id), body, {params: target(tenant_id)})
     : http.post('/admin/users', body, {params: target(tenant_id)})

@@ -22,13 +22,16 @@ from app.db.session import get_db
 from app.deps import get_current_user, require_permissions
 from app.models.audit import AuditLog
 from app.models.governance import ConfigRevision, DurableJob, HumanReview, ModelUsage
-from app.models.org import OrgUnit
+from app.models.org import OrgLeaderTerm, OrgUnit
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.common import APIResponse
 from app.schemas.governance import (
     JobCreate,
     OrgCreate,
+    OrgLeaderCreate,
+    OrgLeaderReplace,
+    OrgLeaderUpdate,
     OrgUpdate,
     ReviewDecision,
     ReviewSubmit,
@@ -78,7 +81,7 @@ async def changed(
     db: AsyncSession,
     request: Request,
     user: User,
-    row: User | OrgUnit | Tenant,
+    row: User | OrgUnit | Tenant | OrgLeaderTerm,
     action: str,
     kind: str,
     extra: dict[str, Any] | None = None,
@@ -172,6 +175,80 @@ async def update_organization(
         tenant_id, body.model_dump(exclude_unset=True), record_id
     )
     return await changed(db, request, user, row, "update", "organization")
+
+
+@router.get("/admin/org-leaders")
+async def org_leaders(
+    request: Request,
+    tenant_id: str | None = Query(None, max_length=36),
+    org_unit_id: str | None = Query(None, max_length=36),
+    user: User = Depends(identity_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict[str, Any]]:
+    """组织负责人任职记录：含在任与历任"""
+    items = await IdentityService(db, user).org_leaders(tenant_id, org_unit_id)
+    return response(request, {"items": items})
+
+
+@router.post("/admin/org-leaders")
+async def create_org_leader(
+    body: OrgLeaderCreate,
+    request: Request,
+    tenant_id: str | None = Query(None, max_length=36),
+    user: User = Depends(identity_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict[str, Any]]:
+    row = await IdentityService(db, user).save_org_leader(tenant_id, body.model_dump())
+    return await changed(db, request, user, row, "create", "org_leader")
+
+
+@router.post("/admin/org-leaders/replace")
+async def replace_org_leader(
+    body: OrgLeaderReplace,
+    request: Request,
+    tenant_id: str | None = Query(None, max_length=36),
+    user: User = Depends(identity_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict[str, Any]]:
+    """一键换人：原主要负责人离任 + 新任一届，一次提交完成两件事"""
+    data = await IdentityService(db, user).replace_primary(tenant_id, body.model_dump())
+    # 审计只留关键事实：完整对象会被摘要成哈希，出问题时反而查不到换的是谁
+    departed = data["departed"] or {}
+    current = data["current"]
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="replace",
+        resource_type="org_leader",
+        resource_id=current["id"],
+        new_value={
+            "org_unit_id": current["org_unit_id"],
+            "departed": departed.get("name"),
+            "departed_ended_on": departed.get("ended_on"),
+            "current": current["name"],
+            "current_title": current["title"],
+            "current_started_on": current["started_on"],
+        },
+    )
+    await db.commit()
+    return response(request, data)
+
+
+@router.patch("/admin/org-leaders/{record_id}")
+async def update_org_leader(
+    record_id: str,
+    body: OrgLeaderUpdate,
+    request: Request,
+    tenant_id: str | None = Query(None, max_length=36),
+    user: User = Depends(identity_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict[str, Any]]:
+    """修改任职或登记离任：离任只写 ended_on，记录保留为履历"""
+    row = await IdentityService(db, user).save_org_leader(
+        tenant_id, body.model_dump(exclude_unset=True), record_id
+    )
+    return await changed(db, request, user, row, "update", "org_leader")
 
 
 # 开户（POST /admin/users）由平台系统管理员专用接口承担（app/api/v1/admin.py）。

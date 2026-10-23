@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import * as api from '@/api/governance'
-import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgRecord, RetentionReport, ReviewRecord, RunLogRecord, TenantRecord, UserRecord, VersionChange, VersionTrail } from '@/api/governance'
+import type { Approval, AuditRecord, GovernanceConfig, JobRecord, NotificationChannel, NotificationDelivery, Operations, OrgLeaderTerm, OrgRecord, RetentionReport, ReviewRecord, RunLogRecord, TenantRecord, UserRecord, VersionChange, VersionTrail } from '@/api/governance'
 import { ApiError } from '@/api/http'
 import * as qaApi from '@/api/qa'
 import { DOC_AUTHORITY_LABELS, DOC_AUTHORITY_ORDER, PERM, ROLE_LABELS, type QARecord, type UserRole, type VersionFingerprint } from '@/api/types'
@@ -15,6 +15,8 @@ import '@/styles/workbench.css'
 const tab = ref('reviews')
 const loading = ref(false), busy = ref(false), error = ref(''), notice = ref('')
 const tenants = ref<TenantRecord[]>([]), organizations = ref<OrgRecord[]>([]), users = ref<UserRecord[]>([])
+// 任职履历：打开某组织的「任职」弹窗时加载，一条 = 一人在该组织的一届任职
+const leaderOrg = ref<OrgRecord | null>(null), leaderTerms = ref<OrgLeaderTerm[]>([])
 const selectedTenant = ref(session.state.user?.tenant_id ?? '')
 const config = ref<GovernanceConfig | null>(null), operations = ref<Operations | null>(null)
 // 保留期现状（T-SEC-07）：治理页填写的保留天数在这里变成可核对的数字（只读报告）
@@ -37,7 +39,11 @@ const dialog = ref(''), editingId = ref<string | null>(null)
 const form = reactive({name: '', username: '', password: '', role: 'member' as UserRole, org_unit_id: '',
   org_type: 'department', parent_id: '', is_active: true, source_kind: 'score', source_id: '',
   year: new Date().getFullYear(), round: 1, opinion: '', decision: '', kind: 'member_reminders',
-  document_ids: '', dedup_key: '', evidence: '', enabled: false, tenant_type: 'school'})
+  document_ids: '', dedup_key: '', evidence: '', enabled: false, tenant_type: 'school',
+  leader_name: '', leader_title: '', leader_phone: ''})
+// 任职记录表单：id 为空表示新增，有值表示修改这一届任职；replace 为「一键换人」模式
+const leaderForm = reactive({ id: '', name: '', title: '', phone: '', started_on: '', is_primary: false,
+  replace: false, ended_on_prev: '' })
 const configReason = ref(''), allowedHosts = ref(''), localHosts = ref('')
 const auditFilters = reactive({user_id: '', resource_id: '', action: '', resource_type: '',
   data_level: '', result: '', tenant_id: '', start_at: '', end_at: ''})
@@ -469,7 +475,10 @@ function open(type: string, row?: OrgRecord | UserRecord | TenantRecord): void {
   Object.assign(form, {name:'', username:'', password:'', role:'member', org_unit_id:'',
     org_type:'department', parent_id:'', is_active:true, source_kind:'score', source_id:'',
     year:new Date().getFullYear(), round:1, opinion:'', decision:'', kind:'member_reminders',
-    document_ids:'', dedup_key:uuid(), evidence:'', enabled:false, tenant_type:'school'})
+    document_ids:'', dedup_key:uuid(), evidence:'', enabled:false, tenant_type:'school',
+    leader_name:'', leader_title:'', leader_phone:''})
+  Object.assign(leaderForm, {id:'', name:'', title:'', phone:'', started_on:'', is_primary:false,
+    replace:false, ended_on_prev:''})
   if (row) Object.assign(form, row)
   if (type === 'tenant' && !row) {
     const options = parentTenantOptions.value
@@ -493,6 +502,46 @@ function open(type: string, row?: OrgRecord | UserRecord | TenantRecord): void {
   }
   dialog.value = type
 }
+// 任职履历：一个组织可以有多届、多位负责人，换人只需新增一届并把上一届登记离任
+async function openLeader(row: OrgRecord): Promise<void> {
+  error.value = ''; notice.value = ''; leaderOrg.value = row
+  Object.assign(leaderForm, {id:'', name:'', title:'', phone:'', started_on: todayISO(),
+    is_primary: !row.leader_name})
+  dialog.value = 'leader'
+  await loadLeaderTerms()
+}
+async function loadLeaderTerms(): Promise<void> {
+  if (!leaderOrg.value) return
+  try { leaderTerms.value = (await api.listOrgLeaders(leaderOrg.value.id, selectedTenant.value)).items }
+  catch (err) { fail(err) }
+}
+function editLeader(term: OrgLeaderTerm): void {
+  Object.assign(leaderForm, {id: term.id, name: term.name, title: term.title,
+    phone: term.phone ?? '', started_on: term.started_on ?? '', is_primary: term.is_primary,
+    replace: false, ended_on_prev: ''})
+}
+// 换人是日常最高频的动作：一次提交完成「原负责人离任 + 新任接任」，不用分两步
+const leaderNameInput = ref<HTMLInputElement | null>(null)
+function startReplace(): void {
+  Object.assign(leaderForm, {id: '', name: '', title: leaderOrg.value?.leader_title ?? '',
+    phone: '', started_on: todayISO(), is_primary: true, replace: true, ended_on_prev: todayISO()})
+  // 切到换人表单后直接聚焦姓名：用户点完按钮就该能开始打字，别让他猜下一步
+  void nextTick(() => leaderNameInput.value?.focus())
+}
+function cancelReplace(): void {
+  Object.assign(leaderForm, {id: '', name: '', title: '', phone: '', started_on: todayISO(),
+    is_primary: false, replace: false, ended_on_prev: ''})
+}
+// 离任不删记录：只写离任日期，履历继续可查
+async function retireLeader(term: OrgLeaderTerm): Promise<void> {
+  if (busy.value) return
+  if (!window.confirm(`确认登记「${term.name}」于今日离任？记录会保留为履历。`)) return
+  busy.value = true; error.value = ''
+  try {
+    await api.updateOrgLeader(term.id, {ended_on: todayISO(), is_primary: false}, selectedTenant.value)
+    notice.value = `${term.name} 已登记离任。`; await loadLeaderTerms(); await loadTab()
+  } catch (err) { fail(err) } finally { busy.value = false }
+}
 async function viewReview(row: ReviewRecord): Promise<void> {
   error.value = ''
   try { detail.value = await api.getReview(row.id); open('decision') } catch (err) { fail(err) }
@@ -507,11 +556,48 @@ async function submit(): Promise<void> {
   if (dialog.value === 'decision' && !form.decision) {
     error.value = '请选择人工结论'; return
   }
+  if (dialog.value === 'leader') {
+    // 自定义弹窗里依赖浏览器 required 提示不显眼，这里显式挡一次并给出可读错误
+    if (!leaderForm.name.trim() || !leaderForm.title.trim()) {
+      error.value = leaderForm.replace ? '请填写接任者姓名与职务' : '请填写姓名与职务'
+      return
+    }
+    if (leaderForm.replace && !leaderOrg.value) {
+      error.value = '未选择组织，请关闭后重新打开该组织的任职记录'
+      return
+    }
+    busy.value = true; error.value = ''
+    try {
+      const body = {name: leaderForm.name, title: leaderForm.title, phone: leaderForm.phone || null,
+        started_on: leaderForm.started_on || null}
+      if (leaderForm.replace) {
+        await api.replaceOrgLeader({...body, org_unit_id: leaderOrg.value.id,
+          ended_on_prev: leaderForm.ended_on_prev || null}, selectedTenant.value)
+        notice.value = `已换人：${leaderForm.name} 已接任「${leaderOrg.value.name}」负责人。`
+        // 换人是一个完整动作：关闭弹窗让用户直接看到组织表上的负责人已变
+        dialog.value = ''
+      } else if (leaderForm.id) {
+        await api.updateOrgLeader(leaderForm.id, {...body, is_primary: leaderForm.is_primary}, selectedTenant.value)
+        notice.value = '任职记录已保存。'
+      } else if (leaderOrg.value) {
+        await api.createOrgLeader({...body, is_primary: leaderForm.is_primary,
+          org_unit_id: leaderOrg.value.id}, selectedTenant.value)
+        notice.value = '任职记录已保存。'
+      }
+      Object.assign(leaderForm, {id:'', name:'', title:'', phone:'', started_on: todayISO(),
+        is_primary:false, replace:false, ended_on_prev:''})
+      await loadLeaderTerms(); await loadTab()
+    } catch (err) { fail(err) } finally { busy.value = false }
+    return
+  }
   busy.value = true; error.value = ''
   try {
     if (dialog.value === 'organization') {
-      const body = editingId.value ? {name:form.name, parent_id:form.parent_id || null, is_active:form.is_active}
-        : {name:form.name, org_type:form.org_type, parent_id:form.parent_id || null}
+      // 负责人姓名/职务/电话是选填联络信息，清空即提交 null（服务端允许回填为空）
+      const leader = {leader_name: form.leader_name || null, leader_title: form.leader_title || null,
+        leader_phone: form.leader_phone || null}
+      const body = editingId.value ? {name:form.name, parent_id:form.parent_id || null, is_active:form.is_active, ...leader}
+        : {name:form.name, org_type:form.org_type, parent_id:form.parent_id || null, ...leader}
       await api.saveOrg(editingId.value, body, selectedTenant.value)
     } else if (dialog.value === 'user') {
       // 编辑时密码留空表示不改；只有填了才随 PATCH 一起提交（管理员重置口令）。
@@ -600,10 +686,13 @@ function formatDate(value: string | null): string {
         <p class="wb-note">新租户默认待配置。组织登记须使用学校认可的名称和层级；停用先处理下级组织。</p>
         <label class="wb-field"><span>查找组织或账号</span><input class="input" v-model="identitySearch" type="search" placeholder="名称、账号或角色" /></label>
         <section class="wb-section wb-stack"><div class="wb-toolbar"><h2>组织目录</h2><button type="button" class="btn btn--primary" @click="open('organization')">新增组织</button></div>
-          <div v-if="visibleOrgs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>组织</th><th>类型</th><th>上级</th><th>状态</th><th>维护</th></tr></thead><tbody>
+          <div v-if="visibleOrgs.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>组织</th><th>类型</th><th>上级</th><th>负责人</th><th>职务</th><th>联系电话</th><th>状态</th><th>维护</th></tr></thead><tbody>
             <tr v-for="row in visibleOrgs" :key="row.id"><td>{{ row.name }}</td><td>{{ {school:'学校',department:'院系',branch:'支部'}[row.org_type] }}</td>
-              <td>{{ row.parent_id ? orgLabel(row.parent_id) : '根组织' }}</td><td>{{ row.is_active ? '有效' : '已停用' }}</td>
-              <td><button class="btn btn--quiet" type="button" :aria-label="'维护组织 '+row.name" @click="open('organization',row)">维护</button></td></tr>
+              <td>{{ row.parent_id ? orgLabel(row.parent_id) : '根组织' }}</td>
+              <td><button v-if="row.leader_name" class="btn btn--quiet" type="button" :aria-label="row.name+' 负责人任职记录'" @click="openLeader(row)">{{ row.leader_name }}</button><span v-else>未登记</span></td><td>{{ row.leader_title || '—' }}</td><td>{{ row.leader_phone || '—' }}</td>
+              <td>{{ row.is_active ? '有效' : '已停用' }}</td>
+              <td><button class="btn btn--quiet" type="button" :aria-label="'维护组织 '+row.name" @click="open('organization',row)">维护</button>
+                <button class="btn btn--quiet" type="button" :aria-label="row.name+' 的负责人任职记录'" @click="openLeader(row)">任职</button></td></tr>
           </tbody></table></div><p v-else class="wb-empty">组织尚未登记，请补充学校确认的组织资料。</p>
         </section>
         <section class="wb-section wb-stack"><div class="wb-toolbar"><h2>用户与角色</h2><button v-if="isPlatformAdmin" type="button" class="btn btn--primary" @click="open('user')">新增用户</button></div>
@@ -775,7 +864,7 @@ function formatDate(value: string | null): string {
         <div class="wb-pager"><button class="btn btn--quiet" type="button" :disabled="recordPage===1" @click="recordPage--; loadTab()">上一页</button><span>第 {{ recordPage }} 页 · 共 {{ recordTotal }} 条</span><button class="btn btn--quiet" type="button" :disabled="recordPage*40>=recordTotal" @click="recordPage++; loadTab()">下一页</button></div>
       </section>
     </WorkspaceTabs>
-    <ActionDialog :open="Boolean(dialog)" :title="({organization:'维护组织',user:'维护用户',tenant:'登记或维护租户',submit:'提交人工审核',decision:'审核材料与结论',job:'创建任务',archive:'电子记录效力确认'} as Record<string,string>)[dialog] ?? '管理'" :busy="busy" wide @close="dialog=''">
+    <ActionDialog :open="Boolean(dialog)" :title="({organization:'维护组织',leader:'负责人任职记录',user:'维护用户',tenant:'登记或维护租户',submit:'提交人工审核',decision:'审核材料与结论',job:'创建任务',archive:'电子记录效力确认'} as Record<string,string>)[dialog] ?? '管理'" :busy="busy" wide @close="dialog=''">
       <form class="wb-stack" @submit.prevent="submit">
         <p v-if="error" class="wb-error" role="alert">{{ error }}</p>
         <template v-if="['organization','user','tenant'].includes(dialog)">
@@ -783,7 +872,11 @@ function formatDate(value: string | null): string {
           <template v-if="dialog==='organization'"><label v-if="!editingId" class="wb-field"><span>组织类型</span><select class="select" v-model="form.org_type"><option value="school">学校</option><option value="department">院系</option><option value="branch">支部</option></select></label>
             <label v-if="form.org_type!=='school'" class="wb-field"><span>上级组织</span><select class="select" v-model="form.parent_id" aria-label="上级组织" required><option value="">请选择上级组织</option><option v-for="row in orgParentOptions" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
             <p v-if="form.org_type==='school'" class="wb-note">学校是根组织，没有上级。</p>
-            <p v-if="form.org_type!=='school' && !orgParentOptions.length" class="wb-note">当前租户没有可用的上级组织，请先登记{{ form.org_type==='department' ? '学校' : '学校或院系' }}。</p></template>
+            <p v-if="form.org_type!=='school' && !orgParentOptions.length" class="wb-note">当前租户没有可用的上级组织，请先登记{{ form.org_type==='department' ? '学校' : '学校或院系' }}。</p>
+            <label class="wb-field"><span>负责人姓名（选填）</span><input class="input" v-model="form.leader_name" maxlength="50" placeholder="如：王建国" /></label>
+            <label class="wb-field"><span>负责人职务（选填）</span><input class="input" v-model="form.leader_title" maxlength="50" placeholder="如：党委书记" /></label>
+            <label class="wb-field"><span>联系电话（选填）</span><input class="input" v-model="form.leader_phone" maxlength="20" placeholder="手机或办公电话" /></label>
+            <p class="wb-note">这里填的是「现任主要负责人」快照。要登记历任、副书记或委员，请用组织目录里的「任职」入口。</p></template>
           <template v-if="dialog==='user'"><label v-if="!editingId" class="wb-field"><span>登录账号</span><input class="input" v-model="form.username" required minlength="3" maxlength="50" autocomplete="off" /></label>
             <label v-if="!editingId" class="wb-field"><span>初始密码（至少 8 字符）</span><input class="input" v-model="form.password" type="password" required minlength="8" maxlength="72" autocomplete="new-password" /></label>
             <label v-else class="wb-field"><span>重置密码（留空表示不修改）</span><input class="input" v-model="form.password" type="password" minlength="8" maxlength="72" autocomplete="new-password" placeholder="至少 8 字符，保存后立即生效" /></label>
@@ -795,6 +888,28 @@ function formatDate(value: string | null): string {
             <label class="wb-field"><span>父租户（学校挂平台，院系挂学校，支部挂院系）</span><select class="select" v-model="form.parent_id" required><option value="" disabled>请选择父租户</option><option v-for="row in parentTenantOptions" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
             <p v-if="!parentTenantOptions.length" class="wb-note">当前没有符合层级要求的父租户，请先登记上一级租户。</p></template>
           <label v-if="editingId" class="wb-check"><input v-model="form.is_active" type="checkbox" />保持有效（取消将停用）</label>
+        </template>
+        <template v-else-if="dialog==='leader'">
+          <p class="wb-note">{{ leaderOrg?.name }} · 一条记录 = 一位负责人的一届任职。离任只登记离任日期，记录保留为履历；勾选「主要负责人」会同步到组织现状。</p>
+          <div v-if="leaderTerms.length" class="wb-table-wrap"><table class="wb-table"><thead><tr><th>姓名</th><th>职务</th><th>任期</th><th>主要负责人</th><th>维护</th></tr></thead><tbody>
+            <tr v-for="term in leaderTerms" :key="term.id"><td>{{ term.name }}</td><td>{{ term.title }}</td>
+              <td>{{ term.started_on || '—' }} ~ {{ term.ended_on || '在任' }}</td>
+              <td>{{ term.is_primary ? (term.is_current ? '现任' : '曾任') : '—' }}</td>
+              <td><button class="btn btn--quiet" type="button" @click="editLeader(term)">修改</button>
+                <button v-if="term.is_current" class="btn btn--quiet" type="button" @click="retireLeader(term)">登记离任</button></td></tr>
+          </tbody></table></div>
+          <p v-else class="wb-empty">该组织还没有任职记录。</p>
+          <div class="wb-toolbar"><h3>{{ leaderForm.replace ? '一键换人' : leaderForm.id ? '修改这一届任职' : '新增一届任职' }}</h3>
+            <button v-if="!leaderForm.replace && !leaderForm.id && leaderOrg?.leader_name" class="btn btn--primary" type="button" @click="startReplace">换人</button></div>
+          <p v-if="leaderForm.replace" class="wb-note">现任负责人「{{ leaderOrg?.leader_name }}」将按 {{ leaderForm.ended_on_prev || '今天' }} 登记离任。填好接任者后点下方「确认换人」提交；两条任职记录都会保留。</p>
+          <label class="wb-field"><span>{{ leaderForm.replace ? '接任者姓名' : '姓名' }}</span><input ref="leaderNameInput" class="input" v-model="leaderForm.name" required maxlength="50" placeholder="负责人姓名" /></label>
+          <label class="wb-field"><span>职务</span><input class="input" v-model="leaderForm.title" required maxlength="50" placeholder="如：党支部书记" /></label>
+          <label class="wb-field"><span>联系电话（选填）</span><input class="input" v-model="leaderForm.phone" maxlength="20" /></label>
+          <label v-if="leaderForm.replace" class="wb-field"><span>原负责人离任日期</span><input class="input" type="date" v-model="leaderForm.ended_on_prev" /></label>
+          <label class="wb-field"><span>{{ leaderForm.replace ? '接任日期' : '任职日期（选填）' }}</span><input class="input" type="date" v-model="leaderForm.started_on" /></label>
+          <label v-if="!leaderForm.replace" class="wb-check"><input v-model="leaderForm.is_primary" type="checkbox" />该组织主要负责人（书记）</label>
+          <p v-if="leaderForm.replace" class="wb-note"><button class="btn btn--quiet" type="button" @click="cancelReplace">取消换人</button></p>
+          <p v-else-if="leaderForm.id" class="wb-note"><button class="btn btn--quiet" type="button" @click="Object.assign(leaderForm,{id:'',name:'',title:'',phone:'',started_on:todayISO(),is_primary:false})">取消修改，改为新增一届</button></p>
         </template>
         <template v-else-if="dialog==='submit'"><label class="wb-field"><span>业务类型</span><select class="select" v-model="form.source_kind" required><option value="" disabled>请选择业务类型</option><option v-for="row in reviewKindOptions" :key="row.value" :value="row.value">{{ row.label }}</option></select></label>
           <label class="wb-field"><span>{{ form.source_kind==='vote' ? '选优批次编号' : '业务对象编号' }}</span><input class="input" v-model="form.source_id" required maxlength="200" /></label><label class="wb-field"><span>统计年度</span><input class="input" v-model.number="form.year" type="number" min="2000" max="2100" required /></label>
@@ -811,7 +926,7 @@ function formatDate(value: string | null): string {
         <template v-else-if="dialog==='job'"><label class="wb-field"><span>任务类型</span><select class="select" v-model="form.kind" required><option value="" disabled>请选择任务类型</option><option v-for="row in jobKindOptions" :key="row.value" :value="row.value">{{ row.label }}</option></select></label><label class="wb-field"><span>去重编号</span><input class="input" v-model="form.dedup_key" required maxlength="160" /></label>
           <label v-if="form.kind==='embedding'" class="wb-field"><span>文档内部编号（每行一个，最多 50 个）</span><textarea class="textarea" v-model="form.document_ids" required rows="4" /></label></template>
         <template v-else-if="dialog==='archive'"><p class="wb-note">只有学校授权人员完成正式确认后，才启用电子归档。未确认时保持关闭。</p><label class="wb-check"><input v-model="form.enabled" type="checkbox" />学校已确认电子记录效力</label><label class="wb-field"><span>学校确认或撤销依据</span><textarea class="textarea" v-model="form.evidence" required maxlength="2000" rows="4" /></label></template>
-        <div class="wb-actions"><button v-if="dialog!=='decision' || (detail?.status==='pending' && !detail.stale && detail.submitted_by!==session.state.user?.id)" class="btn btn--primary" type="submit" :disabled="busy">{{ busy ? '保存中…' : dialog==='decision' ? '保存人工结论' : '保存' }}</button>
+        <div class="wb-actions"><button v-if="dialog!=='decision' || (detail?.status==='pending' && !detail.stale && detail.submitted_by!==session.state.user?.id)" class="btn btn--primary" type="submit" :disabled="busy">{{ busy ? '保存中…' : dialog==='decision' ? '保存人工结论' : (dialog==='leader' && leaderForm.replace) ? '确认换人' : '保存' }}</button>
           <button class="btn btn--quiet" type="button" :disabled="busy" @click="dialog=''">关闭</button></div>
       </form>
     </ActionDialog>
