@@ -1,0 +1,33 @@
+{
+  "results": [
+    {
+      "name": "exact six platform navigation entries and live local summary",
+      "status": "passed"
+    },
+    {
+      "name": "all six desktop pages load with functional navigation and no overflow",
+      "status": "passed"
+    },
+    {
+      "name": "overview alerts navigate directly to their operations tab",
+      "status": "passed"
+    },
+    {
+      "name": "personal roles cannot enter platform pages and platform cannot open school business directly",
+      "status": "passed"
+    },
+    {
+      "name": "saved upload policy applies to actual personal submission validation",
+      "status": "passed"
+    },
+    {
+      "name": "all six primary pages remain usable at 390px including mobile menu",
+      "status": "passed"
+    },
+    {
+      "name": "stopped school login is rejected and a new school cannot see original school data or reminders",
+      "status": "passed"
+    }
+  ],
+  "errors": []
+}

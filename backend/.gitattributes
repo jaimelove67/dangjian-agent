@@ -1,0 +1,10 @@
+# 统一换行符，避免跨平台协作问题
+* text=auto
+
+# Shell 脚本固定 LF：在 Windows 检出后拷到 Linux 执行时，
+# CRLF 会让 shebang 行带上 \r，导致脚本报 command not found。
+*.sh text eol=lf
+
+# 容器定义文件固定 LF
+Dockerfile text eol=lf
+Dockerfile.dev text eol=lf

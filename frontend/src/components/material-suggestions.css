@@ -1,0 +1,11 @@
+.material-suggestions { border: 1px solid #dfe3e8; border-radius: 4px; padding: 16px; margin: 0 0 18px; color: #303844; font-size: 13px; overflow-wrap: anywhere; }
+.material-suggestions-heading { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+.material-suggestions-heading span { color: #626b78; font-size: 12px; }
+.material-suggestions p { margin: 10px 0 0; line-height: 1.7; }
+.material-suggestions dl { margin: 12px 0; }
+.material-suggestions dl > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 9px 0; border-bottom: 1px solid #e9ecf0; }
+.material-suggestions dt { color: #626b78; }
+.material-suggestions dd { margin: 0; white-space: pre-wrap; }
+.material-suggestions dd small { display: block; margin-top: 5px; color: #626b78; }
+.material-suggestions .button { margin-top: 4px; white-space: normal; }
+@media (max-width: 520px) { .material-suggestions { padding: 12px; } .material-suggestions dl > div { grid-template-columns: 1fr; gap: 4px; } }

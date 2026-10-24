@@ -1,0 +1,11 @@
+{
+  "status": "passed",
+  "passed": [
+    "real school dashboard counts one branch, keeps organization progress and hides demo role switching",
+    "500 Unicode characters including emoji remain intact in the question field",
+    "keyboard submission rejects 501 characters before any real QA request",
+    "question validation remains usable at 390 pixels without horizontal overflow",
+    "member archive and materials render the real associated record without demo persistence"
+  ],
+  "errors": []
+}

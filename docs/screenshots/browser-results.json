@@ -1,0 +1,45 @@
+{
+  "results": [
+    {
+      "name": "dashboard assets, notice details and persistent task state",
+      "status": "passed"
+    },
+    {
+      "name": "member search, pagination, probationary filter and empty state",
+      "status": "passed"
+    },
+    {
+      "name": "member create, duplicate rejection and persisted record",
+      "status": "passed"
+    },
+    {
+      "name": "meeting create, edit and attendance validation",
+      "status": "passed"
+    },
+    {
+      "name": "theme activity publishing and enrollment deduplication",
+      "status": "passed"
+    },
+    {
+      "name": "learning notes, completion and learning records",
+      "status": "passed"
+    },
+    {
+      "name": "assistant templates, separated conversations, history and sensitive-data boundary",
+      "status": "passed"
+    },
+    {
+      "name": "all desktop routes load and charts render",
+      "status": "passed"
+    },
+    {
+      "name": "demo role boundary and login validation",
+      "status": "passed"
+    },
+    {
+      "name": "mobile route layouts, navigation and controls remain inside viewport",
+      "status": "passed"
+    }
+  ],
+  "errors": []
+}

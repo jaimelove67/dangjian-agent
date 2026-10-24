@@ -1,0 +1,142 @@
+{
+  "base_commit": "b190fcb9464c2fb2a9116b469b5a0a4d2a4cd274",
+  "created_on": "2026-10-24",
+  "files": [
+    {
+      "path": ".github/workflows/module6.yml",
+      "new": false
+    },
+    {
+      "path": ".github/workflows/role-ui.yml",
+      "new": false
+    },
+    {
+      "path": "app/api/v1/admin.py",
+      "new": false
+    },
+    {
+      "path": "app/api/v1/knowledge.py",
+      "new": false
+    },
+    {
+      "path": "app/api/v1/member.py",
+      "new": false
+    },
+    {
+      "path": "app/api/v1/member_full.py",
+      "new": false
+    },
+    {
+      "path": "requirements-dev.lock",
+      "new": false
+    },
+    {
+      "path": "requirements-dev.txt",
+      "new": false
+    },
+    {
+      "path": "requirements.lock",
+      "new": false
+    },
+    {
+      "path": "requirements.txt",
+      "new": false
+    },
+    {
+      "path": "app/api/v1/qa.py",
+      "new": false
+    },
+    {
+      "path": "app/chains/qa_chain.py",
+      "new": false
+    },
+    {
+      "path": "app/llm/providers/qwen_vision.py",
+      "new": false
+    },
+    {
+      "path": "app/prompts/knowledge_meta.py",
+      "new": false
+    },
+    {
+      "path": "app/rag/rag_service.py",
+      "new": false
+    },
+    {
+      "path": "app/schemas/member.py",
+      "new": false
+    },
+    {
+      "path": "app/services/identity_service.py",
+      "new": false
+    },
+    {
+      "path": "app/services/knowledge_meta_service.py",
+      "new": false
+    },
+    {
+      "path": "app/services/member_archive_service.py",
+      "new": false
+    },
+    {
+      "path": "app/services/ocr_service.py",
+      "new": false
+    },
+    {
+      "path": "app/services/org_scope.py",
+      "new": false
+    },
+    {
+      "path": "app/services/qa_attachment_service.py",
+      "new": false
+    },
+    {
+      "path": "frontend/scripts/check-roles-ui.mjs",
+      "new": false
+    },
+    {
+      "path": "frontend/scripts/verify-module6.mjs",
+      "new": false
+    },
+    {
+      "path": "frontend/src/App.vue",
+      "new": false
+    },
+    {
+      "path": "frontend/src/router/index.ts",
+      "new": false
+    },
+    {
+      "path": "frontend/src/stores/session.ts",
+      "new": false
+    },
+    {
+      "path": "frontend/src/views/GovernanceView.vue",
+      "new": false
+    },
+    {
+      "path": "scripts/module6_acceptance.py",
+      "new": false
+    },
+    {
+      "path": "tests/integration/test_module6_http.py",
+      "new": false
+    },
+    {
+      "path": "tests/unit/test_record_snapshot.py",
+      "new": false
+    },
+    {
+      "path": "scripts/check_dependency_locks.py",
+      "new": true
+    },
+    {
+      "path": "tests/unit/test_dependency_locks.py",
+      "new": true
+    },
+    {
+      "path": "frontend/tests/session-recovery.mjs",
+      "new": true
+    }
+  ]
+}

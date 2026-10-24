@@ -1,0 +1,42 @@
+{
+  "kind": "synthetic API responses, not real backend integration",
+  "results": [
+    {
+      "role": "platform",
+      "status": "passed"
+    },
+    {
+      "role": "school",
+      "status": "passed"
+    },
+    {
+      "role": "department",
+      "status": "passed"
+    },
+    {
+      "role": "secretary",
+      "status": "passed"
+    },
+    {
+      "role": "organizer",
+      "status": "passed"
+    },
+    {
+      "role": "teacher",
+      "status": "passed"
+    },
+    {
+      "role": "student",
+      "status": "passed"
+    },
+    {
+      "role": "applicant",
+      "status": "passed"
+    },
+    {
+      "case": "switch-material-owner-pending-and-failure",
+      "status": "passed"
+    }
+  ],
+  "errors": []
+}

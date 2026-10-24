@@ -1,0 +1,41 @@
+{
+  "results": [
+    {
+      "name": "eight role homepages, menus, scopes and direct URL denial",
+      "status": "passed"
+    },
+    {
+      "name": "student original upload is durable and visible only to self and scoped organizational inbox",
+      "status": "passed"
+    },
+    {
+      "name": "personal assistant history is separated and applicants have public-only questions",
+      "status": "passed"
+    },
+    {
+      "name": "organizer submits saved minutes and another secretary independently approves",
+      "status": "passed"
+    },
+    {
+      "name": "organizer records material verification, cultivation and manual adjacent-stage history",
+      "status": "passed"
+    },
+    {
+      "name": "unknown addresses never render the school dashboard for personal roles, and archive date follows stage registration",
+      "status": "passed"
+    },
+    {
+      "name": "explicit account association rejects conflicting ownership and accepts a verified matching account",
+      "status": "passed"
+    },
+    {
+      "name": "platform creates scoped demo accounts and tenants with reviewable audit entries",
+      "status": "passed"
+    },
+    {
+      "name": "all roles and new workflow pages fit a 390px viewport",
+      "status": "passed"
+    }
+  ],
+  "errors": []
+}

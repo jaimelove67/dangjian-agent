@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-23",
+  "results": [
+    {
+      "name": "teacher, student and applicant avatar opens the same own archive as sidebar, without account settings",
+      "status": "passed"
+    },
+    {
+      "name": "personal legacy profile links and refreshes canonicalize to own archive",
+      "status": "passed"
+    },
+    {
+      "name": "management role personal centers and six or seven primary navigation entries remain available",
+      "status": "passed"
+    },
+    {
+      "name": "mobile archive menu, navigation and sign-out remain usable without overflow",
+      "status": "passed"
+    }
+  ],
+  "applicationErrors": [],
+  "mode": "local demo"
+}

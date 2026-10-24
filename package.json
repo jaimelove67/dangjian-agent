@@ -1,0 +1,19 @@
+{
+  "name": "dangjian-workspace",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["frontend"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node scripts/dev.mjs frontend",
+    "dev:frontend": "node scripts/dev.mjs frontend",
+    "dev:backend": "node scripts/dev.mjs backend",
+    "dev:all": "node scripts/dev.mjs all",
+    "build": "npm --workspace frontend run build:sites && node scripts/prepare-sites-build.mjs",
+    "build:frontend": "npm --workspace frontend run build",
+    "preview": "npm --workspace frontend run preview",
+    "test": "npm --workspace frontend test && node --test --test-isolation=none tests/dev.test.mjs",
+    "test:sites": "node --test tests/sites-worker.test.mjs"
+  }
+}

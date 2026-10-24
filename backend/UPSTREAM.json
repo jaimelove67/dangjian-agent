@@ -1,0 +1,1994 @@
+{
+  "repository": "https://github.com/jaimelove67/dangjian-agent",
+  "ref": "master",
+  "commit": "b190fcb9464c2fb2a9116b469b5a0a4d2a4cd274",
+  "retrieved_on": "2026-10-23",
+  "method": "GitHub connector, immutable Git blobs; source snapshot without Git history",
+  "files": [
+    {
+      "path": ".dockerignore",
+      "sha": "43b8273889a1b712f70c95886e0174aaab1b4f97"
+    },
+    {
+      "path": ".env.example",
+      "sha": "f643d9ae727dafb87305475fdf8f0361d7e572e9"
+    },
+    {
+      "path": ".flake8",
+      "sha": "8d36b7f9263c931ab420db484b3374bee19fbbfa"
+    },
+    {
+      "path": ".gitattributes",
+      "sha": "d4742958d6494baac13280019d253ca3ce059343"
+    },
+    {
+      "path": ".github/workflows/module6.yml",
+      "sha": "283e4dc24762f62dae00423bdc973b51514fa623"
+    },
+    {
+      "path": ".github/workflows/role-ui.yml",
+      "sha": "b35a3fa38d1dd625550a9fdb11e8e2be2925ea2a"
+    },
+    {
+      "path": ".gitignore",
+      "sha": "7b0b0ea6ee2ca3b1f46cb0994afb473b345206a3"
+    },
+    {
+      "path": ".pre-commit-config.yaml",
+      "sha": "5f1f9fa3b1bc6dd267aca802b6572fa5774648a4"
+    },
+    {
+      "path": "Dockerfile",
+      "sha": "27390db6b5518ebfc8961e19fbc6607a6e211b76"
+    },
+    {
+      "path": "Dockerfile.dev",
+      "sha": "d9abf859b82caf64347080f9491e6862c713b969"
+    },
+    {
+      "path": "Dockerfile.frontend",
+      "sha": "53727555af79ed1bb5981f6d34e8da9e7b3b0b57"
+    },
+    {
+      "path": "Dockerfile.frontend.http",
+      "sha": "72b9ab68cc2f4296c0c0d5163d02dea5865e66fe"
+    },
+    {
+      "path": "README.md",
+      "sha": "774bdb0ae65f661fefa84ebd675f191cadb7be4d"
+    },
+    {
+      "path": "START_HERE.txt",
+      "sha": "5d15094ac014b4a476edda0ee07f8c010a46658e"
+    },
+    {
+      "path": "alembic.ini",
+      "sha": "2b99aecd83995cc703487935abe50ec932344962"
+    },
+    {
+      "path": "app/__init__.py",
+      "sha": "74f88d84798f55e7f7910dab61eaeb741de8f684"
+    },
+    {
+      "path": "app/api/__init__.py",
+      "sha": "68a25f5933ac8dd73e417f17823b00ae8ae0fd85"
+    },
+    {
+      "path": "app/api/audit.py",
+      "sha": "909f9f8064fcb258cda5285ff51a10be3750554f"
+    },
+    {
+      "path": "app/api/v1/__init__.py",
+      "sha": "e6734e1a48ef71e08770c1d7df31f26748a778cf"
+    },
+    {
+      "path": "app/api/v1/admin.py",
+      "sha": "3e487fdc91649a8b4b87c91926d79b7d92c40a27"
+    },
+    {
+      "path": "app/api/v1/assessment.py",
+      "sha": "dad3871970b607a45eaa4124ed9f22d903200121"
+    },
+    {
+      "path": "app/api/v1/auth.py",
+      "sha": "424571c6ffe631b24b9274e09c9f2e123aa7d714"
+    },
+    {
+      "path": "app/api/v1/embeddings.py",
+      "sha": "5a113bb2ba1ccff55fd42775a0b5bc6f04f13e72"
+    },
+    {
+      "path": "app/api/v1/governance.py",
+      "sha": "c337e48c06a6e70ce53b1dad0fc63c9e3fa92700"
+    },
+    {
+      "path": "app/api/v1/health.py",
+      "sha": "21ada2c462ddba86a7ac5c3ce4c7678b512d36f8"
+    },
+    {
+      "path": "app/api/v1/knowledge.py",
+      "sha": "94978aefeec0b396580b927cfae9f69f756f85ac"
+    },
+    {
+      "path": "app/api/v1/meeting.py",
+      "sha": "6c4983b0142a91f41d165a896fd78d7155d24895"
+    },
+    {
+      "path": "app/api/v1/member.py",
+      "sha": "ee6bd049df527ba40a5099d9fd2048c719cb7d9e"
+    },
+    {
+      "path": "app/api/v1/member_full.py",
+      "sha": "2a37d09682c94a25c93a9d34c60b057d439e741b"
+    },
+    {
+      "path": "app/api/v1/member_review.py",
+      "sha": "085b3b764e77ca4d0f79792ea2703ab54ad8affb"
+    },
+    {
+      "path": "app/api/v1/member_selection.py",
+      "sha": "254832875765bbfa0f7fbfd630570aea20293b13"
+    },
+    {
+      "path": "app/api/v1/member_self.py",
+      "sha": "5fcd7a6795885faacb9d67721c0a527fe03289b6"
+    },
+    {
+      "path": "app/api/v1/member_transfer.py",
+      "sha": "21ae9c7148e64dfeae8661ba38c98f7a0c01b2ba"
+    },
+    {
+      "path": "app/api/v1/member_upper_report.py",
+      "sha": "a53d3b8fa3eb8fb6b701899fd85c5523199b9e02"
+    },
+    {
+      "path": "app/api/v1/notifications.py",
+      "sha": "a4c7e4c6eea355db71dd33ec96077cdffc5cfac7"
+    },
+    {
+      "path": "app/core/config.py",
+      "sha": "149a1b31dbc56a22fce558cb4cf82de8f6cce40c"
+    },
+    {
+      "path": "app/main.py",
+      "sha": "c26b0660d56b8087351c0addcc2683f9e869afef"
+    },
+    {
+      "path": "deploy/docker/README.md",
+      "sha": "c6f2124c18cdf97470b14eb4f4b4cd63efeaa2bd"
+    },
+    {
+      "path": "frontend/README.md",
+      "sha": "dc8752b09e3da9ded1202b3b87f27458ce25a735"
+    },
+    {
+      "path": "migrations/README.md",
+      "sha": "07962c3b1cca6db72df19992aa197544c91bebf9"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha": "0d205fe36d443a3c06efdda5e29c84fcb9cb6c7d"
+    },
+    {
+      "path": "requirements-dev.lock",
+      "sha": "1961f99224fcbaf416cce3c0772be962784bb8b8"
+    },
+    {
+      "path": "requirements-dev.txt",
+      "sha": "053be5f6ed48277dd4004626ff929b8d395ea686"
+    },
+    {
+      "path": "requirements.lock",
+      "sha": "3e8d759ae79e893c7cca511282d73ee7c2da8267"
+    },
+    {
+      "path": "requirements.txt",
+      "sha": "c98c803b10ec3d746ebf4c6e78a999bfd6e469ae"
+    },
+    {
+      "path": "tests/conftest.py",
+      "sha": "0da7334be59eb0777e6c698db269dd5ac98c2f79"
+    },
+    {
+      "path": "开发规范文档.md",
+      "sha": "61e958ce4a3ff0920198f24c96c7e172133ca036"
+    },
+    {
+      "path": "app/api/v1/qa.py",
+      "sha": "b9a8b5f2b99769ca5554b468df6e243f8a2de4ee"
+    },
+    {
+      "path": "app/api/v1/study.py",
+      "sha": "df62c4a6dea572074678953024937ff18b0b27df"
+    },
+    {
+      "path": "app/api/v1/user.py",
+      "sha": "9922a25e96c90b3c5b68f921797cb09b8b21d1aa"
+    },
+    {
+      "path": "app/chains/__init__.py",
+      "sha": "985db7c54458001ec1a2a8120a815c7838311dbe"
+    },
+    {
+      "path": "app/chains/member_flow.py",
+      "sha": "294d24d4ecc83363559e4905d684b4911cccf026"
+    },
+    {
+      "path": "app/chains/qa_chain.py",
+      "sha": "d2c05ef04830e15886b9f1dc91229dfa79e7716c"
+    },
+    {
+      "path": "app/chains/rewrite.py",
+      "sha": "32f57d4f6e88921cd48221387717f11a40c89976"
+    },
+    {
+      "path": "app/chains/session.py",
+      "sha": "84fa041c9e682a9ebd31810e7df3e6ba84e73d39"
+    },
+    {
+      "path": "app/chains/workflow_interfaces.py",
+      "sha": "bc8d2b12c335700b2616644053b74225ab794280"
+    },
+    {
+      "path": "app/core/__init__.py",
+      "sha": "9377aeadee8bef53dd56af34391bf0ef2fb44f5b"
+    },
+    {
+      "path": "app/core/audit.py",
+      "sha": "43bf2cb2dde1da7126992479751e9f9e0f9ef961"
+    },
+    {
+      "path": "app/core/cache.py",
+      "sha": "450d7116569f6106a57b6ef8e20b6691d5250907"
+    },
+    {
+      "path": "app/core/constants.py",
+      "sha": "d50313fd2b95004f293b99eff7ff2e28761928f0"
+    },
+    {
+      "path": "app/core/csv_io.py",
+      "sha": "2a29207c0be98310a608d94c568940db8fd89ba8"
+    },
+    {
+      "path": "app/core/database_privileges.py",
+      "sha": "dd820ff9e175d844f294045109bcc3c566f5944a"
+    },
+    {
+      "path": "app/core/decision_boundary.py",
+      "sha": "51bd19a060b005578a5dc10106d57fd2a0f54dea"
+    },
+    {
+      "path": "app/core/desensitization.py",
+      "sha": "54a88d582951528f3a67f0ad654977dcb96262e5"
+    },
+    {
+      "path": "app/core/encryption.py",
+      "sha": "d8baa366c3f93e23aa3b38e4f21f7b82959610f2"
+    },
+    {
+      "path": "app/core/logging_config.py",
+      "sha": "bd57b03fa2a8f73d7e1b79b0b94815e4f37d8eb6"
+    },
+    {
+      "path": "app/core/metrics.py",
+      "sha": "9a8b572e72f5819dff724fc1461196f86042eb7d"
+    },
+    {
+      "path": "app/core/model_usage.py",
+      "sha": "0335f91d6f91a8ac972cad1087edfc93e9fccfff"
+    },
+    {
+      "path": "app/core/rate_limit.py",
+      "sha": "7e546bf91bdc48295374d7445f2c5b55c0b0f943"
+    },
+    {
+      "path": "app/core/redaction.py",
+      "sha": "62028b594382823c2a01e850eebc53f4e14f0a87"
+    },
+    {
+      "path": "app/core/request_audit.py",
+      "sha": "20453b18adce5a516f759a4f27f4f86ecdc2ce62"
+    },
+    {
+      "path": "app/core/security.py",
+      "sha": "35dd88813c3f07bb64f133e89db54714bb2e9a3c"
+    },
+    {
+      "path": "app/core/tenant.py",
+      "sha": "f261d4ba19409bc0dd5b8b915f01bb5a551b0242"
+    },
+    {
+      "path": "app/core/timeutil.py",
+      "sha": "08eb9ac169bd1327c57ffa7883202d3feab1a74b"
+    },
+    {
+      "path": "app/core/token_revocation.py",
+      "sha": "aacd209257ff38d7f48bdd47486ba88a565408f8"
+    },
+    {
+      "path": "app/core/versions.py",
+      "sha": "d007dc2609e548fd0e43a1708cc08bad7cbcf9dd"
+    },
+    {
+      "path": "app/db/__init__.py",
+      "sha": "2e95f705da24c385d1e8116653e32e09984ce546"
+    },
+    {
+      "path": "app/db/base.py",
+      "sha": "3b867bcada5bd8617f8155e3b41692ce546c123d"
+    },
+    {
+      "path": "app/db/session.py",
+      "sha": "7d7b1a79e0be6303e512928085c480b2b73d9376"
+    },
+    {
+      "path": "app/deps.py",
+      "sha": "e7a755c11a27c1b3b6ec03cfe473b8496b1c4950"
+    },
+    {
+      "path": "app/llm/__init__.py",
+      "sha": "77d831e04df5f600c127bd5aa993d4448e5a3719"
+    },
+    {
+      "path": "app/llm/base.py",
+      "sha": "5416b7e7f64eb0ef28236681b5da5e3d34ba836b"
+    },
+    {
+      "path": "app/llm/errors.py",
+      "sha": "1ad7b1a719260d0349c17d68aeb4f68d0d0c279f"
+    },
+    {
+      "path": "app/llm/gateway.py",
+      "sha": "95dfcfa9f0ed685b1a9ba6ece7ea60c4dcb36f16"
+    },
+    {
+      "path": "app/llm/init_models.py",
+      "sha": "47209a6e6a64fbe8bdfc9cf6f7b3e08ba0d87dff"
+    },
+    {
+      "path": "app/llm/providers/__init__.py",
+      "sha": "9c71a69fb42835f88a65a09bf81f87151e7132fd"
+    },
+    {
+      "path": "app/llm/providers/cloud_http.py",
+      "sha": "a9cbe5a933ba94dd65d0e06fef74264d06b76122"
+    },
+    {
+      "path": "app/llm/providers/dashscope_embedding.py",
+      "sha": "75ca1d2ae9cb649936764c5eeae76e237691cdf2"
+    },
+    {
+      "path": "app/llm/providers/dashscope_reranker.py",
+      "sha": "ead50addd96d8350f65b74324e18f11b0e75c086"
+    },
+    {
+      "path": "app/llm/providers/local_embedding.py",
+      "sha": "84ec2207095c6d61bc2667279b8ca6ca41c87d2a"
+    },
+    {
+      "path": "app/llm/providers/qwen.py",
+      "sha": "7f36b0f242b061dca485efbed6e03d9e1b275c51"
+    },
+    {
+      "path": "app/llm/providers/qwen_vision.py",
+      "sha": "2b56100d61e1d7cf5c7e213c084695db5376bad6"
+    },
+    {
+      "path": "app/llm/registry.py",
+      "sha": "b88e08107cd516c4fc18b4a928c6dbd974b5035f"
+    },
+    {
+      "path": "app/llm/router.py",
+      "sha": "15af8d2e844a2738c66a780cfe203c4495e63f12"
+    },
+    {
+      "path": "app/llm/service.py",
+      "sha": "ae7f0774d1989729f6760a3d2493c473ed79663f"
+    },
+    {
+      "path": "app/models/__init__.py",
+      "sha": "f9589e5eb7d859c909814ced5fbeae32c7e86250"
+    },
+    {
+      "path": "app/models/assessment.py",
+      "sha": "822bee5e1f9f1c88bfcd86478a1d31efae150ffc"
+    },
+    {
+      "path": "app/models/audit.py",
+      "sha": "8d273f689615efabec66b4a899c456f78f7bf70e"
+    },
+    {
+      "path": "app/models/governance.py",
+      "sha": "5a2b941a886abbeddc3415c6476cbfc4324bb6b4"
+    },
+    {
+      "path": "app/models/knowledge.py",
+      "sha": "017b549aa1578b18bc779cba76f25c37492060e6"
+    },
+    {
+      "path": "app/models/meeting.py",
+      "sha": "9728cd260dd6c41371bf6e96ccc84cb2f4100bfe"
+    },
+    {
+      "path": "app/models/member.py",
+      "sha": "0e2ace82dc0964d832bc29254f4ca2d917957892"
+    },
+    {
+      "path": "app/models/notification.py",
+      "sha": "e0d9f574098da3c7ddef3d1abca481622d2e4f11"
+    },
+    {
+      "path": "app/models/org.py",
+      "sha": "d824a8703ee4efc1b34c3f143db3ae17c5e96c48"
+    },
+    {
+      "path": "app/models/qa_session.py",
+      "sha": "22fa14117ae461a076fd6b5d301e0765a97f3960"
+    },
+    {
+      "path": "app/models/study.py",
+      "sha": "319c8fd60668a5a6c779159b105fd4596dc11d27"
+    },
+    {
+      "path": "app/models/tenant.py",
+      "sha": "0e532564b6e74ebc69fcb2e5d21220e70f2a8f9b"
+    },
+    {
+      "path": "app/models/user.py",
+      "sha": "e9235c06fb0c6716d8fe0eaf43fd69baaafe4a3e"
+    },
+    {
+      "path": "app/prompts/__init__.py",
+      "sha": "142742c7c6d49bd1b52772283d99d92b22bca731"
+    },
+    {
+      "path": "app/prompts/knowledge_meta.py",
+      "sha": "82dccf3c825a57af9485f6776e95733d9aac3979"
+    },
+    {
+      "path": "app/prompts/qa.py",
+      "sha": "ad3381dcde2759c807c6f3265ba3de31a29016c6"
+    },
+    {
+      "path": "app/rag/__init__.py",
+      "sha": "ae177756269fe0732fbacfbd5947c03112823391"
+    },
+    {
+      "path": "app/rag/embedding_service.py",
+      "sha": "3ee493002f3f9c04dbec28c9a7c775da45f891b1"
+    },
+    {
+      "path": "app/rag/exceptions.py",
+      "sha": "80c11563b024d18f1cadd7a98a065219342d33ad"
+    },
+    {
+      "path": "app/rag/loader.py",
+      "sha": "5e300b38497d4c29250101412bd6e22c8eb176b0"
+    },
+    {
+      "path": "app/rag/privacy.py",
+      "sha": "860616492462acba388784c4724ea117ec2b270e"
+    },
+    {
+      "path": "app/rag/rag_service.py",
+      "sha": "f8a176ab89034db19153993044933c7bf43b2092"
+    },
+    {
+      "path": "app/rag/retrieval/__init__.py",
+      "sha": "96920776c6c3d53ac4ba33dd8fd608e545a1dce3"
+    },
+    {
+      "path": "app/rag/retrieval/access.py",
+      "sha": "7369a846c72d5ed1034116ddd7b47ddac0ee7186"
+    },
+    {
+      "path": "app/rag/retrieval/base.py",
+      "sha": "dccf66b3abf7cf257aa4698f805e470ef6635fcc"
+    },
+    {
+      "path": "app/rag/retrieval/hybrid.py",
+      "sha": "b0e703cec2b9e985cf7e79cb65e46ce21ae4577e"
+    },
+    {
+      "path": "app/rag/retrieval/keyword.py",
+      "sha": "6a70d937bdade788f814a19a6e2f28f23bd222b4"
+    },
+    {
+      "path": "app/rag/retrieval/no_evidence.py",
+      "sha": "4f852bebf238dcb5c5562070bcd4c4b4a4b98c0c"
+    },
+    {
+      "path": "app/rag/retrieval/reranker.py",
+      "sha": "a74e5198e83b34ceac0caeffdff2e07c92fce09f"
+    },
+    {
+      "path": "app/rag/retrieval/vector.py",
+      "sha": "fdb3aa2d7cbcf04f54b7c3f5f32fbfa45cb977b4"
+    },
+    {
+      "path": "app/rag/splitter.py",
+      "sha": "2dffebd803b543dd129f091300b63462833581df"
+    },
+    {
+      "path": "app/rag/verifier.py",
+      "sha": "6cc1edc5a83300c25662584a85fe640d4ae2ddb1"
+    },
+    {
+      "path": "app/rules/__init__.py",
+      "sha": "c05d3b63a64ba82ab226c123b72c6c38e6791bcc"
+    },
+    {
+      "path": "app/rules/assessment.py",
+      "sha": "c7a15852c69ca1093987e9876f6937021e46b96a"
+    },
+    {
+      "path": "app/rules/data_sensitivity.py",
+      "sha": "5257b22e8f48543cd36569ba4efab09e0e0fbb1c"
+    },
+    {
+      "path": "app/rules/document_metadata.py",
+      "sha": "84336e1c2153b4cb85363e48020cd38273914ad1"
+    },
+    {
+      "path": "app/rules/member_stages.py",
+      "sha": "2b9e8c2638ce25da27059542ac9e0c5999b06654"
+    },
+    {
+      "path": "app/schemas/__init__.py",
+      "sha": "8f7d632e3dbb005894eb8e002fb30ea04cb9d629"
+    },
+    {
+      "path": "app/schemas/admin.py",
+      "sha": "f1aca49629e2f5122e852a1f3d8a0665989255f9"
+    },
+    {
+      "path": "app/schemas/assessment.py",
+      "sha": "7941ba6714b3d167482c45ed90f3c40ccb1eae60"
+    },
+    {
+      "path": "app/schemas/auth.py",
+      "sha": "4c21870cc9e1381be2c490fd6087a955d1e78492"
+    },
+    {
+      "path": "app/schemas/common.py",
+      "sha": "2b4d64f92fcb7c31ce89881f8455d701ee6a9a1e"
+    },
+    {
+      "path": "app/schemas/governance.py",
+      "sha": "1d5e34d7252783b4d6a5c80a9fec0392314f039c"
+    },
+    {
+      "path": "app/schemas/knowledge.py",
+      "sha": "7ad6ab24e079d8e5dcf8bd50983eef948c6c2d86"
+    },
+    {
+      "path": "app/schemas/meeting.py",
+      "sha": "4db98c57ff62af5da2e435fca93645d3f7a929de"
+    },
+    {
+      "path": "app/schemas/member.py",
+      "sha": "47bd0f49bcf4033cc21c2b9c9ef842ed842259d6"
+    },
+    {
+      "path": "app/schemas/member_ext.py",
+      "sha": "346e000e068293ec3ac93a8969cb34759eba908c"
+    },
+    {
+      "path": "app/schemas/member_review.py",
+      "sha": "fb4922ca3414b5a6d04db9cfc97c569678288ee6"
+    },
+    {
+      "path": "app/schemas/member_selection.py",
+      "sha": "b7fdb9a4d4335f49af68e18039f3b3c4e81b205d"
+    },
+    {
+      "path": "app/schemas/member_self.py",
+      "sha": "c51190c915c46c9ec4c436cc36cc2dad4f4c0a72"
+    },
+    {
+      "path": "app/schemas/member_transfer.py",
+      "sha": "0c626ca0a057f69aec952bdc3a0453557aef6be1"
+    },
+    {
+      "path": "app/schemas/member_upper_report.py",
+      "sha": "6e18757d1cbb913169be983b3cf1609ff5e12875"
+    },
+    {
+      "path": "app/schemas/notification.py",
+      "sha": "4ddb6d59be4a2e378ecf417bf1805c22ca3afa8a"
+    },
+    {
+      "path": "app/schemas/qa.py",
+      "sha": "ce8e56b0b7c3e093bca1102f64f4e0f0440c8fcd"
+    },
+    {
+      "path": "app/schemas/retrieval.py",
+      "sha": "857fe3be18c70cc46ca1971bc6faa5ce62456a20"
+    },
+    {
+      "path": "app/schemas/study.py",
+      "sha": "443797b77f7fe52c0246e1724856d164af0a8331"
+    },
+    {
+      "path": "app/schemas/wf.py",
+      "sha": "a95e604400e48db933f2797ce555465e724d2c7c"
+    },
+    {
+      "path": "app/services/__init__.py",
+      "sha": "f40a2a39417c8a2fc79edd935c19727b26a98bfd"
+    },
+    {
+      "path": "app/services/activity_frequency.py",
+      "sha": "e7a1d96064bb234214db8fd53770703aa0efa833"
+    },
+    {
+      "path": "app/services/activity_service.py",
+      "sha": "5e82e7e0d5fb9f46ec28a4dcbe1f28f0f3bc1548"
+    },
+    {
+      "path": "app/services/archive_service.py",
+      "sha": "a28783cca78970a04fe0f3c816dc73681ff1793d"
+    },
+    {
+      "path": "app/services/assessment_scheduler.py",
+      "sha": "f52f7b901ea49fa9732521c25f6f5ffd4f40a5fa"
+    },
+    {
+      "path": "app/services/assessment_service.py",
+      "sha": "3bcc3a62c122e39fb9a285d731cc1ab61cda74d2"
+    },
+    {
+      "path": "app/services/assessment_sources.py",
+      "sha": "3f3a7930a1402935033aeba3558e454ef0469468"
+    },
+    {
+      "path": "app/services/audit_export.py",
+      "sha": "3e42d6dc03ec1969a28dd5498933b42a84866b7d"
+    },
+    {
+      "path": "app/services/audit_service.py",
+      "sha": "bb7e138ae6557f750f6f23fe464eb9f9b8cbd0a8"
+    },
+    {
+      "path": "app/services/document_authority.py",
+      "sha": "da7f56fae1c4f5fa7a0b4b70c062bf17647facb8"
+    },
+    {
+      "path": "app/services/file_store.py",
+      "sha": "b078f36ead8dc536bb1148cf0cf274b3b6fb6056"
+    },
+    {
+      "path": "app/services/governance_service.py",
+      "sha": "7dfb2d502278043663e8bedb08a798f183ebcf6c"
+    },
+    {
+      "path": "app/services/identity_guard.py",
+      "sha": "d12549dab3e5192255b009f54a2b2fad41668480"
+    },
+    {
+      "path": "app/services/identity_service.py",
+      "sha": "92ded5371180dfb183eac9e14d21e7c2fa398b83"
+    },
+    {
+      "path": "app/services/job_service.py",
+      "sha": "af97888eaeefe8b43c9e885632132a5fdd8a766f"
+    },
+    {
+      "path": "app/services/knowledge_meta_service.py",
+      "sha": "fed08af1d6c20c9ed40f0c4de0f1d876d94dbfa8"
+    },
+    {
+      "path": "app/services/knowledge_service.py",
+      "sha": "aa25f3fd3c0185cfe27dab508558bf93705a2cb7"
+    },
+    {
+      "path": "app/services/meeting_service.py",
+      "sha": "0f9eb5ec8a854f2e56890dca6e42e3d6b2efd49b"
+    },
+    {
+      "path": "app/services/member_archive_service.py",
+      "sha": "bdebbd319110f256a3e224372c8f4edfb48d01b4"
+    },
+    {
+      "path": "app/services/member_review_service.py",
+      "sha": "783291bf6162559f934948597c4d116f9598c911"
+    },
+    {
+      "path": "app/services/member_scheduler.py",
+      "sha": "f5fd04910c50837812fe46a89c21e8552938ff60"
+    },
+    {
+      "path": "app/services/member_selection_service.py",
+      "sha": "6766b0f51f249863a082ef70b9c273d07a876378"
+    },
+    {
+      "path": "app/services/member_service.py",
+      "sha": "1d994664404e324d489e153fa4975b41ccfd5178"
+    },
+    {
+      "path": "app/services/member_transfer_service.py",
+      "sha": "7edaca01f267750dc38670e96f07263dd4cd33d5"
+    },
+    {
+      "path": "app/services/member_upper_report_service.py",
+      "sha": "4de36a9aca172255ae6cf1daa1c70d5491296060"
+    },
+    {
+      "path": "app/services/notifications.py",
+      "sha": "ffd32aabdc33a9a7812615c5e613ce5aa454f841"
+    },
+    {
+      "path": "app/services/ocr_service.py",
+      "sha": "9eca703cda0383cb562443ab5d14c40cd14b69f3"
+    },
+    {
+      "path": "app/services/org_scope.py",
+      "sha": "ed55ef2fc174002be2c8714ac911b78cea61be34"
+    },
+    {
+      "path": "app/services/qa_attachment_service.py",
+      "sha": "be11814613c5fc62d1c39bd952f190c3921f4f3c"
+    },
+    {
+      "path": "app/services/qa_record_io.py",
+      "sha": "b2f59521f452f0f1490486bfedb389d45d309552"
+    },
+    {
+      "path": "app/services/qa_record_service.py",
+      "sha": "fea435e330a65ec09ee3ff67205e0386910ead99"
+    },
+    {
+      "path": "app/services/qa_service.py",
+      "sha": "7003d37c0eb5378d4ec6f4d46b0426c2fe7d85c3"
+    },
+    {
+      "path": "app/services/qa_session_service.py",
+      "sha": "dc5c0070f5e02663019b4d1f50e3ec77dd047d8b"
+    },
+    {
+      "path": "app/services/retention_service.py",
+      "sha": "4c35204e8cbae7f2ed7e02c393f2ffcd63f174c8"
+    },
+    {
+      "path": "app/services/retrieval_service.py",
+      "sha": "4111addb461e29b16dafef0e9f6bf98707411e12"
+    },
+    {
+      "path": "app/services/review_service.py",
+      "sha": "3a715b6d8b422b62f054bbbf312bec92f9851929"
+    },
+    {
+      "path": "app/services/roster_io.py",
+      "sha": "4f9f39e3292e22159abdb6518535d94a65919205"
+    },
+    {
+      "path": "app/services/run_log_service.py",
+      "sha": "7f3c84b4f69573bf1626626e4de74060d5296ddb"
+    },
+    {
+      "path": "app/services/study_materials.py",
+      "sha": "1cfdd29cafb7143e6776330243fe0e1ecc8da19f"
+    },
+    {
+      "path": "app/services/study_service.py",
+      "sha": "ef7201b50e820b40ecd317e846040a12c1971481"
+    },
+    {
+      "path": "app/services/version_trail_service.py",
+      "sha": "c65f40d3e570947f7695e6f982a3f2601c5a7353"
+    },
+    {
+      "path": "app/utils/__init__.py",
+      "sha": "490b22ecfc2f2dd3280d8308d5617a5c96e17b9d"
+    },
+    {
+      "path": "app/utils/datetime.py",
+      "sha": "b385573d0eb55364797142aac96f2bda7f606997"
+    },
+    {
+      "path": "app/utils/snapshot.py",
+      "sha": "448fd5ad67f0f3cdeef10c5e0c5c2c09a0326eb7"
+    },
+    {
+      "path": "config/business_rules.yaml",
+      "sha": "3b2bb9f4e2f7572e101f39e2a0d79947a89a01ea"
+    },
+    {
+      "path": "config/dev.yaml",
+      "sha": "091c55400e1b4d6090e42526926f88c2f84ca4cd"
+    },
+    {
+      "path": "config/model_routes.yaml",
+      "sha": "231fa3813752277995d83c2f95058fda59d34a95"
+    },
+    {
+      "path": "config/model_routing.py",
+      "sha": "af9a3651b1d923a03707311dd179169128b2696f"
+    },
+    {
+      "path": "config/module6-school.pending.json",
+      "sha": "051b85192536496ff137a768a522e6b6469adf87"
+    },
+    {
+      "path": "config/nginx-http.conf",
+      "sha": "0b2d6af8ae62145c6d9e86718ad838113d719a2b"
+    },
+    {
+      "path": "config/nginx-production.conf",
+      "sha": "9dcdc9d820ce2cd42c5480ca62dc6f2b1554efd3"
+    },
+    {
+      "path": "config/prod.yaml",
+      "sha": "3f3e5572b65e1f1a1dbcac9786765930fb3b240e"
+    },
+    {
+      "path": "config/retrieval_strategy.yaml",
+      "sha": "365d188c7f02ab461f83a5cdbe9d51303c21506a"
+    },
+    {
+      "path": "config/study_templates.yaml",
+      "sha": "369664ba591df88c62d521569ba023ab621686fb"
+    },
+    {
+      "path": "deploy/DEPLOYMENT.md",
+      "sha": "22922e4e9ce10de37e51554afc5fef969cbe2a53"
+    },
+    {
+      "path": "deploy/docker/MIRROR_GUIDE.md",
+      "sha": "b9990f9d2a1ce9147a5a4479f6d070718619fe37"
+    },
+    {
+      "path": "deploy/docker/daemon.json.example",
+      "sha": "3b51cbfe8d0dc4d92a8b75d3f7c244234841240f"
+    },
+    {
+      "path": "deploy/server/bootstrap.sh",
+      "sha": "37b27fa6803558842d2ffb72ca172ffd47b5018a"
+    },
+    {
+      "path": "deploy/server/env.example",
+      "sha": "9f11e1e4dfd79f6ff55c2f41f697cc9f2305eda1"
+    },
+    {
+      "path": "deploy/server/setup.sh",
+      "sha": "347897ebc38b44c72f0eb3c8abb376f9bfd02a8c"
+    },
+    {
+      "path": "docker-compose.dev.yml",
+      "sha": "e0a01b7f83938bf1398e9c7515b22d47936d4f0b"
+    },
+    {
+      "path": "docker-compose.server.yml",
+      "sha": "e89e7bdbac0b2edeb934d3b6e79a595ca9175880"
+    },
+    {
+      "path": "docker-compose.yml",
+      "sha": "630ae7c5405fa2ebad60cadcf700ac7215cc730c"
+    },
+    {
+      "path": "docs/MODULE6_DELIVERY_2026-10-11.md",
+      "sha": "e734019edc59de979616a96c9b25b3a4cff75f63"
+    },
+    {
+      "path": "docs/MODULE6_ISSUE24.md",
+      "sha": "26f73f7f9638f6b1cc3e33d2dd31cda5fb4de6a5"
+    },
+    {
+      "path": "docs/RUNNING.md",
+      "sha": "f8501ef647d96e8e6b29022ea3a120fc9455265a"
+    },
+    {
+      "path": "docs/STATUS.md",
+      "sha": "409052e6b9e17c3da8aad1c7abd881fe1a8b4366"
+    },
+    {
+      "path": "docs/TESTING.md",
+      "sha": "bf8f71d5dcf916490f4ff9ab3625586b8adba07c"
+    },
+    {
+      "path": "frontend/.gitignore",
+      "sha": "6fe354312cd167b4182cf6222a51338f6826d81f"
+    },
+    {
+      "path": "frontend/index.html",
+      "sha": "f6aa1bc3f1ec0a7a1e040dcc8cde80c4063c764a"
+    },
+    {
+      "path": "frontend/package-lock.json",
+      "sha": "b62ceb231eac049bf27aa1bc631db405174d3506"
+    },
+    {
+      "path": "frontend/package.json",
+      "sha": "135dca1c83f39b8d3b76ed9718d563164c4b8263"
+    },
+    {
+      "path": "frontend/public/favicon.svg",
+      "sha": "9f51716993eb31cfb42a601d164186b88b32d984"
+    },
+    {
+      "path": "frontend/scripts/check-roles-ui.mjs",
+      "sha": "fecad00e4553a97a7ae73e1ab57220a01cd12516"
+    },
+    {
+      "path": "frontend/scripts/screenshot-ask.mjs",
+      "sha": "a6d913680fe532925a35320517f810bfc53236cc"
+    },
+    {
+      "path": "frontend/scripts/screenshot-pages.mjs",
+      "sha": "5685a778f7e84b9e68001ec9feaa527a0aa918bf"
+    },
+    {
+      "path": "frontend/scripts/screenshot.mjs",
+      "sha": "ff20aff790401d75c26710e3d48e31bceab24c79"
+    },
+    {
+      "path": "frontend/scripts/verify-module6.mjs",
+      "sha": "a6d8d54cdd12b575ec92ce8384135c2f50664b59"
+    },
+    {
+      "path": "frontend/scripts/verify-modules123.mjs",
+      "sha": "6e3280aadc6e32448252b5f72a3e87d73d640038"
+    },
+    {
+      "path": "frontend/src/App.vue",
+      "sha": "a78fb6fd3f275085262caef0be32a7a82bcc0d46"
+    },
+    {
+      "path": "frontend/src/api/admin.ts",
+      "sha": "730793296635e3032168763de46d89fed233aed9"
+    },
+    {
+      "path": "frontend/src/api/assessment.ts",
+      "sha": "976e173b400556eb84b8767393e78eb45cda29ba"
+    },
+    {
+      "path": "frontend/src/api/auth.ts",
+      "sha": "ca661f4334dc4b267e4a08c983c652e65d98025a"
+    },
+    {
+      "path": "frontend/src/api/governance.ts",
+      "sha": "14c9e16079093f6ebb75f5715d68a301db676493"
+    },
+    {
+      "path": "frontend/src/api/http.ts",
+      "sha": "0847c89b1996583b1a81c2be3b25a45cdb80971d"
+    },
+    {
+      "path": "frontend/src/api/knowledge.ts",
+      "sha": "df03d12101830eccfa3fb38086327fb2923eccff"
+    },
+    {
+      "path": "frontend/src/api/meeting.ts",
+      "sha": "ba68ecb3f55b36eb599fe1f595116f1d75d72f20"
+    },
+    {
+      "path": "frontend/src/api/member-development.ts",
+      "sha": "153b11c14257f6048ddb4358e819e3f3e5757d50"
+    },
+    {
+      "path": "frontend/src/api/member-self.ts",
+      "sha": "da281a710eaee5dc265e61ad4da1e522ac6d34be"
+    },
+    {
+      "path": "frontend/src/api/member-transfer.ts",
+      "sha": "e7d77c1d8c8f13dc5e9c73ec1c2315dd609caebe"
+    },
+    {
+      "path": "frontend/src/api/member.ts",
+      "sha": "767f7aaed5b1499ab7e979e2e3da97b90ee4a3d8"
+    },
+    {
+      "path": "frontend/src/api/mock.ts",
+      "sha": "ff246c3ae1172832c0b13598c1b581692b27b21f"
+    },
+    {
+      "path": "frontend/src/api/qa.ts",
+      "sha": "409ab7b1ad24b16a596e2e3d5dc484af988effea"
+    },
+    {
+      "path": "frontend/src/api/study.ts",
+      "sha": "4b7f9c893b49a1396b43e95e8b039f4514f29894"
+    },
+    {
+      "path": "frontend/src/api/surface.ts",
+      "sha": "22d41fd8212210251af018106c06498b110e9cdb"
+    },
+    {
+      "path": "frontend/src/api/types.ts",
+      "sha": "4275351f33d149f2073ed2d0bc38d2891d8b2d21"
+    },
+    {
+      "path": "frontend/src/api/upper-report.ts",
+      "sha": "be5483bcdfdd1e210e67281a32d3e78277cd8411"
+    },
+    {
+      "path": "frontend/src/components/ActionDialog.vue",
+      "sha": "5b2497794475821a43a6998627883c6ba91f25d1"
+    },
+    {
+      "path": "frontend/src/components/AppIcon.vue",
+      "sha": "555acde5f40859fd50184f2ff118a868b81de708"
+    },
+    {
+      "path": "frontend/src/components/CitationCard.vue",
+      "sha": "8420ee418247ef37409ce27d7ad3c47da4462f81"
+    },
+    {
+      "path": "frontend/src/components/EmptyState.vue",
+      "sha": "e4eaf7ec752811e7b793a011f64e65bfd80bca0a"
+    },
+    {
+      "path": "frontend/src/components/ErrorState.vue",
+      "sha": "3d1c2653514f2f44378a89cb14165e9e91a0a1fd"
+    },
+    {
+      "path": "frontend/src/components/LoadingBlock.vue",
+      "sha": "8402807784181517007cf80ae06d05c98045d9ae"
+    },
+    {
+      "path": "frontend/src/components/PageHeader.vue",
+      "sha": "9a596515c9c850ab8723596d2c172e418cc8bd9a"
+    },
+    {
+      "path": "frontend/src/components/WarningList.vue",
+      "sha": "531558ed4e6d7baee366e4a7901674377b3a6e8e"
+    },
+    {
+      "path": "frontend/src/components/WorkspaceTabs.vue",
+      "sha": "546e5f08a4dcf889bb7d6a87b2cfe8aeea9072af"
+    },
+    {
+      "path": "frontend/src/components/knowledge/DocumentTools.vue",
+      "sha": "703bf1735d238d41ba0f1d098ebd77cf9f377298"
+    },
+    {
+      "path": "frontend/src/components/meeting/MeetingFrequencyPanel.vue",
+      "sha": "651b2a59bd42f6bad8175f1a5aef38478f60dbc6"
+    },
+    {
+      "path": "frontend/src/components/meeting/MeetingWorkbench.vue",
+      "sha": "85b3872fa722c74dfe63c79cac6df4938d61f59b"
+    },
+    {
+      "path": "frontend/src/components/meeting/MemberReviewPanel.vue",
+      "sha": "7813e461ed0dccf0e6643213da056f42b0d6f270"
+    },
+    {
+      "path": "frontend/src/components/meeting/ParticipantEditor.vue",
+      "sha": "67c0c1b8da1e2625cd33dee9ed25d6aee68024c6"
+    },
+    {
+      "path": "frontend/src/components/meeting/SourcePicker.vue",
+      "sha": "932d29177504a28b05e06f6ae37ef85278c04b1b"
+    },
+    {
+      "path": "frontend/src/components/members/MemberFilePanel.vue",
+      "sha": "98c9b75aaf7c47fe207564c840759ff784ee0479"
+    },
+    {
+      "path": "frontend/src/components/members/MemberProcessWorkspace.vue",
+      "sha": "e21539b1c5adad0538b32c27bd4f89f71a8ee44f"
+    },
+    {
+      "path": "frontend/src/components/members/MemberSelectionPanel.vue",
+      "sha": "890584514ad28458e0a260decfc459c4f49db328"
+    },
+    {
+      "path": "frontend/src/components/members/TransferPanel.vue",
+      "sha": "fcca9e2c8873f72a8bab884c0c331e5720a8c93b"
+    },
+    {
+      "path": "frontend/src/components/members/UpperReportPanel.vue",
+      "sha": "869fc2474ac486a7f8e599b578d79eea7860f684"
+    },
+    {
+      "path": "frontend/src/layouts/AppShell.vue",
+      "sha": "6fee8fefb68e1fdccf2ad8e51bf6447feb8a86d5"
+    },
+    {
+      "path": "frontend/src/main.ts",
+      "sha": "f932d5979b1ba8dd2e1fe578fc6ae15e687d26f1"
+    },
+    {
+      "path": "frontend/src/router/index.ts",
+      "sha": "26caab83c7f5e516cb5b84fab5ec38668a6ae9c3"
+    },
+    {
+      "path": "frontend/src/stores/session.ts",
+      "sha": "51088526dd3411fdc91cc4ba872265730e59c1ba"
+    },
+    {
+      "path": "frontend/src/styles/base.css",
+      "sha": "cced1737885b05b36d24f671aa73b00bd5d6d683"
+    },
+    {
+      "path": "frontend/src/styles/tokens.css",
+      "sha": "0a3da8d928db0407e2680bc210d7c345c4485ea0"
+    },
+    {
+      "path": "frontend/src/styles/workbench.css",
+      "sha": "78dc826203328da28b2f6ab24371d9879e3d6558"
+    },
+    {
+      "path": "frontend/src/utils/files.ts",
+      "sha": "834a6c181774203e9658e670b7bb5e4ea667fe7c"
+    },
+    {
+      "path": "frontend/src/utils/uuid.ts",
+      "sha": "8765da4d2de25db4f5aea407d07c2e0e7952d2b1"
+    },
+    {
+      "path": "frontend/src/views/AccountsView.vue",
+      "sha": "714410587e9009e343e2031f6ff522b2f6f80d5d"
+    },
+    {
+      "path": "frontend/src/views/AskView.vue",
+      "sha": "c6c4207af92423b303446535c9378a9084b5c0de"
+    },
+    {
+      "path": "frontend/src/views/AssessmentView.vue",
+      "sha": "dad3416a42f425f63f2c108c39e12a4828441328"
+    },
+    {
+      "path": "frontend/src/views/ForbiddenView.vue",
+      "sha": "ff05a1caceffe0f9930a0ed956da93428ebde7c7"
+    },
+    {
+      "path": "frontend/src/views/GovernanceView.vue",
+      "sha": "78a2cac3818c6743ee5d54b5adf08c70a7390c00"
+    },
+    {
+      "path": "frontend/src/views/KnowledgeView.vue",
+      "sha": "397ac23211ffeea3e45652eb01fc7a00b90f2535"
+    },
+    {
+      "path": "frontend/src/views/LoginView.vue",
+      "sha": "79dafa2b84513152e0622cbfe36291078f7608fb"
+    },
+    {
+      "path": "frontend/src/views/MeetingView.vue",
+      "sha": "18a6adedf7504620076dc682f2a50b85cc29b7b3"
+    },
+    {
+      "path": "frontend/src/views/MembersView.vue",
+      "sha": "fea447e120feb055f1b62394078ceae0dc4b4e25"
+    },
+    {
+      "path": "frontend/src/views/MyArchiveView.vue",
+      "sha": "2659f2ea687e72e2cb9e75e56216b93b58d305d9"
+    },
+    {
+      "path": "frontend/src/views/MyMaterialsView.vue",
+      "sha": "9b8ad888c8e41bdbb55a689b03f2ecb0630d7a10"
+    },
+    {
+      "path": "frontend/src/views/NotFoundView.vue",
+      "sha": "3c64f467959846d45e8c75b8ee24087e45930e38"
+    },
+    {
+      "path": "frontend/src/views/StudyView.vue",
+      "sha": "19eb0ece5ee61cb63b15023b06120a2d657ec292"
+    },
+    {
+      "path": "frontend/src/views/SystemView.vue",
+      "sha": "c47c4aeca2ba5b1ab26682bced99b3e1c55c1e4c"
+    },
+    {
+      "path": "frontend/tests/admin-accounts.mjs",
+      "sha": "6d189ae9eda39389b2bea90b879925faf853e461"
+    },
+    {
+      "path": "frontend/tests/assessment-workflows.mjs",
+      "sha": "50d6557dec96f0afb0390bed63a86fe7fd868651"
+    },
+    {
+      "path": "frontend/tests/business-workflows.mjs",
+      "sha": "4ff5480b99a11062967d7d70d78717fdd93bbea8"
+    },
+    {
+      "path": "frontend/tests/member-self-workflows.mjs",
+      "sha": "2a8d4128e6b4faa0159b2bd3a1ef7babb4c3451e"
+    },
+    {
+      "path": "frontend/tests/role-access.mjs",
+      "sha": "a9f7909723cf9bea733f7e98ae6c66249596bcdf"
+    },
+    {
+      "path": "frontend/tests/study-workflows.mjs",
+      "sha": "af4b8b39bd5cd04e197d5dc6f6a6a4f0cbf25f1a"
+    },
+    {
+      "path": "frontend/tsconfig.app.json",
+      "sha": "60ab997b8e2c8565f536aa71fd85527e5b50b5ca"
+    },
+    {
+      "path": "frontend/tsconfig.json",
+      "sha": "1ffef600d959ec9e396d5a260bd3f5b927b2cef8"
+    },
+    {
+      "path": "frontend/tsconfig.node.json",
+      "sha": "8455dcbc2c947322adef8783a42741878edaea9c"
+    },
+    {
+      "path": "frontend/vite.config.ts",
+      "sha": "caf1df04d60956dfbeb27af9e48288f82f5b6a62"
+    },
+    {
+      "path": "migrations/env.py",
+      "sha": "2e73b04002659dc803f896a218b4f766d0a040b0"
+    },
+    {
+      "path": "migrations/script.py.mako",
+      "sha": "471e8fb8f8cf27f92a2559895c93d995ff4b930c"
+    },
+    {
+      "path": "migrations/versions/001_initial_schema.py",
+      "sha": "7e258becb916a3bc80ed378fcfb0d66c748b8b34"
+    },
+    {
+      "path": "migrations/versions/002_add_chinese_fts.py",
+      "sha": "8161a491b2de96b033da30752dd6293a03da9f14"
+    },
+    {
+      "path": "migrations/versions/003_qa_sessions.py",
+      "sha": "63e5fdf894c6390554efde3ac366a63609743bc8"
+    },
+    {
+      "path": "migrations/versions/004_member_profiles.py",
+      "sha": "43f6776cdeffb0374fbab6475990056aabdb3314"
+    },
+    {
+      "path": "migrations/versions/005_history_metadata_and_roster_scope.py",
+      "sha": "0ecfe93ae5a9db52c24aea2e567c20dea321b4fc"
+    },
+    {
+      "path": "migrations/versions/006_center_group_study.py",
+      "sha": "5f051983c96675b882abf4258c73c31234903fdc"
+    },
+    {
+      "path": "migrations/versions/007_annual_assessment.py",
+      "sha": "29fcb34a681d439265f9f0ca7a08ca55946a7ff4"
+    },
+    {
+      "path": "migrations/versions/008_org_life_tasks.py",
+      "sha": "e83f1b98ab33b8378d777d7a1d372acae2433fae"
+    },
+    {
+      "path": "migrations/versions/009_member_workflow.py",
+      "sha": "cee5c975fd32d0ae0198452e83dab63553457d36"
+    },
+    {
+      "path": "migrations/versions/010_security_governance.py",
+      "sha": "efa8c35addad3a79b22ab9e515e06dd939b393a9"
+    },
+    {
+      "path": "migrations/versions/011_governance_timestamps.py",
+      "sha": "0f75e68c2fb136f680a701800eb9ca0e14af660d"
+    },
+    {
+      "path": "migrations/versions/012_member_self_service.py",
+      "sha": "bd9d823f843d314d0b1fdb87d17996bb7f404359"
+    },
+    {
+      "path": "migrations/versions/013_notification_delivery.py",
+      "sha": "a3f4d8f2247ec71bc717080d8c87a6b4e3a11ad7"
+    },
+    {
+      "path": "migrations/versions/014_knowledge_authority_validity.py",
+      "sha": "c579cc4b4c5bba8f627bd9b2a24db4a6b8446926"
+    },
+    {
+      "path": "migrations/versions/015_knowledge_review_schedule.py",
+      "sha": "5b3d08caafe8a1c2f97bdc5336f83cac6c2818dc"
+    },
+    {
+      "path": "migrations/versions/016_qa_session_versions.py",
+      "sha": "258ae353ecce5ced0ce6266c93dd798deff69daa"
+    },
+    {
+      "path": "migrations/versions/017_member_reviews.py",
+      "sha": "6170479667e5bd30dc4124e513e0617a74e8cc44"
+    },
+    {
+      "path": "migrations/versions/018_member_transfers.py",
+      "sha": "f102338daf2a4b98d0db43cb779d5aa3fca75761"
+    },
+    {
+      "path": "migrations/versions/019_member_upper_reports.py",
+      "sha": "78dd41a83506c38b9826596309211860b85b5bf5"
+    },
+    {
+      "path": "migrations/versions/020_member_data_levels.py",
+      "sha": "723e1eb3ddb8e910c6b0813cfcf9cb56c6158242"
+    },
+    {
+      "path": "migrations/versions/021_member_selection.py",
+      "sha": "38e44d70289e6033e2756a524167b3785a52d4e5"
+    },
+    {
+      "path": "migrations/versions/022_member_vote_dedup_batch.py",
+      "sha": "c05d7d5b72b477c64b345a9483762759f30552a5"
+    },
+    {
+      "path": "migrations/versions/023_qa_session_attachments.py",
+      "sha": "983d06dd577289e8781408432417bfd401b40043"
+    },
+    {
+      "path": "migrations/versions/024_member_id_card.py",
+      "sha": "98f276bf47c4d34adfedbe4217da7a27b95e006e"
+    },
+    {
+      "path": "migrations/versions/025_member_material_scan.py",
+      "sha": "6fb2e61b15f50493b3c4488d0031716bbfd598d6"
+    },
+    {
+      "path": "migrations/versions/026_member_material_fields.py",
+      "sha": "cd20ada079199ad7a382178913db9b3a9e95ace0"
+    },
+    {
+      "path": "migrations/versions/027_org_leader_terms.py",
+      "sha": "b7ca957757172d3d642b07e55a1ba8d13cc4eef6"
+    },
+    {
+      "path": "require.txt",
+      "sha": "67c424facc71ef2235109d55123a4d1891d184ef"
+    },
+    {
+      "path": "scripts/check-docker-mirrors.sh",
+      "sha": "bd337759e3e2645a800d38925dce0066bca4034f"
+    },
+    {
+      "path": "scripts/check-frontend-static.py",
+      "sha": "92fefd697e51e3c5f10fb94c81b3ef1da06c1982"
+    },
+    {
+      "path": "scripts/create_test_user.py",
+      "sha": "f43b006fe0ec52ec63ac4a433514278aa6339a76"
+    },
+    {
+      "path": "scripts/demo_model_service.py",
+      "sha": "141dab0af09db614816dc933d2ddb4ddceda4349"
+    },
+    {
+      "path": "scripts/dev_bootstrap.py",
+      "sha": "aa79717e510da933353baa2856f1751678fa2976"
+    },
+    {
+      "path": "scripts/init_db.py",
+      "sha": "693197780ce12f148de6196d324723ffed0fc760"
+    },
+    {
+      "path": "scripts/init_db.sql",
+      "sha": "35e2f3602e4447b5bd24821187c6fac620e51bb4"
+    },
+    {
+      "path": "scripts/install-backend-deps.bat",
+      "sha": "00d800c75573e29b9c6db0f5149d4352a4487af1"
+    },
+    {
+      "path": "scripts/install-backend-deps.sh",
+      "sha": "c0c2da67d9b8c2b17054e2b36479e981b56ca047"
+    },
+    {
+      "path": "scripts/module6_acceptance.py",
+      "sha": "4c1f0608b495341f1fbd03597b3277306320f529"
+    },
+    {
+      "path": "scripts/module6_backup.py",
+      "sha": "e7510485ff10e61cecab68ccb369b55da0573048"
+    },
+    {
+      "path": "scripts/module6_bootstrap.py",
+      "sha": "92c95a3919f05f7eb0415770852f2e06eda392fb"
+    },
+    {
+      "path": "scripts/module6_container_check.py",
+      "sha": "35171a9dec96c9b59b467b67e9e6155c63417dc8"
+    },
+    {
+      "path": "scripts/module6_entrypoint.py",
+      "sha": "6d9e1a3b7fc7b83e0aee8e9d4ba193eae043f660"
+    },
+    {
+      "path": "scripts/module6_model_probe.py",
+      "sha": "0f0033454ef1c7ee748644dbdde002c0a9470040"
+    },
+    {
+      "path": "scripts/module6_rotate_files.py",
+      "sha": "55d791545a4613baa52d9a736e6802b4b8bb2ad5"
+    },
+    {
+      "path": "scripts/module6_runtime_role.py",
+      "sha": "4a31999ed206d437a4e39ef9545494eb46369868"
+    },
+    {
+      "path": "scripts/offline-images.sh",
+      "sha": "2f9a89847a2027f22b2da02483f7336bf307ae92"
+    },
+    {
+      "path": "scripts/package-and-upload.ps1",
+      "sha": "7364a68c39ee66ea259f9d8151485fe9cbcbbf14"
+    },
+    {
+      "path": "scripts/purge_tenant.py",
+      "sha": "5800aacdca07ad411c3d8b0de9af91235177aa4a"
+    },
+    {
+      "path": "scripts/seed_demo_business.py",
+      "sha": "c19b2be25c6e9367e0f5559fa8cdfa747aae24df"
+    },
+    {
+      "path": "scripts/seed_demo_school.py",
+      "sha": "9f0fd4746b750859f0da651970bd5651e0612ec2"
+    },
+    {
+      "path": "scripts/seed_demo_study_finish.py",
+      "sha": "2f9cb2effc3caee6b572faa4d9b70b2cc49ee3e4"
+    },
+    {
+      "path": "scripts/seed_knowledge_docs.py",
+      "sha": "f1d074487095ee5d5c3a611fcbdf7083f53c2105"
+    },
+    {
+      "path": "scripts/seed_member_profiles.py",
+      "sha": "9efa6dd2c451c2d0ab52c25e314a23dc09f61b91"
+    },
+    {
+      "path": "scripts/seed_test_data.py",
+      "sha": "acd236afed588f01b19167148f54cf5a5a069de1"
+    },
+    {
+      "path": "scripts/server_init_admin.py",
+      "sha": "6b943999872775f681b66059bd299bb9506d1597"
+    },
+    {
+      "path": "scripts/start-all.bat",
+      "sha": "10643e3ecedc3b314fb0e73bfdc740e92daab269"
+    },
+    {
+      "path": "scripts/start-all.sh",
+      "sha": "46be64331ad72f0daa4900d46f604b51277b892a"
+    },
+    {
+      "path": "scripts/test-integration.bat",
+      "sha": "03af96c22a58bd9ec33314400cea418d1d6d7570"
+    },
+    {
+      "path": "scripts/test-integration.sh",
+      "sha": "8365281350501ce6f9bda12d65a6ad59eabf27db"
+    },
+    {
+      "path": "scripts/validate_modules123_ui_contracts.py",
+      "sha": "1c84610991b09cddfbbbccc584680784e2942c79"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha": "412ecbc4ca8d08387fc2f98a33a03cf323f0a6b2"
+    },
+    {
+      "path": "tests/evaluation/qa_samples.json",
+      "sha": "bf6a7472d45c0c539f531d3efdba075403a25220"
+    },
+    {
+      "path": "tests/evaluation/retrieval_samples.json",
+      "sha": "23343b9c7f754657c79736eecee1b74f858a2a97"
+    },
+    {
+      "path": "tests/evaluation/run_evaluation.py",
+      "sha": "a6bd5e762f0b58f33142b9b024a3b032d098f15d"
+    },
+    {
+      "path": "tests/evaluation/samples/qa_samples_v1.json",
+      "sha": "0554e4edd1dac5fbaacf1b61675ce24115419597"
+    },
+    {
+      "path": "tests/integration/__init__.py",
+      "sha": "bb8514109d0d4e33d6fe2b904bac1c5295278bd8"
+    },
+    {
+      "path": "tests/integration/test_admin_accounts.py",
+      "sha": "52c91998804a33e03d9f5396972eaa9aa17c08b4"
+    },
+    {
+      "path": "tests/integration/test_assessment_workflow.py",
+      "sha": "70977f5eef90d5cfc482454a3bece3030eb5a93a"
+    },
+    {
+      "path": "tests/integration/test_auth_api.py",
+      "sha": "6741a2f6dde255611b4cdb9152ad430b31eb2edd"
+    },
+    {
+      "path": "tests/integration/test_auth_lifecycle.py",
+      "sha": "48806114b0783e4752ed9902dcc9e819c031c1b3"
+    },
+    {
+      "path": "tests/integration/test_db_migration.py",
+      "sha": "8f026469779989c25f344e9ff8c13365c60578e5"
+    },
+    {
+      "path": "tests/integration/test_knowledge_api.py",
+      "sha": "b7ca2937295dd5870af5966814d7f9973c408253"
+    },
+    {
+      "path": "tests/integration/test_knowledge_extras.py",
+      "sha": "b3355475e71391e21c650e1ab6808df5acac7986"
+    },
+    {
+      "path": "tests/integration/test_llm_integration.py",
+      "sha": "aa9e46bf9b5de682dd298c62928ddc3085bec2c7"
+    },
+    {
+      "path": "tests/integration/test_meeting_workflow.py",
+      "sha": "cf8bc9b1fff622cdfd3b6dcad1565b89ada1f7f2"
+    },
+    {
+      "path": "tests/integration/test_member_flow.py",
+      "sha": "3833cc8031cb57ed855bde6b0a3dd04c4f0a9522"
+    },
+    {
+      "path": "tests/integration/test_member_full_workflow.py",
+      "sha": "57f12f45a48d4f6761a7bd9a6598fb5d549a9224"
+    },
+    {
+      "path": "tests/integration/test_member_review_workflow.py",
+      "sha": "5b92a9d4e91cec0059c324e76f7bbbb101fdafdf"
+    },
+    {
+      "path": "tests/integration/test_member_selection_workflow.py",
+      "sha": "1bed8fe6a45d8790699ce4982e594fa2e4dc941d"
+    },
+    {
+      "path": "tests/integration/test_member_self_service.py",
+      "sha": "40dc7a5deaf381bd508828a18e6021bcd1357436"
+    },
+    {
+      "path": "tests/integration/test_member_transfer_workflow.py",
+      "sha": "ed633f766e16f063b714281223d25a073f695a85"
+    },
+    {
+      "path": "tests/integration/test_member_upper_report_workflow.py",
+      "sha": "c5396b3a7947f7fd48c3951a1d542083e36b1bd0"
+    },
+    {
+      "path": "tests/integration/test_module6_governance.py",
+      "sha": "11df11e5dad4e7e6c1725832af9a998bc9a02138"
+    },
+    {
+      "path": "tests/integration/test_module6_http.py",
+      "sha": "6609c3e92c7fbb9a397364f5bf16110ab7c8a720"
+    },
+    {
+      "path": "tests/integration/test_modules45_review_regressions.py",
+      "sha": "f69326a797e014530989f833ce9db0240a800f25"
+    },
+    {
+      "path": "tests/integration/test_notifications.py",
+      "sha": "1a292e3e44fb926712c3a6aa70daff707e6fb027"
+    },
+    {
+      "path": "tests/integration/test_org_scope_parity.py",
+      "sha": "b54ca7cfd44da09c17251dad2f535381537e5eda"
+    },
+    {
+      "path": "tests/integration/test_qa_regressions.py",
+      "sha": "af40912d3cc8eaa5ed07d48700df0d25020bac2e"
+    },
+    {
+      "path": "tests/integration/test_repaired_storage.py",
+      "sha": "d2f9cbd12dd2f51ba6a388406f11fccd4cf5623a"
+    },
+    {
+      "path": "tests/integration/test_selected_business_features.py",
+      "sha": "cc0e2ff941708499ceb006c760ca0a5bd311ffb0"
+    },
+    {
+      "path": "tests/integration/test_study_workflow.py",
+      "sha": "4d0c9f560942216bec7d23322e68398fd4878237"
+    },
+    {
+      "path": "tests/security/__init__.py",
+      "sha": "5235293ead813b76e615ce22434a35fb0a6a241b"
+    },
+    {
+      "path": "tests/security/test_content_privacy.py",
+      "sha": "b45220d07e20839636bc649e3fce54633f6fc99a"
+    },
+    {
+      "path": "tests/security/test_data_egress.py",
+      "sha": "346fccdd83e4bb8271bef5b0281703beff43b8a2"
+    },
+    {
+      "path": "tests/security/test_model_boundaries.py",
+      "sha": "77932c0d710d38a10241fcd58bde2506710ae8ae"
+    },
+    {
+      "path": "tests/security/test_permission.py",
+      "sha": "9fb12afdf594b407f50ee5dbb008c71e0657793a"
+    },
+    {
+      "path": "tests/security/test_system_access.py",
+      "sha": "5bf1c5c3c06794f830410645ccdaa2d899b32201"
+    },
+    {
+      "path": "tests/security/test_tenant_isolation.py",
+      "sha": "0771ef64cbc16b49064b7006f42fa6de04c5dcbd"
+    },
+    {
+      "path": "tests/unit/__init__.py",
+      "sha": "f8431e442b1d890f38ce7382ed578ab7cd9675c4"
+    },
+    {
+      "path": "tests/unit/llm/__init__.py",
+      "sha": "5533fe25102569f5ca2f8e8722ceba57da0c001e"
+    },
+    {
+      "path": "tests/unit/llm/test_cloud_providers.py",
+      "sha": "78e052d48c74bddac1bc5439bb6443dd38bd2386"
+    },
+    {
+      "path": "tests/unit/llm/test_gateway.py",
+      "sha": "6fce1f5c4741c10af96556092562dd4c7cabbb2e"
+    },
+    {
+      "path": "tests/unit/llm/test_model_service.py",
+      "sha": "1654d067f2f775b0b46f79f6bd70a72daabb4401"
+    },
+    {
+      "path": "tests/unit/llm/test_registry.py",
+      "sha": "6165f97e59e130f93198de29d99538fc00949e59"
+    },
+    {
+      "path": "tests/unit/llm/test_router.py",
+      "sha": "a91189e9a628aa7f5c195500de8e1e88ce7bb2b1"
+    },
+    {
+      "path": "tests/unit/rag/__init__.py",
+      "sha": "7c39981db8afafea7397d1236558b33857448ccd"
+    },
+    {
+      "path": "tests/unit/rag/test_rag_service.py",
+      "sha": "78b98d90110b2bbe28afbd1e3b7687b5610b28ce"
+    },
+    {
+      "path": "tests/unit/rag/test_retrieval.py",
+      "sha": "79ad2dcc1996070179f6ff443ea1c46eb8c54ad9"
+    },
+    {
+      "path": "tests/unit/test_activity_frequency.py",
+      "sha": "da1fe073a1e8d0c446e46dcc78b6ce1d41e9280c"
+    },
+    {
+      "path": "tests/unit/test_assessment.py",
+      "sha": "22ba2930369f3ee16647f60df3d7c912a9e4734b"
+    },
+    {
+      "path": "tests/unit/test_audit.py",
+      "sha": "f88fc6c9ef13a68fe79852aab2584ddbac7f425e"
+    },
+    {
+      "path": "tests/unit/test_audit_export.py",
+      "sha": "060c61986692be789616140036532000bfb76ef9"
+    },
+    {
+      "path": "tests/unit/test_cache.py",
+      "sha": "4536347ae1b6c67559dea265776918405f4f316f"
+    },
+    {
+      "path": "tests/unit/test_config.py",
+      "sha": "8f594e4deb8f4030b34a407f4d66efedc5781cab"
+    },
+    {
+      "path": "tests/unit/test_data_sensitivity.py",
+      "sha": "3336eb96273759eab160d3cd373f4cb6b9a2abb3"
+    },
+    {
+      "path": "tests/unit/test_datetime_utils.py",
+      "sha": "19419d2b391288a582231b77788f1765b6c56716"
+    },
+    {
+      "path": "tests/unit/test_db_models.py",
+      "sha": "32a80db7c12c797a4a8fa33afee17186cfc6b241"
+    },
+    {
+      "path": "tests/unit/test_decision_boundary.py",
+      "sha": "ef730ad6fcf9ba62bfb360c51c31139b77291111"
+    },
+    {
+      "path": "tests/unit/test_desensitization.py",
+      "sha": "be05994532264660154002d4d7f9690e34206d62"
+    },
+    {
+      "path": "tests/unit/test_development_scripts.py",
+      "sha": "23aeb556051833fb62beda7e2661e4725e292eae"
+    },
+    {
+      "path": "tests/unit/test_document_metadata.py",
+      "sha": "d273850c29c3d8205be2421d57f4383103f64e48"
+    },
+    {
+      "path": "tests/unit/test_evaluation_metrics.py",
+      "sha": "27f23ef7174324a092c1a7e1d213a9a1a2084b89"
+    },
+    {
+      "path": "tests/unit/test_knowledge_authority_validity.py",
+      "sha": "be35f6211be7ad6fe6a956f0f1d84057f7bc56a2"
+    },
+    {
+      "path": "tests/unit/test_knowledge_meta.py",
+      "sha": "dd679948b47c756875878af784bd82af6efab822"
+    },
+    {
+      "path": "tests/unit/test_knowledge_review_schedule.py",
+      "sha": "da6773280fdb8ef4a01165d3c5e6998b3fdd609a"
+    },
+    {
+      "path": "tests/unit/test_knowledge_service.py",
+      "sha": "1bb4403fcee9875172c7f20dca15027c013d0305"
+    },
+    {
+      "path": "tests/unit/test_loader.py",
+      "sha": "b21029e7b6e123023debcd4a5f86092ff46c88eb"
+    },
+    {
+      "path": "tests/unit/test_member_archive.py",
+      "sha": "6b5652e2ce7a8ba6493d1a696a566160d18ac0d9"
+    },
+    {
+      "path": "tests/unit/test_member_id_card.py",
+      "sha": "8e9344da07b46c5b8a745c17fe856e8e66fd8965"
+    },
+    {
+      "path": "tests/unit/test_member_review.py",
+      "sha": "d495fc7d84a0250339f91f691009e3cf5c8b6aca"
+    },
+    {
+      "path": "tests/unit/test_member_roster_filters.py",
+      "sha": "cdc8b3fb25c350b31996879f8386bee05fec25a0"
+    },
+    {
+      "path": "tests/unit/test_member_selection.py",
+      "sha": "f2ff549b18dedb7cfee2d3942dd1a194829c2afd"
+    },
+    {
+      "path": "tests/unit/test_member_stages.py",
+      "sha": "711b2719828a7f9caea3002df3afb48b0fc2b64e"
+    },
+    {
+      "path": "tests/unit/test_member_transfer.py",
+      "sha": "eeb3067800d4d7c72fb9c445d445d90440a1a8b8"
+    },
+    {
+      "path": "tests/unit/test_member_upper_report.py",
+      "sha": "a7c1d8e5ea9b398714b9d75eca10228f91a8cdc5"
+    },
+    {
+      "path": "tests/unit/test_migrations.py",
+      "sha": "ba29d7def44de0f17855322dc489544ae89a16ea"
+    },
+    {
+      "path": "tests/unit/test_module6_acceptance.py",
+      "sha": "b3158d94db9b2c9343bababdfcb6c746f2f57072"
+    },
+    {
+      "path": "tests/unit/test_module6_audit_summary.py",
+      "sha": "9a9a8a488033a19ea67c0c1306933833590f8e9b"
+    },
+    {
+      "path": "tests/unit/test_module6_backup_edges.py",
+      "sha": "a2aea1524670f8d8c5ebdc3f342866016a90b387"
+    },
+    {
+      "path": "tests/unit/test_module6_pdf.py",
+      "sha": "7622d7ab29cffd852041f2be780b84a7c324fed8"
+    },
+    {
+      "path": "tests/unit/test_module6_rate_limit.py",
+      "sha": "75415bfe07469f92ff6b9a63ca8f8ef9afac9ad0"
+    },
+    {
+      "path": "tests/unit/test_module6_security_ops.py",
+      "sha": "8f27323462ea7ada400515e9775338db0bd9c1be"
+    },
+    {
+      "path": "tests/unit/test_modules123_review_regressions.py",
+      "sha": "0d037fd6c93da536b94863a5f76960a90f1fecb9"
+    },
+    {
+      "path": "tests/unit/test_org_life_minutes.py",
+      "sha": "712ec8f18b8665a2a4bdb984aea4724b62563de4"
+    },
+    {
+      "path": "tests/unit/test_org_scope.py",
+      "sha": "f38f7309fde728400cabb4dd09fb1fe04693fb6d"
+    },
+    {
+      "path": "tests/unit/test_production_model_approval.py",
+      "sha": "222d7f38ea5c7f43b47efdde210c5b6c43d2a6f5"
+    },
+    {
+      "path": "tests/unit/test_qa_attachment.py",
+      "sha": "b83c04e8c975fe2cd59d91d3e5bb53ce0b212573"
+    },
+    {
+      "path": "tests/unit/test_qa_chain.py",
+      "sha": "8c3968e819b36d4abc7121d81faf26a1322773f8"
+    },
+    {
+      "path": "tests/unit/test_qa_records.py",
+      "sha": "4dbf200d5d96965a0d045d9d698f38b2094cad8b"
+    },
+    {
+      "path": "tests/unit/test_record_snapshot.py",
+      "sha": "a537e2da887d7c275691d767b714caff2c313266"
+    },
+    {
+      "path": "tests/unit/test_reranker_policy.py",
+      "sha": "734c342cd4dc9361536ba3504b55f0727efba527"
+    },
+    {
+      "path": "tests/unit/test_retention_report.py",
+      "sha": "95e3b13d4590870ad367c38dd3c5e8b763aa9526"
+    },
+    {
+      "path": "tests/unit/test_rewrite.py",
+      "sha": "70366345f32aab45f368bb5a1fe0456b8c15adb6"
+    },
+    {
+      "path": "tests/unit/test_roster_io.py",
+      "sha": "4f7925f0c2834305d6c658ea97e05a793d54ace2"
+    },
+    {
+      "path": "tests/unit/test_run_logs.py",
+      "sha": "aee8bc2a0c2c12e500d71077ea479d64227677e9"
+    },
+    {
+      "path": "tests/unit/test_security.py",
+      "sha": "30b740d042ada45e0965b5119be1e6efb6adc80f"
+    },
+    {
+      "path": "tests/unit/test_session.py",
+      "sha": "dd499d58581bd9cfab8462b00a7b815bb48b3a08"
+    },
+    {
+      "path": "tests/unit/test_splitter.py",
+      "sha": "97d3e32f1a1d5cec286b5b3324db1955ffb5f50b"
+    },
+    {
+      "path": "tests/unit/test_study_minutes.py",
+      "sha": "a35dec2978773ecf5e2ed46557546278a0aeb40b"
+    },
+    {
+      "path": "tests/unit/test_tenant.py",
+      "sha": "88d4a0f00fcb5bb652b9fda8b6d897df65cd6add"
+    },
+    {
+      "path": "tests/unit/test_verifier.py",
+      "sha": "61fec051c232e98012fe8e430fa98e5499f04541"
+    },
+    {
+      "path": "tests/unit/test_version_trail.py",
+      "sha": "cf00caaaf698358aafa377a160cdd6a6de55511e"
+    },
+    {
+      "path": "tests/unit/test_workflow_interfaces.py",
+      "sha": "e6c10bcfc8ae2853a926a9049ee750a1ea4e73a9"
+    },
+    {
+      "path": "党建工作智能体_LangChain实现项目文档.md",
+      "sha": "272edd9c85df25ac0a48cce58106c7dffc17a512"
+    },
+    {
+      "path": "党建工作智能体需求文档.md",
+      "sha": "3705c5937a9411f06518361c614707fd36aba01e"
+    }
+  ],
+  "omitted": [
+    ".claude/plan.md",
+    ".idea/.gitignore",
+    ".idea/claudeCodeEditorTabs.xml",
+    ".idea/inspectionProfiles/Project_Default.xml",
+    ".idea/inspectionProfiles/profiles_settings.xml",
+    ".idea/modules.xml",
+    ".workbuddy/memory/2026-10-09.md",
+    ".workbuddy/memory/2026-10-22.md",
+    ".workbuddy/memory/2026-10-23.md",
+    ".workbuddy/memory/MEMORY.md",
+    "docs/ADMINISTRATION.md",
+    "docs/DEMO_DATA.md",
+    "docs/DEPLOY_SERVER.md",
+    "docs/LOCAL_FIX_AND_SELECTED_INTEGRATION_2026-10-10.md",
+    "docs/MODULE1_MODULE2_MODULE3_REVIEW_2026-10-10.md",
+    "docs/MODULE4_MODULE5_REVIEW_2026-10-10.md",
+    "docs/MODULE4_STUDY_2026-10-10.md",
+    "docs/MODULE5_ASSESSMENT_2026-10-10.md",
+    "docs/MODULES123_UI_DESIGN_2026-10-10.md",
+    "docs/OCR_REVIEW_2026-10-13.md",
+    "docs/PROJECT_OVERVIEW.md",
+    "docs/README.md",
+    "docs/TEST_PLAN.md",
+    "docs/USER_GUIDE.md",
+    "docs/archive/2026-10-10/COLLABORATOR_REVIEW_2026-10-10.md",
+    "docs/archive/2026-10-10/LOCAL_VS_COLLABORATOR_2026-10-10.md",
+    "docs/archive/2026-10-10/LOCAL_VS_COLLABORATOR_2026-10-10.patch",
+    "docs/archive/2026-10-10/MODEL_INTEGRATION_2026-10-10.md",
+    "docs/archive/2026-10-10/PROJECT_AUDIT_2026-10-10.md",
+    "docs/archive/2026-10-10/PROJECT_REPAIR_2026-10-10.md",
+    "docs/archive/README.md",
+    "docs/archive/development/DAY3_OPTIMIZATION_SUMMARY.md",
+    "docs/archive/development/DEV_A_DAY2_CHECK_REPORT.md",
+    "docs/archive/development/DEV_B_DAY2_FINAL_REPORT.md",
+    "docs/archive/development/DEV_B_DAY2_SUMMARY.md",
+    "docs/archive/development/DEV_B_DAY3_SUMMARY.md",
+    "docs/archive/development/DEV_B_DAY4_SUMMARY.md",
+    "docs/archive/development/DEV_B_WEEK_SUMMARY.md",
+    "docs/archive/development/MODEL_CONFIG_COMPLETE.md",
+    "docs/archive/development/MODEL_CONFIG_UPDATE.md",
+    "docs/archive/development/PR_DAY1_DEVA.md",
+    "docs/archive/development/一周开发计划.md",
+    "docs/archive/integration/FINAL_COMPLETION_REPORT.md",
+    "docs/archive/integration/FUNCTION_VERIFICATION_REPORT.md",
+    "docs/archive/integration/INTEGRATION_COMPLETE_REPORT.md",
+    "docs/archive/integration/PROJECT_STATUS_REPORT.md",
+    "docs/archive/integration/README-COMPLETION.md",
+    "docs/archive/integration/RUNNING.md",
+    "docs/archive/integration/START_HERE.txt",
+    "docs/archive/integration/frontend-backend-integration-status.md",
+    "docs/archive/integration/frontend-backend-integration.md",
+    "docs/archive/integration/frontend-setup-notes.md",
+    "docs/archive/integration/integration-completion-report.md",
+    "docs/archive/integration/integration-summary.md",
+    "docs/archive/integration/local-implementation-status.md",
+    "docs/archive/integration/pr-issue-completion-check.md",
+    "docs/archive/integration/project-completion-check.md",
+    "docs/archive/integration/quick-reference.txt",
+    "docs/archive/reviews/CODE_REVIEW.md",
+    "docs/archive/reviews/CODE_REVIEW_DAY1.md",
+    "docs/archive/reviews/CODE_REVIEW_DAY2_DEVB.md",
+    "docs/archive/reviews/PR14_OPTIMIZATION_FINAL_SUMMARY.md",
+    "docs/archive/reviews/PR14_OPTIMIZATION_REPORT.md",
+    "docs/archive/reviews/PR16_OPTIMIZATION_SUMMARY.md",
+    "docs/archive/reviews/PR16_REVIEW_REPORT.md",
+    "docs/archive/reviews/PR21-CONFLICT-RESOLUTION-GUIDE.md",
+    "docs/archive/reviews/TEST_REPORT.md",
+    "docs/design/frontend-ui-design-preview.html",
+    "docs/design/ui-screenshots/01-login.png",
+    "docs/design/ui-screenshots/02-login-mobile.png",
+    "docs/design/ui-screenshots/03-ask.png",
+    "docs/design/ui-screenshots/04-knowledge.png",
+    "docs/design/ui-screenshots/05-members.png",
+    "docs/design/ui-screenshots/06-system.png",
+    "docs/design/ui-screenshots/07-ask-mobile.png",
+    "docs/design/ui-screenshots/08-ask-loading.png",
+    "docs/design/ui-screenshots/09-ask-answer.png",
+    "docs/任务清单.md",
+    "docs/党建工作智能体上线操作手册.docx",
+    "docs/党建工作智能体操作手册.docx",
+    "docs/待学校与组织部门确认清单.md",
+    "docs/操作手册.md",
+    "docs/湖南科技职业技术学院上手手册.docx",
+    "docs/湖南科技职业技术学院上手手册.md",
+    "docs/线上操作手册.md",
+    "docs/项目讲解与演示手册.docx",
+    "docs/项目讲解与演示手册.md",
+    "frontend-test/.gitignore",
+    "frontend-test/README.md",
+    "frontend-test/index.html",
+    "frontend-test/package-lock.json",
+    "frontend-test/package.json",
+    "frontend-test/public/favicon.svg",
+    "frontend-test/public/icons.svg",
+    "frontend-test/src/App.vue",
+    "frontend-test/src/api/auth.ts",
+    "frontend-test/src/assets/hero.png",
+    "frontend-test/src/assets/vite.svg",
+    "frontend-test/src/assets/vue.svg",
+    "frontend-test/src/components/HelloWorld.vue",
+    "frontend-test/src/main.ts",
+    "frontend-test/src/style.css",
+    "frontend-test/src/utils/request.ts",
+    "frontend-test/tsconfig.app.json",
+    "frontend-test/tsconfig.json",
+    "frontend-test/tsconfig.node.json",
+    "frontend-test/vite.config.ts"
+  ]
+}

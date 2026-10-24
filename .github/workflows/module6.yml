@@ -4,6 +4,9 @@ on:
     branches: [master, 'codex/**']
   pull_request:
   workflow_dispatch:
+defaults:
+  run:
+    working-directory: backend
 permissions:
   contents: read
 concurrency:
@@ -48,16 +51,18 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-          cache-dependency-path: requirements-dev.lock
+          cache-dependency-path: backend/requirements-dev.lock
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: backend/frontend/package-lock.json
+      - name: Validate dependency locks
+        run: python scripts/check_dependency_locks.py
       - name: Clean hash-locked install
         run: python -m pip install --require-hashes -r requirements-dev.lock
       - name: Frontend dependencies
-        working-directory: frontend
+        working-directory: backend/frontend
         run: |
           npm ci
           npx playwright install --with-deps chromium
@@ -69,7 +74,7 @@ jobs:
         if: always()
         with:
           name: module6-quality-python-${{ matrix.python }}
-          path: tmp/module6-quality/
+          path: backend/tmp/module6-quality/
           retention-days: 14
           if-no-files-found: error
   container-recovery:
@@ -104,7 +109,9 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
-          cache-dependency-path: requirements-dev.lock
+          cache-dependency-path: backend/requirements-dev.lock
+      - name: Validate dependency locks
+        run: python scripts/check_dependency_locks.py
       - name: Install locked tools and PostgreSQL 16 client
         run: |
           python -m pip install --require-hashes -r requirements-dev.lock
@@ -119,6 +126,6 @@ jobs:
         if: always()
         with:
           name: module6-container-recovery
-          path: tmp/module6-container/
+          path: backend/tmp/module6-container/
           retention-days: 14
           if-no-files-found: error

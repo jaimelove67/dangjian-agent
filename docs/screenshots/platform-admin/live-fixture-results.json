@@ -1,0 +1,13 @@
+{
+  "kind": "synthetic response checks; not real backend integration",
+  "results": [
+    "live health503 and actual operation response fields",
+    "tenants live view",
+    "accounts live view",
+    "operations live view",
+    "configuration live view",
+    "audit live view",
+    "all live configuration sections and unsupported capability states"
+  ],
+  "errors": []
+}

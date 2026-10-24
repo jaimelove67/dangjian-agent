@@ -1,0 +1,26 @@
+{
+  "verified_on": "2026-10-24",
+  "scope": "Independent React frontend and FastAPI backend; local synthetic-data environment",
+  "checks": {
+    "frontend_tests": { "status": "passed", "passed": 72 },
+    "development_launcher_tests": { "status": "passed", "passed": 3 },
+    "frontend_independent_install": { "status": "passed", "command": "npm ci --workspaces=false --no-audit --no-fund", "directory": "frontend" },
+    "frontend_independent_build": { "status": "passed", "output": "frontend/dist/index.html" },
+    "sites_build": { "status": "passed", "outputs": ["dist/client/index.html", "dist/server/index.js", "dist/.openai/hosting.json"] },
+    "sites_tests": { "status": "passed", "passed": 4 },
+    "compose_configuration": { "status": "passed", "templates": ["backend/docker-compose.server.yml", "backend/docker-compose.yml"], "frontend_context": "frontend", "backend_context": "backend", "kind": "configuration validation, not an image build or deployment" },
+    "real_proxy_integration": { "status": "passed", "passed": 8, "requests": 35, "report": "tmp/qa/separated-integration.json" },
+    "same_origin_browser": { "status": "passed", "passed": 6, "report": "tmp/qa/separated-browser.json" },
+    "separate_origin_browser": { "status": "passed", "passed": 3, "report": "tmp/qa/separated-direct-browser.json", "details": "Real authentication and workspace data use the configured absolute API base, including browser CORS preflights; unapproved origins are rejected" },
+    "launcher_failure_cleanup": { "status": "passed", "report": "tmp/qa/separated-cleanup.json", "details": "An occupied frontend port causes the launcher to stop only its own new backend, preserving the existing preview" },
+    "source_package": { "status": "passed", "mode": "SkipUpload; no network upload", "details": "The local archive contains the current React frontend and FastAPI backend; local environments, credential files, business data and the upstream Vue reference are excluded" }
+  },
+  "boundaries": {
+    "database": "Existing isolated PostgreSQL and Redis; synthetic accounts and materials only",
+    "model_calls": 0,
+    "database_migrations_or_cleanup": false,
+    "production_data_or_deployment": false,
+    "full_python_regression_rerun": false,
+    "container_image_builds": false
+  }
+}

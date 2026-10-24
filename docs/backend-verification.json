@@ -1,0 +1,144 @@
+{
+  "checked_on": "2026-10-24",
+  "generated_at_utc": "2026-10-24T01:54:59.432587+00:00",
+  "base_commit": "b190fcb9464c2fb2a9116b469b5a0a4d2a4cd274",
+  "scope": "Local Windows verification against isolated FastAPI, PostgreSQL and Redis; synthetic identities and materials; no real model calls.",
+  "checks": {
+    "backend_pytest": {
+      "status": "passed",
+      "tests": 1131,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage_percent": 85.11,
+      "coverage_gate": 80,
+      "report": "backend/tmp/local-quality/backend-final.log"
+    },
+    "backend_static": {
+      "status": "passed",
+      "checks": [
+        "dependency_locks",
+        "format",
+        "imports",
+        "lint",
+        "types"
+      ],
+      "report": "backend/tmp/local-quality/static-checks.json"
+    },
+    "runtime_only_startup": {
+      "status": "passed",
+      "compatible_packages": 121,
+      "environment": "backend/.venv-runtime",
+      "existing_encrypted_material_download": "passed",
+      "report": "backend/tmp/local-quality/runtime-startup.json"
+    },
+    "python_dependency_audit": {
+      "status": "passed",
+      "packages": 213,
+      "known_vulnerabilities": 0,
+      "fixed_versions": {
+        "certifi": "2026.10.19",
+        "filelock": "4.2.1",
+        "pillow": "13.0.0",
+        "pypdf": "6.21.2",
+        "setuptools": "84.1.0",
+        "virtualenv": "21.14.10"
+      },
+      "report": "backend/tmp/local-quality/audit-final.json"
+    },
+    "react_tests": {
+      "status": "passed",
+      "tests": 67,
+      "command": "npm test"
+    },
+    "react_build": {
+      "status": "passed",
+      "command": "npm run build"
+    },
+    "sites_tests": {
+      "status": "passed",
+      "tests": 4,
+      "command": "npm run test:sites"
+    },
+    "original_vue_build": {
+      "status": "passed",
+      "command": "npm --prefix backend/frontend run build"
+    },
+    "original_vue_governance": {
+      "status": "passed",
+      "checks": 16,
+      "request_contracts": 5,
+      "fixture_only": true,
+      "report": "backend/tmp/local-quality/frontend/report.json"
+    },
+    "original_vue_session_recovery": {
+      "status": "passed",
+      "cases": 4,
+      "fixture_only": true,
+      "report": "backend/tmp/local-quality/session-recovery.log"
+    },
+    "original_vue_real_roles": {
+      "status": "passed",
+      "roles": 7,
+      "route_combinations": 77,
+      "allow": 43,
+      "deny": 34,
+      "report": "backend/tmp/local-quality/role-ui-final.log",
+      "notes": [
+        "admin: /api/admin/health/ready 返回合法 not_ready，已核对界面的未就绪状态与阻塞原因：models=configuration_required",
+        "admin: 知识库无数据，跳过原件下载入口检查",
+        "admin: 当前没有年度批次，选优结论面板未参与本次检查",
+        "test-reviewer: 当前没有年度批次，选优结论面板未参与本次检查",
+        "test-dept: 治理页无「组织与账号」标签，跳过身份入口检查",
+        "test-dept: 无「运行审计」标签（不具备 ops.query），跳过运行审计检查",
+        "test-dept: 无「学校配置」标签（不具备 config.manage），跳过保留期现状检查",
+        "test-dept: 无「问答记录」标签（不具备 admin.audit），跳过集中查看检查",
+        "test-dept: 当前没有年度批次，选优结论面板未参与本次检查",
+        "branch-secretary: 治理页无「组织与账号」标签，跳过身份入口检查",
+        "branch-secretary: 无「运行审计」标签（不具备 ops.query），跳过运行审计检查",
+        "branch-secretary: 无「学校配置」标签（不具备 config.manage），跳过保留期现状检查",
+        "branch-secretary: 无「问答记录」标签（不具备 admin.audit），跳过集中查看检查",
+        "branch-secretary: 当前没有年度批次，选优结论面板未参与本次检查",
+        "test-organizer: 治理页无「组织与账号」标签，跳过身份入口检查",
+        "test-organizer: 无「运行审计」标签（不具备 ops.query），跳过运行审计检查",
+        "test-organizer: 无「学校配置」标签（不具备 config.manage），跳过保留期现状检查",
+        "test-organizer: 无「问答记录」标签（不具备 admin.audit），跳过集中查看检查",
+        "test-organizer: 当前没有年度批次，选优结论面板未参与本次检查",
+        "test-applicant: 知识库无数据，跳过原件下载入口检查"
+      ]
+    },
+    "react_real_adapter_smoke": {
+      "status": "passed",
+      "cases": 8,
+      "requests": 35,
+      "report": "tmp/qa/backend-integration.json"
+    },
+    "react_real_browser": {
+      "status": "passed",
+      "checks": [
+        "real school dashboard counts one branch, keeps organization progress and hides demo role switching",
+        "500 Unicode characters including emoji remain intact in the question field",
+        "keyboard submission rejects 501 characters before any real QA request",
+        "question validation remains usable at 390 pixels without horizontal overflow",
+        "member archive and materials render the real associated record without demo persistence"
+      ],
+      "report": "docs/screenshots/backend-integration/browser-results.json"
+    },
+    "backend_patch": {
+      "status": "passed",
+      "check": "git apply --check against exact original blobs",
+      "files": 34,
+      "sha256": "e32249bd137e99ea9a061124fd9a72482ec0593247c2438963adb66ae437edb0",
+      "path": "patches/backend-baseline-b190fcb.patch"
+    }
+  },
+  "production_ready": false,
+  "not_performed": [
+    "Push, deployment, production database or real account mutation",
+    "Remote GitHub CI rerun",
+    "Linux non-root container, TLS, encrypted backup/restore and rollback acceptance",
+    "Real model connectivity and policy-answer quality evaluation",
+    "All React business forms and new backend password/session/course/exam/points/registration capabilities"
+  ],
+  "readiness_blocker": "models=configuration_required"
+}

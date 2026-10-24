@@ -1,0 +1,1742 @@
+diff --git a/.github/workflows/module6.yml b/.github/workflows/module6.yml
+--- a/.github/workflows/module6.yml
++++ b/.github/workflows/module6.yml
+@@ -54,6 +54,8 @@
+           node-version: '24'
+           cache: npm
+           cache-dependency-path: frontend/package-lock.json
++      - name: Validate dependency locks
++        run: python scripts/check_dependency_locks.py
+       - name: Clean hash-locked install
+         run: python -m pip install --require-hashes -r requirements-dev.lock
+       - name: Frontend dependencies
+@@ -105,6 +107,8 @@
+           python-version: '3.11'
+           cache: pip
+           cache-dependency-path: requirements-dev.lock
++      - name: Validate dependency locks
++        run: python scripts/check_dependency_locks.py
+       - name: Install locked tools and PostgreSQL 16 client
+         run: |
+           python -m pip install --require-hashes -r requirements-dev.lock
+diff --git a/.github/workflows/role-ui.yml b/.github/workflows/role-ui.yml
+--- a/.github/workflows/role-ui.yml
++++ b/.github/workflows/role-ui.yml
+@@ -58,6 +58,8 @@
+           cache-dependency-path: frontend/package-lock.json
+       - name: Prepare report directory
+         run: mkdir -p tmp/role-ui
++      - name: Validate dependency locks
++        run: python scripts/check_dependency_locks.py
+       - name: Clean hash-locked install
+         run: python -m pip install --require-hashes -r requirements-dev.lock
+       - name: Frontend dependencies and browser
+diff --git a/app/api/v1/admin.py b/app/api/v1/admin.py
+--- a/app/api/v1/admin.py
++++ b/app/api/v1/admin.py
+@@ -136,8 +136,7 @@
+                         OrgUnit.tenant_id == str(target.id), OrgUnit.is_deleted.is_(False)
+                     )
+                 )
+-            )
+-            .scalars()
++            ).scalars()
+         }
+     return APIResponse(
+         data=[
+@@ -148,7 +147,9 @@
+                 org_unit_id=str(row.org_unit_id) if row.org_unit_id else None,
+                 current_stage=row.current_stage,
+                 id_card_masked=mask_id_card(row.id_card_no) if row.id_card_no else None,
+-                leader_title=(leader_by_name.get(row.name).title if leader_by_name.get(row.name) else None),
++                leader_title=(
++                    leader_by_name[row.name].title if row.name in leader_by_name else None
++                ),
+                 leader_org_name=(
+                     org_names.get(str(leader_by_name[row.name].org_unit_id))
+                     if row.name in leader_by_name
+@@ -203,7 +204,9 @@
+             if profile.user_id:
+                 raise HTTPException(status_code=409, detail="该党员档案已关联其他账号")
+         effective_org_id = (
+-            str(profile.org_unit_id) if profile is not None and profile.org_unit_id else body.org_unit_id
++            str(profile.org_unit_id)
++            if profile is not None and profile.org_unit_id
++            else body.org_unit_id
+         )
+         organization: OrgUnit | None = None
+         if effective_org_id:
+@@ -411,7 +414,8 @@
+     db: AsyncSession = Depends(get_db),
+ ) -> APIResponse[dict[str, Any]]:
+     """按筛选条件分页查询审计日志；跨租户与匿名事件仅平台管理员可用。"""
+-    with bypass_tenant_filter() if query.tenant_id == ANONYMOUS_TENANT else nullcontext():
++    # _audit_filters 已核实平台归属；保留查询中的目标租户条件，避免再叠加操作者租户。
++    with bypass_tenant_filter() if query.tenant_id != str(user.tenant_id) else nullcontext():
+         total = (await db.execute(query.count_statement())).scalar_one()
+         rows = (
+             (await db.execute(query.statement().offset((page - 1) * page_size).limit(page_size)))
+@@ -446,7 +450,7 @@
+     db: AsyncSession = Depends(get_db),
+ ) -> Response:
+     """导出对账包：台账按时间正序（对账按时间轴读），页面列表按最新在前。"""
+-    with bypass_tenant_filter() if query.tenant_id == ANONYMOUS_TENANT else nullcontext():
++    with bypass_tenant_filter() if query.tenant_id != str(user.tenant_id) else nullcontext():
+         total = (await db.execute(query.count_statement())).scalar_one()
+         if total > MAX_EXPORT_ROWS:
+             raise HTTPException(
+diff --git a/app/api/v1/knowledge.py b/app/api/v1/knowledge.py
+--- a/app/api/v1/knowledge.py
++++ b/app/api/v1/knowledge.py
+@@ -62,6 +62,7 @@
+ )
+ from app.services.file_store import read_original, save_original, validate_identifier
+ from app.services.governance_service import supply_rules
++from app.services.knowledge_meta_service import suggest_metadata
+ from app.services.knowledge_service import (
+     DocumentConflictError,
+     DocumentMaintenanceError,
+@@ -77,7 +78,6 @@
+     supply_cycle,
+     sync_review_schedule,
+ )
+-from app.services.knowledge_meta_service import suggest_metadata
+ from app.services.org_scope import accessible_org_units
+ 
+ router = APIRouter()
+diff --git a/app/api/v1/member.py b/app/api/v1/member.py
+--- a/app/api/v1/member.py
++++ b/app/api/v1/member.py
+@@ -243,7 +243,9 @@
+             )
+         )
+         if existing:
+-            raise HTTPException(status_code=409, detail=f"该身份证号已登记在「{existing}」的档案中，请勿重复登记")
++            raise HTTPException(
++                status_code=409, detail=f"该身份证号已登记在「{existing}」的档案中，请勿重复登记"
++            )
+     profile = MemberProfile(
+         tenant_id=str(user.tenant_id),
+         name=body.name,
+diff --git a/app/api/v1/member_full.py b/app/api/v1/member_full.py
+--- a/app/api/v1/member_full.py
++++ b/app/api/v1/member_full.py
+@@ -275,7 +275,9 @@
+     )
+     data = service.material_view(material)
+     data["scan_notes"] = notes
+-    return await respond(request, service, data, "archive_scan", "member_material", str(material.id))
++    return await respond(
++        request, service, data, "archive_scan", "member_material", str(material.id)
++    )
+ 
+ 
+ @router.get(
+@@ -291,7 +293,9 @@
+     service: MemberDevelopment = Depends(member_service),
+ ) -> APIResponse[dict]:
+     data = await service.material_text(material_id)
+-    return await respond(request, service, data, "read_material_text", "member_material", material_id)
++    return await respond(
++        request, service, data, "read_material_text", "member_material", material_id
++    )
+ 
+ 
+ @router.post(
+diff --git a/requirements-dev.lock b/requirements-dev.lock
+--- a/requirements-dev.lock
++++ b/requirements-dev.lock
+@@ -410,10 +410,11 @@
+     # via
+     #   -r requirements.txt
+     #   flower
+-certifi==2026.7.22 \
+-    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
+-    --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
+-    # via
++certifi==2026.10.19 \
++    --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \
++    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
++    # via
++    #   -r requirements.txt
+     #   httpcore
+     #   httpx
+     #   requests
+@@ -968,6 +969,10 @@
+     --hash=sha256:4496ecc949b51e42d1c9e6159d57cd04ef017af57d2e366ed7fd998f1bf8af69 \
+     --hash=sha256:5f511cca8856bb03251d6292ba59e7f98978aae13fa5823ddd8bf885c56a6260
+     # via -r requirements.txt
++et-xmlfile==2.0.0 \
++    --hash=sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa \
++    --hash=sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54
++    # via openpyxl
+ executing==2.2.1 \
+     --hash=sha256:3632cc370565f6648cc328b32435bd120a1e4ebb20c77e3fdde9a13cd1e533c4 \
+     --hash=sha256:760643d3452b4d777d295bb167ccc74c64a81df23fb5e08eff250c425a4b2017
+@@ -976,10 +981,11 @@
+     --hash=sha256:1acffe48206a80917cf7dac21992b5c44b25384e8902bf745c1fd9dabcf6c51f \
+     --hash=sha256:3e9395fd35276425b61b516a31fdd7c77fe2af83e41b4da22e30696fb1304c5d
+     # via -r requirements.txt
+-filelock==4.1.0 \
+-    --hash=sha256:2ce9818e3e2d8f284c1a964414447ef148d42a5fd5e2a477a7118e574b293ec1 \
+-    --hash=sha256:ad7f724afef953e731b1cc39bcd3a09166d72ed7fcdf29e6e88b1c3235c6715d
+-    # via
++filelock==4.2.1 \
++    --hash=sha256:7be2662e9e826b9bba28afc0f843a123280d799a2ea44bb5d35ccec67905ae44 \
++    --hash=sha256:c4c937ccac2a813cee448e662a56366cfb374c0f8702e75f295c412cc1c5d5a3
++    # via
++    #   -r requirements-dev.txt
+     #   cachecontrol
+     #   python-discovery
+     #   virtualenv
+@@ -2615,6 +2621,10 @@
+     --hash=sha256:208886cb501b930dc63f48d51db9c15e5380380f80516d07332adad67c9f1053 \
+     --hash=sha256:aa69e97d0223ace9835fbf9c997abe9ee95318f684fd2de6d02c870700c71ebc
+     # via -r requirements.txt
++openpyxl==3.1.5 \
++    --hash=sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2 \
++    --hash=sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050
++    # via -r requirements.txt
+ opentelemetry-api==1.45.1 \
+     --hash=sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75 \
+     --hash=sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb
+@@ -2793,95 +2803,93 @@
+     --hash=sha256:9d7863dc8a37e8127f3c9dde65be93a5b46649b779184f8b0a85bdd043b0b293 \
+     --hash=sha256:a6c85b53e28410aba2f312255cc8015f384a43e7e241ffb84ca5cde80f094cdf
+     # via -r requirements.txt
+-pillow==12.3.0 \
+-    --hash=sha256:00808c5e14ef63ac5161091d242999076604ff74b883423a11e5d7bbb38bf756 \
+-    --hash=sha256:04f01d28a6aaff387bf842a13be313df23ba0597a44f1a976c9feb3c6ff4711a \
+-    --hash=sha256:06ff022112bc9cbf83b60f8e028d94ad87b60621706487e65f673de61610ab59 \
+-    --hash=sha256:0740a512dc522224c77d9aa5a8d70d8b7d73fb91f2c21125d8d025d3b8990e45 \
+-    --hash=sha256:0847a763afefb695bc912d7c131e7e0632d4edc1d8698f58ddabec8e46b8b6d3 \
+-    --hash=sha256:0dd2064cbc55aaec028ef5fbb60fa47bb6c3e7918e07ff17935284b227a9d2df \
+-    --hash=sha256:0feb2e9d6ad6c9e3c06effe9d00f3f1e618a6643273576b016f591e9315a7139 \
+-    --hash=sha256:10e41f0fbf1eec8cfd234b8fe17a4caac7c9d0db4c204d3c173a8f9f6ef3232b \
+-    --hash=sha256:1182d52bc2d5e5d7d0949503aa7e36d12f42205dc287e4883f407b1988820d39 \
+-    --hash=sha256:164b31cd1a0490ab6efae01aa5df49da7061be0af1b30e035b6e9a1bfe34ee6e \
+-    --hash=sha256:1657923d2d45afb66526e5b933e5b3052e6bdea196c90d3abb2424e18c77dae8 \
+-    --hash=sha256:186941b6aef820ad110fb01fb06eb925374dc3a21b17e37ec9a53b250c6fe2d1 \
+-    --hash=sha256:1cca606cd25738df4ed873d5ad46bbdb3d83b5cbca291f6b4ff13a4df6b0bbe8 \
+-    --hash=sha256:21900ce7ba264168cd50defae43cd75d25c833ad4ad6e73ffc5596d12e25ac89 \
+-    --hash=sha256:236ff70b9312fb68943c703aa842ca6a758abfa45ac187a5e7c1452e96ef72b5 \
+-    --hash=sha256:23aceaa007d6172b02c277f0cd359c79492bbb14f7072b4ede9fbcaf20648130 \
+-    --hash=sha256:23d27a3e0307ec2244cc51e7287b919aa68d097504ebe19df4e76a98a3eea5bd \
+-    --hash=sha256:24870b09b224f7ae3c39ed07d10e819d06f8720bc551847b1d623832b5b0e28d \
+-    --hash=sha256:251bf95b67017e27b13d82f5b326234ca62d70f9cf4c2b9032de2358a3b12c7b \
+-    --hash=sha256:25b9b82bb22e6e2b3cd07b39c68b7b862001226cb3dff7130d1cb914121b39ed \
+-    --hash=sha256:28ce87c5ab450a9dd970b52e5aca5fe63ed432d18a2eaddd1979a00a1ba24ace \
+-    --hash=sha256:300557495eb45ebb8aec96c2da9c4be642fbf7cd937278b4013ba894ea8eb0eb \
+-    --hash=sha256:30f2aa603c41533cc25c05acd0da21636e84a315768feb631c937177db558931 \
+-    --hash=sha256:331b624368d4f1d069149002f25f44bc61c8919ce8ddb3c45bdad8f6e2d89510 \
+-    --hash=sha256:37d6d0a00072fd2948eb22bce7e1475f34569d90c87c59f7a2ec59541b77f7a6 \
+-    --hash=sha256:37dc8f7bbb66efe481bb60defacef820c950c24713fb44962ed6aa2a50966de1 \
+-    --hash=sha256:3b8182a766685eaa002637e28b4ec8d6b18819a0c71f579bf0dbaa5830297cce \
+-    --hash=sha256:3edce1d53195db527e0191f84b71d02022de0540bf43a16ed734ed7537b07385 \
+-    --hash=sha256:446c34dcc4324b084a53b705127dc15717b22c5e140ae0a3c38349d4efec071e \
+-    --hash=sha256:4998562bf62a445225f22e07c896bb04b35b1b1f2eb6d760584c9c51d7a5f78c \
+-    --hash=sha256:4b0a7fe987b14c31ebda6083f74f22b561fd3739bc0ac51e019622e3d72668c7 \
+-    --hash=sha256:4e8c2a84d977f50b9daed6eeaf3baef67d00d5d74d932288f02cb94518ee3ace \
+-    --hash=sha256:4f883547d4b7f0495ebe7056b0cc2aea76094e7a4abc8e933540f3271df27d9c \
+-    --hash=sha256:514435a37670e3e5e08f3945b68718b6ed329bb84367777e16f9f4dfe1e61a0f \
+-    --hash=sha256:53aa02d20d10c3d814d536aa4e5ac9b84ca0ff5a88377963b085ad6822f93e64 \
+-    --hash=sha256:5594fc43d548a7ed94949d139aa1341b270f1863f11cfd37f5a6c8b778a6b67f \
+-    --hash=sha256:571b9fcb07b97ef3a492028fb3d2dc0993ca23a06138b0315286566d29ef718a \
+-    --hash=sha256:57b3d78c95ba9059768b10e28b813002261d3f3dfc55cc48b0c988f625175827 \
+-    --hash=sha256:5afb51d599ea772b8365ae807ae557f18bccfe46ab261fd1c2a9ed700fc6eb17 \
+-    --hash=sha256:6b02afb9b97f65fbca5f31db6a2a3ba21aa93030225f150fa3f249717e938fb4 \
+-    --hash=sha256:6c0016e7b354317c4e9e525b937ac8596c38d2d232b419529b9cd7a1cd46e39a \
+-    --hash=sha256:71d6097b330eea8fd15097780c8e89cb1a8ce7838669f48c5bacd6f663dd4701 \
+-    --hash=sha256:756c768d0c9c2955feb7a56c37ea24aea2e369f8d36a88da270b6a9f19e62b5e \
+-    --hash=sha256:78cb2c6865a35ab8ff8b75fd122f6033b92a62c82801110e48ddd6c936a45d91 \
+-    --hash=sha256:7a743ff716f746fc19a9557f60dab1600d4613255f8a7aeb3cdde4db7eb15a66 \
+-    --hash=sha256:85f998ea1848bc6757289e739cfbdda3a04adfd58b02fc018ce54d754a5ce468 \
+-    --hash=sha256:8728f216dcdb6e6d555cf971cb34076139ad74b31fc2c14da4fafc741c5f6217 \
+-    --hash=sha256:877c3f311ff35410f690861c4409e7ccbf0cd2f878e50628a28e5a0bb689e658 \
+-    --hash=sha256:8cd2f7bdda092d99c9fc2fb7391354f306d01443d22785d0cbfafa2e2c8bb418 \
+-    --hash=sha256:8e95e1385e4998ae9694eeaa4730ba5457ff61185b3a55e2e7bea0880aef452a \
+-    --hash=sha256:962864dc93511324d51ddbb5b9f8731bf71675b93ca612a07441896f4688fb8c \
+-    --hash=sha256:9cf95fe4d0f84c82d282745d9bb08ad9f926efa00be4697e767b814ce40d4330 \
+-    --hash=sha256:9e881fca225083806662a5c43d627d215f258ff43c890f831966c7d7ba9c7402 \
+-    --hash=sha256:a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09 \
+-    --hash=sha256:a45650e8ce7fafffd731db8550230db6b0d306d181a90b67d3e6bca2f1990930 \
+-    --hash=sha256:a876864214e136f0eb367788dbd7df045f4806801518e2cfe9e13229cfe06d8f \
+-    --hash=sha256:ae26d61dfa7a47befdc7572b521024e8745f3d809bd95ca9505a7bba9ef849ec \
+-    --hash=sha256:af8d94b0db561cf68b88a267c5c44b49e134f525d0dc2cb7ed413a66bc23559a \
+-    --hash=sha256:b343699e8308bdc51978310e1c959c584e7869cc8c40780058c87da7781a1e94 \
+-    --hash=sha256:b3c777e849237620b022f7f297dd67705f9f5cf1685f09f02e46f93e92725468 \
+-    --hash=sha256:b629de27fda84b42cde7edef0d85f13b958b47f6e9bbcbba9b673c562a89bd8b \
+-    --hash=sha256:ba09209fbe443b4acccebe845d8a138b89a8f4fbaeedd44953490b5315d5e965 \
+-    --hash=sha256:ba54cfebe86920a559a7c4d6b9050791c20513650a1952ebe3368c7dc70306f8 \
+-    --hash=sha256:bcb46e2f9feff8d06323983bd83ed00c201fdcab3d74973e7072a889b3979fcd \
+-    --hash=sha256:bcc33feacfaefce60c12fd500a277533bdc02b10a19f7f6d348763d8140bbba7 \
+-    --hash=sha256:bf16ba1b4d0b6b7c8e534936632270cf70eb00dbe09005bc345b2677b726855c \
+-    --hash=sha256:cf1845d02ad822a369a49f2bb9345b1614744267682e7a03527dc3bf6eea1777 \
+-    --hash=sha256:d69141514cc30b774ceea5e3ed3a6635c8d8a96edf664689b890f4089111fb35 \
+-    --hash=sha256:d9c7f76c0673154f044e9d78c8655fb4213f6ca31a836df48b40fe5d187717b9 \
+-    --hash=sha256:dbce0b29841537a2fa4a214c2bbf14de3587c9680caa9b4e217568472490b28f \
+-    --hash=sha256:dc624f6bc473dacdf7ef7eb8678d0d08edf15cd94fad6ae5c7d6cc67a4e4902f \
+-    --hash=sha256:e158cb00350dc278f3b91551101aa7d12415a66ebf2c91d8d5ac14e56ddd3ad0 \
+-    --hash=sha256:e491916b378fba47242221bb9ead245211b70d504f495d105d17b14a24b4907c \
+-    --hash=sha256:e795b7eb908249c4e43c7c99fac7c2c75dab0c43566e37db472a355f63693d71 \
+-    --hash=sha256:e7e480451b9fa137494bccd3a7d69adbe8ac65a87d97be61e11f1b1050a5bac3 \
+-    --hash=sha256:e91206ee562682b51b98ef4b26a6ef48fd84e15fd4c4bc5ec768eb641d206838 \
+-    --hash=sha256:e9871b1ffbfa9656b60aeee92ed5136a5742696006fa322b29ea3d8da0ecc9cf \
+-    --hash=sha256:e9aeb04d6aef139de265b29683e119b638208f88cf73cdd1658aa07221165321 \
+-    --hash=sha256:ebaea975e03d3141d9d3a507df75c9b3ec90fa9d2ffd07567b3a978d9d790b26 \
+-    --hash=sha256:f0606c8bf2cdefea14a43530f7657cbbb7ecf1c4222512492ef4a4434a9501ec \
+-    --hash=sha256:f13c32a3abd6079a66d9526e18dad9b6d280384d49d7c54040cd57b6424041d9 \
+-    --hash=sha256:f7401aebd7f581d7f83a439d87d474999317ee099218e5ad25d125290990ba65 \
+-    --hash=sha256:fa4ecea169a355be7a3ade2c783e2ed12f0e40d2c5621cda8b3297faf7fbb9f5 \
+-    --hash=sha256:fbd139c8447d25dd750ab79ee274cc5e1fe80fc56340ab10b18a195e1b6eca3e \
+-    --hash=sha256:fdafc9cce40277e0f7a0feabce0ee50dd2fa1800f3b38015e51296b5e814048d \
+-    --hash=sha256:fe3cca2e4e8a592be0f269a1ca4835c25199d9f3ce815c8491048f785b0a0198 \
+-    --hash=sha256:ffd0c5368496f41b0944be820fcb7a838aa6e623d250b01acf2643939c3f99d7
+-    # via pdfplumber
++pillow==13.0.0 \
++    --hash=sha256:02464da86f561f410e13b061ec37c3068a9cb557a095494157742d07b3c24a27 \
++    --hash=sha256:04a63720f79e22fd54d897c233a68314c50ca0603360f54ce2bd5db8f0f43782 \
++    --hash=sha256:05cd2cd39055d0b9650060e4513ef4a9a0aea870083950bd046a0d6490f93a22 \
++    --hash=sha256:06903aac074d00c988e77a1fc435286dc498506d4ca8d6f69df9babddf4ecc15 \
++    --hash=sha256:08b826a9bf1265c76de04a42061d61ea6b109418b7826f28ff1ecdfaa26c5502 \
++    --hash=sha256:0d1a9cf7bc6917538b20f8d06b9ab2147e542f68849e96fc58eb66bdf6acc692 \
++    --hash=sha256:10b5019883c98f1dd819ca48ffc6f33a91cee04948fe637c605f4345c7cafd6f \
++    --hash=sha256:12b0fa15879fe5a9d9eebe66e4e2d74128a773b1a4448010c9c714f45e04b9d8 \
++    --hash=sha256:12fbb851cf323cc19aac3eea1df5ad17b57e91e9fe3cfd06100dba7bb8208c13 \
++    --hash=sha256:149a1c323ba366f90b48e6f1a6db6582eb50512df374588de56fc909abc0f0f3 \
++    --hash=sha256:19b66ca0a4d25cc0200b381ce824c7ea090db61427315e73cfb05dbf1b35c369 \
++    --hash=sha256:1c774b9c0ba0d0b356f71530677b39028878a2cae5a93e0a13779cfd17120f88 \
++    --hash=sha256:20722cd5375533ad754053363a80b8fb30c79d37930a6f7228030e237ce3bd5d \
++    --hash=sha256:20822140c9a2ba9c5e42df342b0a892ab2e102fc0e3db967a133bb9ce3f898bb \
++    --hash=sha256:21c32061a5512dc13f87cc7303e120e4d77c2f70df89a35af0e3ce246e5ac57f \
++    --hash=sha256:2310e2adfc13c6d457d7d0f2ffdd5c56a74a317650cf765887df8d515a647ac0 \
++    --hash=sha256:23edf4ec4b6f4f240e8df6e4985e9ee2ced86474632433e55fb1e2548744bf40 \
++    --hash=sha256:2d50500a4a3bc6469adcdb319cf05d688b08ca3bf0f22a05339f3b25b433a599 \
++    --hash=sha256:2e31c4e68cffd7b1f116127626813b82fcba19edf6b940a7b0c266d6484d0055 \
++    --hash=sha256:34fb3db1149c879343861831728c243c432d4a5afc8f1878ca7612ef8de2a033 \
++    --hash=sha256:37290fbef0c73e2d51d594eb78fded7dc7170d1c3ad0a890269e6fd8c8c4e061 \
++    --hash=sha256:405be6058e206a86fedce2f715ecc2343f94072d7925251632dffa2c05f70dca \
++    --hash=sha256:40a266371ece581e5de13b6635ef78d7487824af80561b6ca27694a88c19bc0f \
++    --hash=sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca \
++    --hash=sha256:44629d4498c9cb6b2051806155f22141df0d8a929c56134b166655232dfb2f8c \
++    --hash=sha256:49c12af515073e9bf511e4ef736743bf70d531a643668722279314b937742ba4 \
++    --hash=sha256:4a25756244bdcce3b50580baadf320fa48297f0eeb8e114ba64139a40d4d0fc8 \
++    --hash=sha256:4bd024d567eca931b668978d672dba914d4b8e2628e2c3073a2ad178de8a2620 \
++    --hash=sha256:4f8db54177035a2b5f717f94475b74907e12a96dc74f6d487f3966b0a4694071 \
++    --hash=sha256:51ebb529fc5e8abdd55302f6c3f8943037348ec2384329a3e55677f69ae2fdfc \
++    --hash=sha256:567f20f1c75897d7663830da6ea8af719e03d712b1d9ee7f813319f9ece42e5a \
++    --hash=sha256:5933fcea5a5ba64c686f55c886a115cbfd92f2900460784a1e79909fdbafd7b6 \
++    --hash=sha256:5bdb38ba220b61b4ec31dd1046dea6b016d3c6850a23f43ed8b58332b2fc668e \
++    --hash=sha256:5f56499c1a74d2b862beb0c33b8016f99d095858455df9d21583bbbc1c15b582 \
++    --hash=sha256:67871a13cf47275201553b536c025da777f997fa562a19eb798af4ad4b97c18f \
++    --hash=sha256:67c8d44ad89fa7eb88de5d6ef6199b1e03dd24974f85a67639fc8badb801fe79 \
++    --hash=sha256:6a0920cb55df5a4d3f6862964908078c0bd59332bdd1bcd20d14e8c70ef27cc5 \
++    --hash=sha256:6bce6a29c3898191f4c9998e4d4e8f69790caeabde46e54da4bc235ce5bde683 \
++    --hash=sha256:6f38f3f885a09cafc93fd667b1173a92f379e43785d635e7983c893f0da319fb \
++    --hash=sha256:73ee25cf8cf8b75d5a5aeed7cb6588f5e5dbfbb0fde51707b630bbb23897645c \
++    --hash=sha256:7b999816b5850a35ada08443e6e03945f1f6488144a83afe2d37b240a552aafa \
++    --hash=sha256:7c88c10dd432f3b39ccdafc9ed81d0c21b8fd634502574da76d1bfa4fe2c76d0 \
++    --hash=sha256:7d5e097eabd5d4915c27ac9f6e9325bb1e01a7c94d7348b5c4451d3fc30e8521 \
++    --hash=sha256:7e91e97a929232cdb828889ee6ad0e48d7f40f4ec38818f4e4a8968b2b1af22e \
++    --hash=sha256:7f6299e494e46253d40c34653cac369412f44ca53b5f85d848d3f95b1ed0546c \
++    --hash=sha256:816752a5ef76a80484c8c441c85593b7ea9304f6231fc5776ad1fbff7e773058 \
++    --hash=sha256:83b37abd87b590acd8f47ca8a61f70893322b11834d36e07c2298dacad4d14d2 \
++    --hash=sha256:8619685cad8efc4c38c66d3b36aad854523297c43d748b3b6f0cc03c90ba3463 \
++    --hash=sha256:8bf295fe459343bc6093c8e5e0df60bfa189e0fcb775a22e2c2488fdeccc6c0d \
++    --hash=sha256:8e459b613cf31f8980f584387b4fe47bf08e076e288d61aa8eba1f7fd4ddbb81 \
++    --hash=sha256:8f36aa77f74b14a2103622b196402c71330e4e7cf4122ee45c854e9a01e0eecf \
++    --hash=sha256:93ff9c9c3663ce23aaa5d0b6b6abac55359e2a0c06c7e30f3771829af816be63 \
++    --hash=sha256:9a635068d9793c7f0d929f39f18b58f1bd86c236e8e7b64167b86af9232ebca0 \
++    --hash=sha256:9dda0788a9932776a75d8bcc020076edc308ce2508b51f6739a45e3158b3fc42 \
++    --hash=sha256:a192360d512305fe92d3053e4f7627bbad1f7708f1f4ad38cccd9336acabe9ad \
++    --hash=sha256:a2a14cd73d5e6c927f644b0110ee81f59c4ef506259ec9183904747f2caacc81 \
++    --hash=sha256:a625df9a2a5597fa5e5266e01aefc82604bb85d291e3547981e863560d75da6c \
++    --hash=sha256:a6aaa7871aebca081eb5c45f83e845bbd9712ae99fa9286dbfdcee835e63f4b4 \
++    --hash=sha256:aa694c49787040943570d61c9b8fc01271bd2a2cfdd55f0d896f8aecdce1a981 \
++    --hash=sha256:adb3c2124c68e480f4632d06cb7caa3b48a51678475f483b4edb1c6dee29ea43 \
++    --hash=sha256:b84be41387fc00db28c13c02e30d42b02d8d8f6a4a741a1aee6012ca7f1f6039 \
++    --hash=sha256:bf97ba1b5542050e9b0c74e632323b6d8136cc99d64e193abebee22fe6013c76 \
++    --hash=sha256:c3bc8ee0271387e0b1e3ad0ff893645990a656e79bf9c42f4f734a3642b11d51 \
++    --hash=sha256:c50c80e3591e5cf9a8dfa6007d4f10732f02e32263850999286e56ccd650cfb2 \
++    --hash=sha256:c6fd031333dedcad7ce3e03d244093f43504f209e86925ebdb2b868fa4037630 \
++    --hash=sha256:c87a04e7f152ee4db5dbe15f0bfa3fe628a1aeedbe66b81c43b87f52c813f9ac \
++    --hash=sha256:cdcd1ba258178f7356d74170c9a81ba4eab6a5d55748bc402a5a2a6fe6be3510 \
++    --hash=sha256:d4737f50d23ddd11d6685faacbb9252887dde0bc7997127757247983d74399d6 \
++    --hash=sha256:d7710eb676e9bb68965cb045be0d333b4c0d7f9dfbaa7fbf121385b1588683d3 \
++    --hash=sha256:d9b0a2bee3f3e03e9f29057aedb807dbf1e1d96ee1b9d0f422d9db6c8583271d \
++    --hash=sha256:e65dd6e75de67b2362a4fa3e16aa627595f65054dc4ec73d64680c84d592fa61 \
++    --hash=sha256:e892354a424b1e82a78ba16785822bdd40de06f19446a3d4a28047df1a4f8932 \
++    --hash=sha256:e8ca8f69b7c77fa96dad99f8638c1fc4f1c0bed4acaa1baf7a3c31bdb80a0ab1 \
++    --hash=sha256:e91c2b1cbeae768c98752e67e717e283d68dae45717b41f2d91eaee648e37b7d \
++    --hash=sha256:e98b4f91f99b24b1da72e10621ba181f7281922384a7403094debb4199de6c00 \
++    --hash=sha256:ef5fe6b7db3f501c56000ba8fe7c7e1a35ca1d45824fbeb95a67daa85cff4dbe \
++    --hash=sha256:f11a3c1358bb3c68012a7b1f41b223c3db9f7bfde90b481df028cfe1c3363313 \
++    --hash=sha256:f391dc92a015c478745192fe4f2e120c2af2aba18d9fe0616341cbf537599806 \
++    --hash=sha256:f7cbb7a64e7ec664775195e4f81923bc8a93d9451b963f844e59118f63147a7a \
++    --hash=sha256:f9bd7d260d986f3553518c5d723544346fa48031f8aef3265d786aeb59845bc0 \
++    --hash=sha256:fc481f742ccda20e9ed760b8f978dff50f2a4e9bc253ac167fb0a05b0783ef52 \
++    --hash=sha256:ff3fe9eb621fbb9db4c4be33ab946f6bac5f98ab50ca8d3260503653656c961b \
++    --hash=sha256:ffea6b2986a797c84b6d1d27d4f43e0b83c73fc16281a930891cd237cf0d08fe
++    # via
++    #   -r requirements.txt
++    #   pdfplumber
+ pip==26.2.1 \
+     --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e \
+     --hash=sha256:f6ad667e89a1fe78046c8f13232b247200f5258d7828f3f7883d660878e0813f
+@@ -3463,9 +3471,9 @@
+     --hash=sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36 \
+     --hash=sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4
+     # via pip-requirements-parser
+-pypdf==6.20.0 \
+-    --hash=sha256:72b1e897fef7f5bbed7f2a93881a4861d98dbf25ae39981c8a023583239edbda \
+-    --hash=sha256:f003fc2014814d264fe7dd3f9d435c158e23e1a85a2233f87a0a2d6d21c914ad
++pypdf==6.21.2 \
++    --hash=sha256:0a3e1c5c886a1be03646c16a04827cc166c2a0575c971b26a4bf89686551c2d4 \
++    --hash=sha256:1d44d1a3a200f25062adff0085b02040e4646431ac2ccac22e42679e91466084
+     # via -r requirements.txt
+ pypdfium2==5.14.0 \
+     --hash=sha256:09b99c8f0cb427eb17fec13c0862ed598bba34b4843df153f70fff806a2820bc \
+@@ -3689,9 +3697,9 @@
+     # via
+     #   -r requirements-dev.txt
+     #   pip-audit
+-setuptools==83.0.0 \
+-    --hash=sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef \
+-    --hash=sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3
++setuptools==84.1.0 \
++    --hash=sha256:23657205b63d4d31395ab917815247f694aafad28cd21316bf5fd45a51048ea0 \
++    --hash=sha256:5231689c6ac8156cd155cfb98c3fd6fb252c3e7e9bd3d78b64d3c55f132624c9
+     # via -r requirements.txt
+ shortuuid==1.0.11 \
+     --hash=sha256:27ea8f28b1bd0bf8f15057a3ece57275d2059d2b0bb02854f02189962c13b6aa \
+@@ -4130,10 +4138,12 @@
+     #   amqp
+     #   celery
+     #   kombu
+-virtualenv==21.14.6 \
+-    --hash=sha256:c6b74616e64bffa9532cfa9dfd54ffbab0dc9b999df2bb8ec0d75e559b983661 \
+-    --hash=sha256:eb1a20c5878569b69667f6a1af03458a8512b3afa7be771a2dafe92fdca05bb9
+-    # via pre-commit
++virtualenv==21.14.10 \
++    --hash=sha256:bf4a0f9671731d097e017e41280aa05e1e1adcd536b0e804fceb3179947ad50e \
++    --hash=sha256:f733501a49404c91b5bb1d34d107073b8f4b93a9a1ddb7e9a950eb8ce60f38ad
++    # via
++    #   -r requirements-dev.txt
++    #   pre-commit
+ watchdog==6.0.0 \
+     --hash=sha256:07df1fdd701c5d4c8e55ef6cf55b8f0120fe1aef7ef39a1c6fc6bc2e606d517a \
+     --hash=sha256:20ffe5b202af80ab4266dcd3e91aae72bf2da48c0d33bdb15c66658e685e94e2 \
+diff --git a/requirements-dev.txt b/requirements-dev.txt
+--- a/requirements-dev.txt
++++ b/requirements-dev.txt
+@@ -47,6 +47,9 @@
+ 
+ # ==================== Git Hooks ====================
+ pre-commit==3.6.0
++virtualenv==21.14.10
++# Lock the patched transitive dependency used by virtualenv.
++filelock==4.2.1
+ 
+ # ==================== 数据库工具 ====================
+ # 数据库迁移预览
+diff --git a/requirements.lock b/requirements.lock
+--- a/requirements.lock
++++ b/requirements.lock
+@@ -348,10 +348,11 @@
+     # via
+     #   -r requirements.txt
+     #   flower
+-certifi==2026.7.22 \
+-    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
+-    --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
+-    # via
++certifi==2026.10.19 \
++    --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \
++    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
++    # via
++    #   -r requirements.txt
+     #   httpcore
+     #   httpx
+     #   requests
+@@ -2135,95 +2136,93 @@
+     --hash=sha256:9d7863dc8a37e8127f3c9dde65be93a5b46649b779184f8b0a85bdd043b0b293 \
+     --hash=sha256:a6c85b53e28410aba2f312255cc8015f384a43e7e241ffb84ca5cde80f094cdf
+     # via -r requirements.txt
+-pillow==12.3.0 \
+-    --hash=sha256:00808c5e14ef63ac5161091d242999076604ff74b883423a11e5d7bbb38bf756 \
+-    --hash=sha256:04f01d28a6aaff387bf842a13be313df23ba0597a44f1a976c9feb3c6ff4711a \
+-    --hash=sha256:06ff022112bc9cbf83b60f8e028d94ad87b60621706487e65f673de61610ab59 \
+-    --hash=sha256:0740a512dc522224c77d9aa5a8d70d8b7d73fb91f2c21125d8d025d3b8990e45 \
+-    --hash=sha256:0847a763afefb695bc912d7c131e7e0632d4edc1d8698f58ddabec8e46b8b6d3 \
+-    --hash=sha256:0dd2064cbc55aaec028ef5fbb60fa47bb6c3e7918e07ff17935284b227a9d2df \
+-    --hash=sha256:0feb2e9d6ad6c9e3c06effe9d00f3f1e618a6643273576b016f591e9315a7139 \
+-    --hash=sha256:10e41f0fbf1eec8cfd234b8fe17a4caac7c9d0db4c204d3c173a8f9f6ef3232b \
+-    --hash=sha256:1182d52bc2d5e5d7d0949503aa7e36d12f42205dc287e4883f407b1988820d39 \
+-    --hash=sha256:164b31cd1a0490ab6efae01aa5df49da7061be0af1b30e035b6e9a1bfe34ee6e \
+-    --hash=sha256:1657923d2d45afb66526e5b933e5b3052e6bdea196c90d3abb2424e18c77dae8 \
+-    --hash=sha256:186941b6aef820ad110fb01fb06eb925374dc3a21b17e37ec9a53b250c6fe2d1 \
+-    --hash=sha256:1cca606cd25738df4ed873d5ad46bbdb3d83b5cbca291f6b4ff13a4df6b0bbe8 \
+-    --hash=sha256:21900ce7ba264168cd50defae43cd75d25c833ad4ad6e73ffc5596d12e25ac89 \
+-    --hash=sha256:236ff70b9312fb68943c703aa842ca6a758abfa45ac187a5e7c1452e96ef72b5 \
+-    --hash=sha256:23aceaa007d6172b02c277f0cd359c79492bbb14f7072b4ede9fbcaf20648130 \
+-    --hash=sha256:23d27a3e0307ec2244cc51e7287b919aa68d097504ebe19df4e76a98a3eea5bd \
+-    --hash=sha256:24870b09b224f7ae3c39ed07d10e819d06f8720bc551847b1d623832b5b0e28d \
+-    --hash=sha256:251bf95b67017e27b13d82f5b326234ca62d70f9cf4c2b9032de2358a3b12c7b \
+-    --hash=sha256:25b9b82bb22e6e2b3cd07b39c68b7b862001226cb3dff7130d1cb914121b39ed \
+-    --hash=sha256:28ce87c5ab450a9dd970b52e5aca5fe63ed432d18a2eaddd1979a00a1ba24ace \
+-    --hash=sha256:300557495eb45ebb8aec96c2da9c4be642fbf7cd937278b4013ba894ea8eb0eb \
+-    --hash=sha256:30f2aa603c41533cc25c05acd0da21636e84a315768feb631c937177db558931 \
+-    --hash=sha256:331b624368d4f1d069149002f25f44bc61c8919ce8ddb3c45bdad8f6e2d89510 \
+-    --hash=sha256:37d6d0a00072fd2948eb22bce7e1475f34569d90c87c59f7a2ec59541b77f7a6 \
+-    --hash=sha256:37dc8f7bbb66efe481bb60defacef820c950c24713fb44962ed6aa2a50966de1 \
+-    --hash=sha256:3b8182a766685eaa002637e28b4ec8d6b18819a0c71f579bf0dbaa5830297cce \
+-    --hash=sha256:3edce1d53195db527e0191f84b71d02022de0540bf43a16ed734ed7537b07385 \
+-    --hash=sha256:446c34dcc4324b084a53b705127dc15717b22c5e140ae0a3c38349d4efec071e \
+-    --hash=sha256:4998562bf62a445225f22e07c896bb04b35b1b1f2eb6d760584c9c51d7a5f78c \
+-    --hash=sha256:4b0a7fe987b14c31ebda6083f74f22b561fd3739bc0ac51e019622e3d72668c7 \
+-    --hash=sha256:4e8c2a84d977f50b9daed6eeaf3baef67d00d5d74d932288f02cb94518ee3ace \
+-    --hash=sha256:4f883547d4b7f0495ebe7056b0cc2aea76094e7a4abc8e933540f3271df27d9c \
+-    --hash=sha256:514435a37670e3e5e08f3945b68718b6ed329bb84367777e16f9f4dfe1e61a0f \
+-    --hash=sha256:53aa02d20d10c3d814d536aa4e5ac9b84ca0ff5a88377963b085ad6822f93e64 \
+-    --hash=sha256:5594fc43d548a7ed94949d139aa1341b270f1863f11cfd37f5a6c8b778a6b67f \
+-    --hash=sha256:571b9fcb07b97ef3a492028fb3d2dc0993ca23a06138b0315286566d29ef718a \
+-    --hash=sha256:57b3d78c95ba9059768b10e28b813002261d3f3dfc55cc48b0c988f625175827 \
+-    --hash=sha256:5afb51d599ea772b8365ae807ae557f18bccfe46ab261fd1c2a9ed700fc6eb17 \
+-    --hash=sha256:6b02afb9b97f65fbca5f31db6a2a3ba21aa93030225f150fa3f249717e938fb4 \
+-    --hash=sha256:6c0016e7b354317c4e9e525b937ac8596c38d2d232b419529b9cd7a1cd46e39a \
+-    --hash=sha256:71d6097b330eea8fd15097780c8e89cb1a8ce7838669f48c5bacd6f663dd4701 \
+-    --hash=sha256:756c768d0c9c2955feb7a56c37ea24aea2e369f8d36a88da270b6a9f19e62b5e \
+-    --hash=sha256:78cb2c6865a35ab8ff8b75fd122f6033b92a62c82801110e48ddd6c936a45d91 \
+-    --hash=sha256:7a743ff716f746fc19a9557f60dab1600d4613255f8a7aeb3cdde4db7eb15a66 \
+-    --hash=sha256:85f998ea1848bc6757289e739cfbdda3a04adfd58b02fc018ce54d754a5ce468 \
+-    --hash=sha256:8728f216dcdb6e6d555cf971cb34076139ad74b31fc2c14da4fafc741c5f6217 \
+-    --hash=sha256:877c3f311ff35410f690861c4409e7ccbf0cd2f878e50628a28e5a0bb689e658 \
+-    --hash=sha256:8cd2f7bdda092d99c9fc2fb7391354f306d01443d22785d0cbfafa2e2c8bb418 \
+-    --hash=sha256:8e95e1385e4998ae9694eeaa4730ba5457ff61185b3a55e2e7bea0880aef452a \
+-    --hash=sha256:962864dc93511324d51ddbb5b9f8731bf71675b93ca612a07441896f4688fb8c \
+-    --hash=sha256:9cf95fe4d0f84c82d282745d9bb08ad9f926efa00be4697e767b814ce40d4330 \
+-    --hash=sha256:9e881fca225083806662a5c43d627d215f258ff43c890f831966c7d7ba9c7402 \
+-    --hash=sha256:a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09 \
+-    --hash=sha256:a45650e8ce7fafffd731db8550230db6b0d306d181a90b67d3e6bca2f1990930 \
+-    --hash=sha256:a876864214e136f0eb367788dbd7df045f4806801518e2cfe9e13229cfe06d8f \
+-    --hash=sha256:ae26d61dfa7a47befdc7572b521024e8745f3d809bd95ca9505a7bba9ef849ec \
+-    --hash=sha256:af8d94b0db561cf68b88a267c5c44b49e134f525d0dc2cb7ed413a66bc23559a \
+-    --hash=sha256:b343699e8308bdc51978310e1c959c584e7869cc8c40780058c87da7781a1e94 \
+-    --hash=sha256:b3c777e849237620b022f7f297dd67705f9f5cf1685f09f02e46f93e92725468 \
+-    --hash=sha256:b629de27fda84b42cde7edef0d85f13b958b47f6e9bbcbba9b673c562a89bd8b \
+-    --hash=sha256:ba09209fbe443b4acccebe845d8a138b89a8f4fbaeedd44953490b5315d5e965 \
+-    --hash=sha256:ba54cfebe86920a559a7c4d6b9050791c20513650a1952ebe3368c7dc70306f8 \
+-    --hash=sha256:bcb46e2f9feff8d06323983bd83ed00c201fdcab3d74973e7072a889b3979fcd \
+-    --hash=sha256:bcc33feacfaefce60c12fd500a277533bdc02b10a19f7f6d348763d8140bbba7 \
+-    --hash=sha256:bf16ba1b4d0b6b7c8e534936632270cf70eb00dbe09005bc345b2677b726855c \
+-    --hash=sha256:cf1845d02ad822a369a49f2bb9345b1614744267682e7a03527dc3bf6eea1777 \
+-    --hash=sha256:d69141514cc30b774ceea5e3ed3a6635c8d8a96edf664689b890f4089111fb35 \
+-    --hash=sha256:d9c7f76c0673154f044e9d78c8655fb4213f6ca31a836df48b40fe5d187717b9 \
+-    --hash=sha256:dbce0b29841537a2fa4a214c2bbf14de3587c9680caa9b4e217568472490b28f \
+-    --hash=sha256:dc624f6bc473dacdf7ef7eb8678d0d08edf15cd94fad6ae5c7d6cc67a4e4902f \
+-    --hash=sha256:e158cb00350dc278f3b91551101aa7d12415a66ebf2c91d8d5ac14e56ddd3ad0 \
+-    --hash=sha256:e491916b378fba47242221bb9ead245211b70d504f495d105d17b14a24b4907c \
+-    --hash=sha256:e795b7eb908249c4e43c7c99fac7c2c75dab0c43566e37db472a355f63693d71 \
+-    --hash=sha256:e7e480451b9fa137494bccd3a7d69adbe8ac65a87d97be61e11f1b1050a5bac3 \
+-    --hash=sha256:e91206ee562682b51b98ef4b26a6ef48fd84e15fd4c4bc5ec768eb641d206838 \
+-    --hash=sha256:e9871b1ffbfa9656b60aeee92ed5136a5742696006fa322b29ea3d8da0ecc9cf \
+-    --hash=sha256:e9aeb04d6aef139de265b29683e119b638208f88cf73cdd1658aa07221165321 \
+-    --hash=sha256:ebaea975e03d3141d9d3a507df75c9b3ec90fa9d2ffd07567b3a978d9d790b26 \
+-    --hash=sha256:f0606c8bf2cdefea14a43530f7657cbbb7ecf1c4222512492ef4a4434a9501ec \
+-    --hash=sha256:f13c32a3abd6079a66d9526e18dad9b6d280384d49d7c54040cd57b6424041d9 \
+-    --hash=sha256:f7401aebd7f581d7f83a439d87d474999317ee099218e5ad25d125290990ba65 \
+-    --hash=sha256:fa4ecea169a355be7a3ade2c783e2ed12f0e40d2c5621cda8b3297faf7fbb9f5 \
+-    --hash=sha256:fbd139c8447d25dd750ab79ee274cc5e1fe80fc56340ab10b18a195e1b6eca3e \
+-    --hash=sha256:fdafc9cce40277e0f7a0feabce0ee50dd2fa1800f3b38015e51296b5e814048d \
+-    --hash=sha256:fe3cca2e4e8a592be0f269a1ca4835c25199d9f3ce815c8491048f785b0a0198 \
+-    --hash=sha256:ffd0c5368496f41b0944be820fcb7a838aa6e623d250b01acf2643939c3f99d7
+-    # via pdfplumber
++pillow==13.0.0 \
++    --hash=sha256:02464da86f561f410e13b061ec37c3068a9cb557a095494157742d07b3c24a27 \
++    --hash=sha256:04a63720f79e22fd54d897c233a68314c50ca0603360f54ce2bd5db8f0f43782 \
++    --hash=sha256:05cd2cd39055d0b9650060e4513ef4a9a0aea870083950bd046a0d6490f93a22 \
++    --hash=sha256:06903aac074d00c988e77a1fc435286dc498506d4ca8d6f69df9babddf4ecc15 \
++    --hash=sha256:08b826a9bf1265c76de04a42061d61ea6b109418b7826f28ff1ecdfaa26c5502 \
++    --hash=sha256:0d1a9cf7bc6917538b20f8d06b9ab2147e542f68849e96fc58eb66bdf6acc692 \
++    --hash=sha256:10b5019883c98f1dd819ca48ffc6f33a91cee04948fe637c605f4345c7cafd6f \
++    --hash=sha256:12b0fa15879fe5a9d9eebe66e4e2d74128a773b1a4448010c9c714f45e04b9d8 \
++    --hash=sha256:12fbb851cf323cc19aac3eea1df5ad17b57e91e9fe3cfd06100dba7bb8208c13 \
++    --hash=sha256:149a1c323ba366f90b48e6f1a6db6582eb50512df374588de56fc909abc0f0f3 \
++    --hash=sha256:19b66ca0a4d25cc0200b381ce824c7ea090db61427315e73cfb05dbf1b35c369 \
++    --hash=sha256:1c774b9c0ba0d0b356f71530677b39028878a2cae5a93e0a13779cfd17120f88 \
++    --hash=sha256:20722cd5375533ad754053363a80b8fb30c79d37930a6f7228030e237ce3bd5d \
++    --hash=sha256:20822140c9a2ba9c5e42df342b0a892ab2e102fc0e3db967a133bb9ce3f898bb \
++    --hash=sha256:21c32061a5512dc13f87cc7303e120e4d77c2f70df89a35af0e3ce246e5ac57f \
++    --hash=sha256:2310e2adfc13c6d457d7d0f2ffdd5c56a74a317650cf765887df8d515a647ac0 \
++    --hash=sha256:23edf4ec4b6f4f240e8df6e4985e9ee2ced86474632433e55fb1e2548744bf40 \
++    --hash=sha256:2d50500a4a3bc6469adcdb319cf05d688b08ca3bf0f22a05339f3b25b433a599 \
++    --hash=sha256:2e31c4e68cffd7b1f116127626813b82fcba19edf6b940a7b0c266d6484d0055 \
++    --hash=sha256:34fb3db1149c879343861831728c243c432d4a5afc8f1878ca7612ef8de2a033 \
++    --hash=sha256:37290fbef0c73e2d51d594eb78fded7dc7170d1c3ad0a890269e6fd8c8c4e061 \
++    --hash=sha256:405be6058e206a86fedce2f715ecc2343f94072d7925251632dffa2c05f70dca \
++    --hash=sha256:40a266371ece581e5de13b6635ef78d7487824af80561b6ca27694a88c19bc0f \
++    --hash=sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca \
++    --hash=sha256:44629d4498c9cb6b2051806155f22141df0d8a929c56134b166655232dfb2f8c \
++    --hash=sha256:49c12af515073e9bf511e4ef736743bf70d531a643668722279314b937742ba4 \
++    --hash=sha256:4a25756244bdcce3b50580baadf320fa48297f0eeb8e114ba64139a40d4d0fc8 \
++    --hash=sha256:4bd024d567eca931b668978d672dba914d4b8e2628e2c3073a2ad178de8a2620 \
++    --hash=sha256:4f8db54177035a2b5f717f94475b74907e12a96dc74f6d487f3966b0a4694071 \
++    --hash=sha256:51ebb529fc5e8abdd55302f6c3f8943037348ec2384329a3e55677f69ae2fdfc \
++    --hash=sha256:567f20f1c75897d7663830da6ea8af719e03d712b1d9ee7f813319f9ece42e5a \
++    --hash=sha256:5933fcea5a5ba64c686f55c886a115cbfd92f2900460784a1e79909fdbafd7b6 \
++    --hash=sha256:5bdb38ba220b61b4ec31dd1046dea6b016d3c6850a23f43ed8b58332b2fc668e \
++    --hash=sha256:5f56499c1a74d2b862beb0c33b8016f99d095858455df9d21583bbbc1c15b582 \
++    --hash=sha256:67871a13cf47275201553b536c025da777f997fa562a19eb798af4ad4b97c18f \
++    --hash=sha256:67c8d44ad89fa7eb88de5d6ef6199b1e03dd24974f85a67639fc8badb801fe79 \
++    --hash=sha256:6a0920cb55df5a4d3f6862964908078c0bd59332bdd1bcd20d14e8c70ef27cc5 \
++    --hash=sha256:6bce6a29c3898191f4c9998e4d4e8f69790caeabde46e54da4bc235ce5bde683 \
++    --hash=sha256:6f38f3f885a09cafc93fd667b1173a92f379e43785d635e7983c893f0da319fb \
++    --hash=sha256:73ee25cf8cf8b75d5a5aeed7cb6588f5e5dbfbb0fde51707b630bbb23897645c \
++    --hash=sha256:7b999816b5850a35ada08443e6e03945f1f6488144a83afe2d37b240a552aafa \
++    --hash=sha256:7c88c10dd432f3b39ccdafc9ed81d0c21b8fd634502574da76d1bfa4fe2c76d0 \
++    --hash=sha256:7d5e097eabd5d4915c27ac9f6e9325bb1e01a7c94d7348b5c4451d3fc30e8521 \
++    --hash=sha256:7e91e97a929232cdb828889ee6ad0e48d7f40f4ec38818f4e4a8968b2b1af22e \
++    --hash=sha256:7f6299e494e46253d40c34653cac369412f44ca53b5f85d848d3f95b1ed0546c \
++    --hash=sha256:816752a5ef76a80484c8c441c85593b7ea9304f6231fc5776ad1fbff7e773058 \
++    --hash=sha256:83b37abd87b590acd8f47ca8a61f70893322b11834d36e07c2298dacad4d14d2 \
++    --hash=sha256:8619685cad8efc4c38c66d3b36aad854523297c43d748b3b6f0cc03c90ba3463 \
++    --hash=sha256:8bf295fe459343bc6093c8e5e0df60bfa189e0fcb775a22e2c2488fdeccc6c0d \
++    --hash=sha256:8e459b613cf31f8980f584387b4fe47bf08e076e288d61aa8eba1f7fd4ddbb81 \
++    --hash=sha256:8f36aa77f74b14a2103622b196402c71330e4e7cf4122ee45c854e9a01e0eecf \
++    --hash=sha256:93ff9c9c3663ce23aaa5d0b6b6abac55359e2a0c06c7e30f3771829af816be63 \
++    --hash=sha256:9a635068d9793c7f0d929f39f18b58f1bd86c236e8e7b64167b86af9232ebca0 \
++    --hash=sha256:9dda0788a9932776a75d8bcc020076edc308ce2508b51f6739a45e3158b3fc42 \
++    --hash=sha256:a192360d512305fe92d3053e4f7627bbad1f7708f1f4ad38cccd9336acabe9ad \
++    --hash=sha256:a2a14cd73d5e6c927f644b0110ee81f59c4ef506259ec9183904747f2caacc81 \
++    --hash=sha256:a625df9a2a5597fa5e5266e01aefc82604bb85d291e3547981e863560d75da6c \
++    --hash=sha256:a6aaa7871aebca081eb5c45f83e845bbd9712ae99fa9286dbfdcee835e63f4b4 \
++    --hash=sha256:aa694c49787040943570d61c9b8fc01271bd2a2cfdd55f0d896f8aecdce1a981 \
++    --hash=sha256:adb3c2124c68e480f4632d06cb7caa3b48a51678475f483b4edb1c6dee29ea43 \
++    --hash=sha256:b84be41387fc00db28c13c02e30d42b02d8d8f6a4a741a1aee6012ca7f1f6039 \
++    --hash=sha256:bf97ba1b5542050e9b0c74e632323b6d8136cc99d64e193abebee22fe6013c76 \
++    --hash=sha256:c3bc8ee0271387e0b1e3ad0ff893645990a656e79bf9c42f4f734a3642b11d51 \
++    --hash=sha256:c50c80e3591e5cf9a8dfa6007d4f10732f02e32263850999286e56ccd650cfb2 \
++    --hash=sha256:c6fd031333dedcad7ce3e03d244093f43504f209e86925ebdb2b868fa4037630 \
++    --hash=sha256:c87a04e7f152ee4db5dbe15f0bfa3fe628a1aeedbe66b81c43b87f52c813f9ac \
++    --hash=sha256:cdcd1ba258178f7356d74170c9a81ba4eab6a5d55748bc402a5a2a6fe6be3510 \
++    --hash=sha256:d4737f50d23ddd11d6685faacbb9252887dde0bc7997127757247983d74399d6 \
++    --hash=sha256:d7710eb676e9bb68965cb045be0d333b4c0d7f9dfbaa7fbf121385b1588683d3 \
++    --hash=sha256:d9b0a2bee3f3e03e9f29057aedb807dbf1e1d96ee1b9d0f422d9db6c8583271d \
++    --hash=sha256:e65dd6e75de67b2362a4fa3e16aa627595f65054dc4ec73d64680c84d592fa61 \
++    --hash=sha256:e892354a424b1e82a78ba16785822bdd40de06f19446a3d4a28047df1a4f8932 \
++    --hash=sha256:e8ca8f69b7c77fa96dad99f8638c1fc4f1c0bed4acaa1baf7a3c31bdb80a0ab1 \
++    --hash=sha256:e91c2b1cbeae768c98752e67e717e283d68dae45717b41f2d91eaee648e37b7d \
++    --hash=sha256:e98b4f91f99b24b1da72e10621ba181f7281922384a7403094debb4199de6c00 \
++    --hash=sha256:ef5fe6b7db3f501c56000ba8fe7c7e1a35ca1d45824fbeb95a67daa85cff4dbe \
++    --hash=sha256:f11a3c1358bb3c68012a7b1f41b223c3db9f7bfde90b481df028cfe1c3363313 \
++    --hash=sha256:f391dc92a015c478745192fe4f2e120c2af2aba18d9fe0616341cbf537599806 \
++    --hash=sha256:f7cbb7a64e7ec664775195e4f81923bc8a93d9451b963f844e59118f63147a7a \
++    --hash=sha256:f9bd7d260d986f3553518c5d723544346fa48031f8aef3265d786aeb59845bc0 \
++    --hash=sha256:fc481f742ccda20e9ed760b8f978dff50f2a4e9bc253ac167fb0a05b0783ef52 \
++    --hash=sha256:ff3fe9eb621fbb9db4c4be33ab946f6bac5f98ab50ca8d3260503653656c961b \
++    --hash=sha256:ffea6b2986a797c84b6d1d27d4f43e0b83c73fc16281a930891cd237cf0d08fe
++    # via
++    #   -r requirements.txt
++    #   pdfplumber
+ prometheus-client==0.19.0 \
+     --hash=sha256:4585b0d1223148c27a225b10dbec5ae9bc4c81a99a3fa80774fa6209935324e1 \
+     --hash=sha256:c88b1e6ecf6b41cd8fb5731c7ae919bf66df6ec6fafa555cd6c0e16ca169ae92
+@@ -2616,9 +2615,9 @@
+     --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193 \
+     --hash=sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8
+     # via -r requirements.txt
+-pypdf==6.20.0 \
+-    --hash=sha256:72b1e897fef7f5bbed7f2a93881a4861d98dbf25ae39981c8a023583239edbda \
+-    --hash=sha256:f003fc2014814d264fe7dd3f9d435c158e23e1a85a2233f87a0a2d6d21c914ad
++pypdf==6.21.2 \
++    --hash=sha256:0a3e1c5c886a1be03646c16a04827cc166c2a0575c971b26a4bf89686551c2d4 \
++    --hash=sha256:1d44d1a3a200f25062adff0085b02040e4646431ac2ccac22e42679e91466084
+     # via -r requirements.txt
+ pypdfium2==5.14.0 \
+     --hash=sha256:09b99c8f0cb427eb17fec13c0862ed598bba34b4843df153f70fff806a2820bc \
+@@ -2747,9 +2746,9 @@
+     --hash=sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6 \
+     --hash=sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06
+     # via langsmith
+-setuptools==83.0.0 \
+-    --hash=sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef \
+-    --hash=sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3
++setuptools==84.1.0 \
++    --hash=sha256:23657205b63d4d31395ab917815247f694aafad28cd21316bf5fd45a51048ea0 \
++    --hash=sha256:5231689c6ac8156cd155cfb98c3fd6fb252c3e7e9bd3d78b64d3c55f132624c9
+     # via -r requirements.txt
+ shortuuid==1.0.11 \
+     --hash=sha256:27ea8f28b1bd0bf8f15057a3ece57275d2059d2b0bb02854f02189962c13b6aa \
+diff --git a/requirements.txt b/requirements.txt
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -50,7 +50,7 @@
+ 
+ # ==================== 文档处理 ====================
+ # PDF 解析
+-pypdf==6.20.0
++pypdf==6.21.2
+ pdfplumber==0.11.10
+ 
+ # Word 解析
+@@ -58,6 +58,8 @@
+ 
+ # Excel 模板导入 / 导出（名册，T-DATA-06）
+ openpyxl==3.1.5
++# 图像识别直接使用 Pillow，同时锁定已知安全修复。
++Pillow==13.0.0
+ 
+ # 文本切分由 app/rag/splitter.py 实现。
+ # 未使用的 langchain-text-splitters 0.0.1 与当前 langchain-core 锁定版本冲突。
+@@ -91,6 +93,7 @@
+ # ==================== 工具库 ====================
+ # HTTP 客户端
+ httpx==0.26.0
++certifi==2026.10.19
+ 
+ # 日期时间
+ python-dateutil==2.8.2
+@@ -115,4 +118,4 @@
+ aiofiles==23.2.1
+ 
+ # Pin build tooling too; Python 3.11 images may seed an older vulnerable version.
+-setuptools==83.0.0
++setuptools==84.1.0
+diff --git a/app/api/v1/qa.py b/app/api/v1/qa.py
+--- a/app/api/v1/qa.py
++++ b/app/api/v1/qa.py
+@@ -73,9 +73,7 @@
+ class QuestionRequest(BaseModel):
+     """问答请求"""
+ 
+-    question: str = Field(
+-        "", description="用户问题", max_length=500
+-    )
++    question: str = Field("", description="用户问题", max_length=500)
+     data_level: Optional[DataLevel] = Field(
+         None,
+         description="内容分级提示；服务端会提高至登录态及实际依据所需级别，涉密内容拒绝处理",
+@@ -369,9 +367,7 @@
+         },
+     )
+     await db.commit()
+-    return APIResponse(
+-        data=QAAttachmentSchema(**attachment.summary()), trace_id=_trace_id(request)
+-    )
++    return APIResponse(data=QAAttachmentSchema(**attachment.summary()), trace_id=_trace_id(request))
+ 
+ 
+ @router.post(
+diff --git a/app/chains/qa_chain.py b/app/chains/qa_chain.py
+--- a/app/chains/qa_chain.py
++++ b/app/chains/qa_chain.py
+@@ -220,9 +220,7 @@
+         try:
+             draft = await self.generator.generate(question=question, chunks=[])
+         except Exception:
+-            logger.exception(
+-                "qa_material_only_generation_failed", extra={"tenant_id": tenant_id}
+-            )
++            logger.exception("qa_material_only_generation_failed", extra={"tenant_id": tenant_id})
+             raise
+         answer = re.sub(r"\s*\[\d+\]", "", draft or "").strip()
+         response = QAResponse(
+diff --git a/app/llm/providers/qwen_vision.py b/app/llm/providers/qwen_vision.py
+--- a/app/llm/providers/qwen_vision.py
++++ b/app/llm/providers/qwen_vision.py
+@@ -18,7 +18,9 @@
+ DEFAULT_IMAGE_MIME = "image/png"
+ 
+ 
+-def build_image_content(images: list[bytes], mime: str = DEFAULT_IMAGE_MIME) -> list[dict[str, Any]]:
++def build_image_content(
++    images: list[bytes], mime: str = DEFAULT_IMAGE_MIME
++) -> list[dict[str, Any]]:
+     """把图片字节流组装成兼容接口的 ``image_url`` 内容块"""
+     import base64
+ 
+@@ -40,7 +42,9 @@
+         if not images:
+             raise ModelUnavailableError("图片文字识别缺少图片内容")
+         # 图在前、指令在后：与百炼文档中的 OCR 示例一致，识别顺序更稳定
+-        content: list[dict[str, Any]] = build_image_content(images, kwargs.get("mime", DEFAULT_IMAGE_MIME))
++        content: list[dict[str, Any]] = build_image_content(
++            images, kwargs.get("mime", DEFAULT_IMAGE_MIME)
++        )
+         content.append({"type": "text", "text": prompt})
+         body = await self._post(
+             {
+diff --git a/app/prompts/knowledge_meta.py b/app/prompts/knowledge_meta.py
+--- a/app/prompts/knowledge_meta.py
++++ b/app/prompts/knowledge_meta.py
+@@ -54,7 +54,7 @@
+         "- effective_date：生效日期，格式 YYYY-MM-DD；"
+         "正文写“自发布之日起施行”时取 issue_date；找不到依据就留空\n"
+         "- expiration_date：失效日期或“有效期至”，格式 YYYY-MM-DD；没有则空\n"
+-        "- tags：3 个以内主题词数组，词要短（如 [\"发展党员\",\"政治审查\"]）\n"
++        '- tags：3 个以内主题词数组，词要短（如 ["发展党员","政治审查"]）\n'
+         "- summary：80 字以内的内容摘要，只概括正文写了什么\n"
+         "硬性要求：不要编造任何字段。正文里没写的，一律留空字符串或空数组；"
+         "日期无法确定就留空。宁可少填，也不要猜。\n"
+diff --git a/app/rag/rag_service.py b/app/rag/rag_service.py
+--- a/app/rag/rag_service.py
++++ b/app/rag/rag_service.py
+@@ -245,11 +245,14 @@
+         return cast(str, response.content)
+ 
+     def _prompt(self, question: str, chunks: Sequence[RetrievedChunk]) -> str:
+-        sources = "\n\n".join(
+-            f"[{c.index}] 文件：《{c.doc_name}》；发文单位：{c.issuer or ''}；"
+-            f"文号：{c.doc_number or ''}；条款：{c.article or ''}\n{c.content}"
+-            for c in chunks
+-        ) or "（本次未检索到可引用的制度片段）"
++        sources = (
++            "\n\n".join(
++                f"[{c.index}] 文件：《{c.doc_name}》；发文单位：{c.issuer or ''}；"
++                f"文号：{c.doc_number or ''}；条款：{c.article or ''}\n{c.content}"
++                for c in chunks
++            )
++            or "（本次未检索到可引用的制度片段）"
++        )
+         from app.prompts.qa import system_prompt
+ 
+         material_rule = ""
+diff --git a/app/schemas/member.py b/app/schemas/member.py
+--- a/app/schemas/member.py
++++ b/app/schemas/member.py
+@@ -115,9 +115,7 @@
+             year=profile.year,
+             batch_no=profile.batch_no,
+             id_card_masked=(
+-                mask_id_card(profile.id_card_no)
+-                if getattr(profile, "id_card_no", None)
+-                else None
++                mask_id_card(profile.id_card_no) if getattr(profile, "id_card_no", None) else None
+             ),
+         )
+ 
+diff --git a/app/services/identity_service.py b/app/services/identity_service.py
+--- a/app/services/identity_service.py
++++ b/app/services/identity_service.py
+@@ -260,7 +260,10 @@
+             raise HTTPException(409, "不能停用当前管理员所在组织")
+         for key, value in values.items():
+             # 上级组织可空（学校是根）；负责人姓名/职务/电话是选填联络信息，允许清空。
+-            if key not in {"parent_id", "leader_name", "leader_title", "leader_phone"} and value is None:
++            if (
++                key not in {"parent_id", "leader_name", "leader_title", "leader_phone"}
++                and value is None
++            ):
+                 raise HTTPException(422, "字段不能为空")
+             setattr(row, key, value)
+         self.validate_tree(rows)
+diff --git a/app/services/knowledge_meta_service.py b/app/services/knowledge_meta_service.py
+--- a/app/services/knowledge_meta_service.py
++++ b/app/services/knowledge_meta_service.py
+@@ -29,7 +29,7 @@
+ from app.llm.service import get_model_service
+ from app.prompts.knowledge_meta import FIELDS, LEVELS, build_prompt
+ from app.rag.exceptions import ParseError, UnsupportedFormatError
+-from app.rag.loader import default_registry, empty_text_reason
++from app.rag.loader import default_registry
+ from app.schemas.wf import SensitiveCheckRequest
+ 
+ logger = logging.getLogger(__name__)
+@@ -86,7 +86,10 @@
+     end = text.rfind("}")
+     if start == -1 or end <= start:
+         raise ValueError("模型未返回 JSON")
+-    return json.loads(text[start : end + 1])
++    value = json.loads(text[start : end + 1])
++    if not isinstance(value, dict):
++        raise ValueError("模型未返回 JSON 对象")
++    return value
+ 
+ 
+ def _clean_tags(value: Any) -> list[str]:
+diff --git a/app/services/member_archive_service.py b/app/services/member_archive_service.py
+--- a/app/services/member_archive_service.py
++++ b/app/services/member_archive_service.py
+@@ -54,7 +54,8 @@
+ 可选类型：{options}
+ 
+ 只输出 JSON，不要任何解释、不要代码块标记：
+-{{"material_type": "", "subject_name": "", "doc_date": "YYYY-MM-DD 或空", "issuer": "", "key_points": ["最多3条，原文摘录"]}}
++{{"material_type": "", "subject_name": "", "doc_date": "YYYY-MM-DD 或空",
++"issuer": "", "key_points": ["最多3条，原文摘录"]}}
+ 
+ 识别文本：
+ <<<
+diff --git a/app/services/ocr_service.py b/app/services/ocr_service.py
+--- a/app/services/ocr_service.py
++++ b/app/services/ocr_service.py
+@@ -133,8 +133,8 @@
+         ) from exc
+ 
+     try:
+-        with Image.open(io.BytesIO(data)) as image:
+-            image = image.convert("RGB")
++        with Image.open(io.BytesIO(data)) as source_image:
++            image = source_image.convert("RGB")
+             longest = max(image.size)
+             if longest > settings.OCR_MAX_IMAGE_SIDE:
+                 ratio = settings.OCR_MAX_IMAGE_SIDE / longest
+@@ -188,7 +188,9 @@
+     return text
+ 
+ 
+-async def ocr_images(images: Sequence[bytes], *, context: dict, labels: Sequence[str] | None = None) -> str:
++async def ocr_images(
++    images: Sequence[bytes], *, context: dict, labels: Sequence[str] | None = None
++) -> str:
+     """按顺序识别多张图，拼成带页标的纯文本"""
+     parts: list[str] = []
+     for index, image in enumerate(images):
+@@ -215,7 +217,8 @@
+         document = pdfium.PdfDocument(data)
+     except Exception as exc:
+         raise HTTPException(
+-            status.HTTP_422_UNPROCESSABLE_ENTITY, "PDF 无法打开（可能已损坏或加密），请重新导出后再上传"
++            status.HTTP_422_UNPROCESSABLE_ENTITY,
++            "PDF 无法打开（可能已损坏或加密），请重新导出后再上传",
+         ) from exc
+     try:
+         total = len(document)
+diff --git a/app/services/org_scope.py b/app/services/org_scope.py
+--- a/app/services/org_scope.py
++++ b/app/services/org_scope.py
+@@ -248,4 +248,6 @@
+     cross_tenant = scope_tenant != str(user.tenant_id)
+     context = bypass_tenant_filter() if cross_tenant else nullcontext()
+     with context:
+-        return list((await db.execute(statement.order_by(OrgUnit.path, OrgUnit.id))).scalars().all())
++        return list(
++            (await db.execute(statement.order_by(OrgUnit.path, OrgUnit.id))).scalars().all()
++        )
+diff --git a/app/services/qa_attachment_service.py b/app/services/qa_attachment_service.py
+--- a/app/services/qa_attachment_service.py
++++ b/app/services/qa_attachment_service.py
+@@ -266,7 +266,10 @@
+     if not text:
+         raise HTTPException(
+             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+-            detail={"code": "EMPTY_TEXT", "message": f"《{file_name}》没有读到任何文字，请重新导出后再上传"},
++            detail={
++                "code": "EMPTY_TEXT",
++                "message": f"《{file_name}》没有读到任何文字，请重新导出后再上传",
++            },
+         )
+ 
+     # 材料最终会随提示词出网，与提问走同一条 WF-04 边界：宁可在上传时说清楚，
+diff --git a/frontend/scripts/check-roles-ui.mjs b/frontend/scripts/check-roles-ui.mjs
+--- a/frontend/scripts/check-roles-ui.mjs
++++ b/frontend/scripts/check-roles-ui.mjs
+@@ -90,6 +90,20 @@
+ /** 组织角色不应出现的个人页路由；基层角色在 allow 中显式列出 */
+ const failures = []
+ const notes = []
++const rateLimits = new WeakMap()
++
++function retryAfterSeconds(response) {
++  const value = response.headers()['retry-after']
++  const seconds = Number(value)
++  if (value && Number.isFinite(seconds) && seconds >= 0) return seconds
++  const date = Date.parse(value ?? '')
++  return Number.isFinite(date) ? Math.max(0, (date - Date.now()) / 1000) : 60
++}
++
++async function waitAfterRateLimit(page) {
++  const remaining = (rateLimits.get(page)?.until ?? 0) - Date.now()
++  if (remaining > 0) await page.waitForTimeout(remaining + 250)
++}
+ 
+ function fail(message) {
+   failures.push(message)
+@@ -104,9 +118,14 @@
+  */
+ async function login(page, username) {
+   for (let attempt = 1; attempt <= 5; attempt += 1) {
++    await waitAfterRateLimit(page)
+     let status = 0
++    let retrySeconds = 60
+     const watch = (response) => {
+-      if (new URL(response.url()).pathname.endsWith('/auth/login')) status = response.status()
++      if (new URL(response.url()).pathname.endsWith('/auth/login')) {
++        status = response.status()
++        if (status === 429) retrySeconds = retryAfterSeconds(response)
++      }
+     }
+     page.on('response', watch)
+     await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' })
+@@ -119,7 +138,7 @@
+ 
+     if (!new URL(page.url()).pathname.includes('login')) return true
+     if (status === 429) {
+-      const waitSeconds = 22
++      const waitSeconds = Math.ceil(retrySeconds)
+       console.log(`[wait] 登录限流，${waitSeconds}s 后重试 ${username}（第 ${attempt} 次）`)
+       await page.waitForTimeout(waitSeconds * 1000)
+       continue
+@@ -130,6 +149,13 @@
+ }
+ 
+ async function settle(page) {
++  // domcontentloaded 早于 Vue 的身份恢复和动态页面导入；空 DOM 也没有骨架，
++  // 不能据此认定已加载完。先等业务地标（或真正的登录页），再等骨架消失。
++  await page.waitForFunction(
++    () => !!document.querySelector('main') || !!document.querySelector('#username'),
++    undefined,
++    { timeout: 20000 },
++  ).catch(() => {})
+   for (let i = 0; i < 30; i += 1) {
+     if (!(await page.locator('.skel-wrap').count())) break
+     await page.waitForTimeout(200)
+@@ -137,14 +163,54 @@
+   await page.waitForTimeout(400)
+ }
+ 
++function isNotReadyDiagnosis(body) {
++  return body?.status === 'not_ready' &&
++    body.checks && typeof body.checks === 'object' && !Array.isArray(body.checks) &&
++    Object.values(body.checks).every((value) => typeof value === 'string' && value.length > 0) &&
++    Object.entries(body.checks).some(([key, value]) => key !== 'model_warm' && value !== 'healthy') &&
++    body.model_capabilities && typeof body.model_capabilities === 'object' && !Array.isArray(body.model_capabilities) &&
++    ['llm', 'embedding', 'reranker'].every((key) => typeof body.model_capabilities[key] === 'string' && body.model_capabilities[key].length > 0)
++}
++
++async function checkReadinessDiagnosis(page, spec, body) {
++  const probe = page.locator('.probe').filter({ has: page.getByText('就绪检查', { exact: true }) })
++  const text = await probe.innerText()
++  if (!text.includes('尚未就绪') || !text.includes('not_ready')) {
++    fail(`${spec.username}: 系统就绪检查未如实显示尚未就绪状态`)
++  }
++  const labels = { database: '数据库', redis: '会话存储', schema: '业务结构', models: '模型配置', model_warm: '模型连通性（15 分钟内调用）' }
++  const statuses = { unhealthy: '连接失败', migration_required: '需要迁移', configuration_required: '尚未配置', unverified: '未验证（不影响就绪）', unknown: '未确认' }
++  for (const [key, value] of Object.entries(body.checks)) {
++    if (key === 'model_warm' || value === 'healthy') continue
++    if (!text.includes(labels[key] ?? key) || !text.includes(statuses[value] ?? value)) {
++      fail(`${spec.username}: 系统就绪检查未展示 ${key}=${value} 的失败原因`)
++    }
++  }
++  const blockers = Object.entries(body.checks)
++    .filter(([key, value]) => key !== 'model_warm' && value !== 'healthy')
++    .map(([key, value]) => `${key}=${value}`).join(', ')
++  notes.push(`${spec.username}: /api/admin/health/ready 返回合法 not_ready，已核对界面的未就绪状态与阻塞原因：${blockers}`)
++}
++
+ async function checkRole(browser, spec) {
+   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+   const page = await context.newPage()
++  rateLimits.set(page, { until: 0, count: 0 })
++  page.on('response', (response) => {
++    if (response.status() !== 429) return
++    const state = rateLimits.get(page)
++    state.count += 1
++    state.until = Math.max(state.until, Date.now() + retryAfterSeconds(response) * 1000)
++  })
+   const consoleErrors = []
+   page.on('console', (message) => {
+-    if (message.type() === 'error') consoleErrors.push(message.text().slice(0, 160))
++    if (message.type() === 'error') {
++      consoleErrors.push({ text: message.text().slice(0, 160), url: message.location().url })
++    }
+   })
+   const guardRedirects = []
++  const readinessDiagnoses = new Map()
++  const pendingDiagnoses = []
+   try {
+     if (!(await login(page, spec.username))) {
+       fail(`${spec.username}: 登录失败（检查账号是否已初始化）`)
+@@ -152,10 +218,15 @@
+     }
+     page.on('response', (response) => {
+       const path = new URL(response.url()).pathname
+-      // viewer 自己触发的 4xx 才算问题；健康检查 503 属正常
+-      if (response.status() >= 400 && !path.endsWith('/health/ready')) {
+-        guardRedirects.push(`${response.status()} ${path}`)
+-      }
++      if (response.status() < 400) return
++      // 只有该精确诊断接口返回结构合法的 not_ready 才是预期 503。
++      // 业务接口、裸 503、错误 JSON 或错误包裹体仍须报错。
++      if (response.status() === 503 && path === '/api/admin/health/ready') {
++        pendingDiagnoses.push(response.json().then((body) => {
++          if (isNotReadyDiagnosis(body)) readinessDiagnoses.set(response.url(), body)
++          else guardRedirects.push(`503 ${path}`)
++        }).catch(() => guardRedirects.push(`503 ${path}`)))
++      } else guardRedirects.push(`${response.status()} ${path}`)
+     })
+ 
+     const nav = await page.locator('.rail__link').allInnerTexts()
+@@ -167,11 +238,15 @@
+       let settled = false
+       while (!settled && attempt < 3) {
+         attempt += 1
++        await waitAfterRateLimit(page)
+         guardRedirects.length = 0
+         consoleErrors.length = 0
++        readinessDiagnoses.clear()
++        pendingDiagnoses.length = 0
+         await page.goto(`${BASE}${route}`, { waitUntil: 'domcontentloaded' })
+         await settle(page)
+-        const rateLimited = [...guardRedirects, ...consoleErrors].some((line) =>
++        await Promise.all(pendingDiagnoses)
++        const rateLimited = [...guardRedirects, ...consoleErrors.map((error) => error.text)].some((line) =>
+           line.includes('429'),
+         )
+         // 前端资源加载失败时整个单页应用白屏，路由守卫根本没运行：
+@@ -179,11 +254,14 @@
+         // 先等一下重试，仍挂不上再按真实缺陷上报。
+         const shellMissing = (await page.locator('main').count()) === 0
+         if ((rateLimited || shellMissing) && attempt < 3) {
+-          const waitSeconds = rateLimited ? 25 : 5
++          const waitSeconds = rateLimited
++            ? Math.ceil(Math.max(0, rateLimits.get(page).until - Date.now()) / 1000)
++            : 5
+           console.log(
+             `[wait] ${spec.username} ${route} ${rateLimited ? '命中接口限流' : '页面未挂载'}，等待 ${waitSeconds}s 后复核`,
+           )
+-          await page.waitForTimeout(waitSeconds * 1000)
++          if (rateLimited) await waitAfterRateLimit(page)
++          else await page.waitForTimeout(waitSeconds * 1000)
+           continue
+         }
+         settled = true
+@@ -191,7 +269,7 @@
+ 
+       const path = new URL(page.url()).pathname
+       if (path === '/login') {
+-        fail(`${spec.username}: 检查 ${route} 时会话失效（多为登录限流），该角色结果不完整`)
++        fail(`${spec.username}: 检查 ${route} 时会话失效，该角色结果不完整`)
+         return
+       }
+       const forbidden = await page.locator('.forbidden').count()
+@@ -211,24 +289,39 @@
+       }
+       const unique = [...new Set(guardRedirects)]
+       if (unique.length) fail(`${spec.username}: ${route} 出现接口错误 ${unique.join(', ')}`)
+-      if (consoleErrors.length) {
+-        fail(`${spec.username}: ${route} 控制台报错 ${[...new Set(consoleErrors)].join(' ~ ')}`)
++      const unexpectedConsole = consoleErrors.filter((error) => !(
++        readinessDiagnoses.has(error.url) &&
++        error.text.startsWith('Failed to load resource:') && error.text.includes('503')
++      ))
++      if (unexpectedConsole.length) {
++        fail(`${spec.username}: ${route} 控制台报错 ${[...new Set(unexpectedConsole.map((error) => error.text))].join(' ~ ')}`)
++      }
++      if (route === '/system') {
++        for (const body of readinessDiagnoses.values()) await checkReadinessDiagnosis(page, spec, body)
+       }
+       // 路由之间留出间隔，避免整轮检查把通用接口限流打满
+       await page.waitForTimeout(500)
+     }
+ 
+-    await checkKnowledgeTools(page, spec)
+-    await checkGovernanceIdentity(page, spec)
+-    await checkOperationsTab(page, spec)
+-    await checkRetentionReport(page, spec)
+-    await checkQaRecordsAccess(page, spec)
+-    await checkMeetingFrequency(page, spec)
+-    await checkMemberReviews(page, spec)
+-    await checkMemberTransfers(page, spec)
+-    await checkRosterOrgFilter(page, spec)
+-    await checkUpperReports(page, spec)
+-    await checkMemberSelection(page, spec)
++    for (const check of [
++      checkKnowledgeTools, checkGovernanceIdentity, checkOperationsTab, checkRetentionReport,
++      checkQaRecordsAccess, checkMeetingFrequency, checkMemberReviews, checkMemberTransfers,
++      checkRosterOrgFilter, checkUpperReports, checkMemberSelection,
++    ]) {
++      for (let attempt = 1; attempt <= 3; attempt += 1) {
++        await waitAfterRateLimit(page)
++        const count = rateLimits.get(page).count
++        const failureStart = failures.length
++        const noteStart = notes.length
++        await check(page, spec)
++        if (rateLimits.get(page).count === count || attempt === 3) break
++        // 工作区切换也会请求接口；整项重跑才能重新验证面板与服务端权限，
++        // 最后一次仍限流则保留真实失败，不把失败改成跳过。
++        failures.length = failureStart
++        notes.length = noteStart
++        console.log(`[wait] ${spec.username} ${check.name} 命中接口限流，按 Retry-After 等待后复核`)
++      }
++    }
+   } finally {
+     await context.close()
+   }
+diff --git a/frontend/scripts/verify-module6.mjs b/frontend/scripts/verify-module6.mjs
+--- a/frontend/scripts/verify-module6.mjs
++++ b/frontend/scripts/verify-module6.mjs
+@@ -139,7 +139,7 @@
+   tab.on('pageerror',e=>errors.push(e.message))
+   await tab.goto(BASE+'/governance')
+   await tab.getByRole('heading',{name:'管理与审核',exact:true}).waitFor()
+-  return {ctx,tab,stale:()=>{stale=true},self:()=>{self=true}}
++  return {ctx,tab,stale:(value=true)=>{stale=value},self:()=>{self=true}}
+ }
+ try {
+   const {ctx,tab,stale,self}=await page()
+@@ -147,10 +147,12 @@
+   checks.push('审核分页按服务端has_more终止')
+   await tab.getByRole('button',{name:'查看材料',exact:true}).click()
+   await tab.getByLabel('审核意见', {exact:true}).fill('已核对界面验收材料。')
++  assert.equal(await tab.getByLabel('人工结论', {exact:true}).inputValue(),'')
+   await tab.getByLabel('人工结论', {exact:true}).selectOption('approved')
+   await tab.getByRole('button',{name:'保存人工结论',exact:true}).click()
+   assert.equal(mutations.at(-1).body.source_version,'a'.repeat(64))
+   assert.equal(mutations.at(-1).body.decision,'approved')
++  assert.equal(mutations.at(-1).body.opinion,'已核对界面验收材料。')
+   checks.push('人工结论携带冻结版本和意见')
+   stale()
+   await tab.getByRole('button',{name:'查看材料',exact:true}).click()
+@@ -158,8 +160,11 @@
+   assert.equal(await tab.getByRole('button',{name:'保存人工结论',exact:true}).count(),0)
+   await tab.getByRole('button',{name:'关闭',exact:true}).last().click()
+   checks.push('来源失效不可审核且不显示旧快照')
++  // 自审边界必须使用有效来源，避免沿用上一场景的 stale 状态掩盖自审漏洞。
++  stale(false)
+   self()
+   await tab.getByRole('button',{name:'查看材料',exact:true}).click()
++  await tab.getByText('你是此版本提交人，须由另一位授权人员审核。',{exact:true}).waitFor()
+   assert.equal(await tab.getByRole('button',{name:'保存人工结论',exact:true}).count(),0)
+   await tab.getByRole('button',{name:'关闭',exact:true}).last().click()
+   checks.push('提交人不能自审')
+diff --git a/frontend/src/App.vue b/frontend/src/App.vue
+--- a/frontend/src/App.vue
++++ b/frontend/src/App.vue
+@@ -1,7 +1,27 @@
+ <script setup lang="ts">
+ import { RouterView } from 'vue-router'
++
++import ErrorState from '@/components/ErrorState.vue'
++import { session } from '@/stores/session'
++
++function retrySession(): void {
++  window.location.reload()
++}
+ </script>
+ 
+ <template>
+-  <RouterView />
++  <main v-if="session.state.restoreError" class="session-recovery">
++    <ErrorState :error="session.state.restoreError">
++      <button class="btn" type="button" @click="retrySession">重试恢复会话</button>
++    </ErrorState>
++  </main>
++  <RouterView v-else />
+ </template>
++
++<style scoped>
++.session-recovery {
++  max-width: 42rem;
++  margin: var(--space-8) auto;
++  padding: var(--space-4);
++}
++</style>
+diff --git a/frontend/src/router/index.ts b/frontend/src/router/index.ts
+--- a/frontend/src/router/index.ts
++++ b/frontend/src/router/index.ts
+@@ -146,6 +146,8 @@
+   if (!session.state.resolved) {
+     await session.restore()
+   }
++  // 身份尚未核验：由根组件显示可重试的真实错误，不进入业务页或误跳登录页。
++  if (session.state.restoreError) return false
+ 
+   if (to.meta.public) {
+     // 已登录用户访问登录页时直接送回主界面，避免重复登录
+diff --git a/frontend/src/stores/session.ts b/frontend/src/stores/session.ts
+--- a/frontend/src/stores/session.ts
++++ b/frontend/src/stores/session.ts
+@@ -1,7 +1,7 @@
+ import { computed, reactive, readonly } from 'vue'
+ 
+ import * as authApi from '@/api/auth'
+-import { clearSessionExpiry, tokenStore } from '@/api/http'
++import { ApiError, clearSessionExpiry, tokenStore } from '@/api/http'
+ import type { PermissionCode, UserInfo } from '@/api/types'
+ 
+ /**
+@@ -18,8 +18,10 @@
+   user: UserInfo | null
+   permissions: PermissionCode[]
+   loading: boolean
+-  /** 是否已尝试过恢复会话，避免路由守卫重复请求 */
++  /** 是否已确认当前会话状态，避免路由守卫重复请求 */
+   resolved: boolean
++  /** 暂时无法恢复会话；保留凭证并阻止业务页面挂载，供用户重试。 */
++  restoreError: unknown
+ }
+ 
+ const state = reactive<SessionState>({
+@@ -27,10 +29,12 @@
+   permissions: [],
+   loading: false,
+   resolved: false,
++  restoreError: null,
+ })
+ window.addEventListener('party:session-cleared', () => {
+   state.user = null
+   state.permissions = []
++  state.restoreError = null
+   state.resolved = true
+ })
+ 
+@@ -57,6 +61,7 @@
+     state.user = user
+     state.permissions = permissions
+     state.resolved = true
++    state.restoreError = null
+     // 主动登录成功即视为会话恢复，清除"上次是被动失效"的提示。
+     clearSessionExpiry()
+     return user
+@@ -65,7 +70,7 @@
+   }
+ }
+ 
+-/** 应用启动时调用：有令牌就换回用户信息，失败则静默登出 */
++/** 应用启动时恢复身份；只有确认凭证失效才能登出。 */
+ async function restore(): Promise<void> {
+   if (state.resolved) return
+ 
+@@ -75,6 +80,7 @@
+   }
+ 
+   state.loading = true
++  state.restoreError = null
+   try {
+     const [user, permissions] = await Promise.all([
+       authApi.getMe(),
+@@ -82,14 +88,21 @@
+     ])
+     state.user = user
+     state.permissions = permissions
+-  } catch {
+-    // 令牌过期或被吊销：清干净，由路由守卫送回登录页
+-    tokenStore.clear()
++    state.resolved = true
++  } catch (error) {
+     state.user = null
+     state.permissions = []
++    if (error instanceof ApiError && error.isAuthError) {
++      // 令牌过期或被吊销：清干净，由路由守卫送回登录页。
++      tokenStore.clear()
++      state.resolved = true
++    } else {
++      // 限流、断网、服务不可用均不代表凭证失效；不得误清会话。
++      state.restoreError = error
++      state.resolved = false
++    }
+   } finally {
+     state.loading = false
+-    state.resolved = true
+   }
+ }
+ 
+diff --git a/frontend/src/views/GovernanceView.vue b/frontend/src/views/GovernanceView.vue
+--- a/frontend/src/views/GovernanceView.vue
++++ b/frontend/src/views/GovernanceView.vue
+@@ -562,7 +562,8 @@
+       error.value = leaderForm.replace ? '请填写接任者姓名与职务' : '请填写姓名与职务'
+       return
+     }
+-    if (leaderForm.replace && !leaderOrg.value) {
++    const targetOrg = leaderOrg.value
++    if (leaderForm.replace && !targetOrg) {
+       error.value = '未选择组织，请关闭后重新打开该组织的任职记录'
+       return
+     }
+@@ -570,10 +571,10 @@
+     try {
+       const body = {name: leaderForm.name, title: leaderForm.title, phone: leaderForm.phone || null,
+         started_on: leaderForm.started_on || null}
+-      if (leaderForm.replace) {
+-        await api.replaceOrgLeader({...body, org_unit_id: leaderOrg.value.id,
++      if (leaderForm.replace && targetOrg) {
++        await api.replaceOrgLeader({...body, org_unit_id: targetOrg.id,
+           ended_on_prev: leaderForm.ended_on_prev || null}, selectedTenant.value)
+-        notice.value = `已换人：${leaderForm.name} 已接任「${leaderOrg.value.name}」负责人。`
++        notice.value = `已换人：${leaderForm.name} 已接任「${targetOrg.name}」负责人。`
+         // 换人是一个完整动作：关闭弹窗让用户直接看到组织表上的负责人已变
+         dialog.value = ''
+       } else if (leaderForm.id) {
+@@ -921,7 +922,7 @@
+           <p v-if="detail.stale" class="wb-error">源内容已变化，当前快照不能继续审核，请重新提交。</p>
+           <p v-if="detail.submitted_by===session.state.user?.id" class="wb-note">你是此版本提交人，须由另一位授权人员审核。</p>
+           <p v-if="detail.opinion">既有意见：{{ detail.opinion }}</p>
+-          <template v-if="detail.status==='pending' && !detail.stale && detail.submitted_by!==session.state.user?.id"><label class="wb-field"><span>人工结论</span><select class="select" v-model="form.decision" required><option value="" disabled>请选择结论</option><option value="approved">通过</option><option value="returned">退回补充</option></select></label><label class="wb-field"><span>审核意见</span><textarea class="textarea" v-model="form.opinion" required rows="4" maxlength="2000" /></label></template>
++          <template v-if="detail.status==='pending' && !detail.stale && detail.submitted_by!==session.state.user?.id"><label class="wb-field"><span>人工结论</span><select class="select" v-model="form.decision" aria-label="人工结论" required><option value="" disabled>请选择结论</option><option value="approved">通过</option><option value="returned">退回补充</option></select></label><label class="wb-field"><span>审核意见</span><textarea class="textarea" v-model="form.opinion" required rows="4" maxlength="2000" /></label></template>
+         </template>
+         <template v-else-if="dialog==='job'"><label class="wb-field"><span>任务类型</span><select class="select" v-model="form.kind" required><option value="" disabled>请选择任务类型</option><option v-for="row in jobKindOptions" :key="row.value" :value="row.value">{{ row.label }}</option></select></label><label class="wb-field"><span>去重编号</span><input class="input" v-model="form.dedup_key" required maxlength="160" /></label>
+           <label v-if="form.kind==='embedding'" class="wb-field"><span>文档内部编号（每行一个，最多 50 个）</span><textarea class="textarea" v-model="form.document_ids" required rows="4" /></label></template>
+diff --git a/scripts/module6_acceptance.py b/scripts/module6_acceptance.py
+--- a/scripts/module6_acceptance.py
++++ b/scripts/module6_acceptance.py
+@@ -97,9 +97,11 @@
+     npm = "npm.cmd" if os.name == "nt" else "npm"
+     targets = [
+         "app",
++        "scripts/check_dependency_locks.py",
+         *[str(path.relative_to(ROOT)) for path in sorted((ROOT / "scripts").glob("module6_*.py"))],
+     ]
+     checks = [
++        ("dependency_locks", [sys.executable, "scripts/check_dependency_locks.py"], ROOT),
+         ("format", [sys.executable, "-m", "black", "--check", *targets], ROOT),
+         ("imports", [sys.executable, "-m", "isort", "--check-only", *targets], ROOT),
+         ("lint", [sys.executable, "-m", "flake8", *targets], ROOT),
+@@ -118,6 +120,11 @@
+             ROOT,
+         ),
+         ("frontend", [npm, "run", "build"], ROOT / "frontend"),
++        (
++            "frontend_session",
++            ["node", "tests/session-recovery.mjs"],
++            ROOT / "frontend",
++        ),
+         (
+             "frontend_interaction",
+             [
+diff --git a/tests/integration/test_module6_http.py b/tests/integration/test_module6_http.py
+--- a/tests/integration/test_module6_http.py
++++ b/tests/integration/test_module6_http.py
+@@ -625,12 +625,17 @@
+     knowledge = data["knowledge"]
+     assert [row["event"] for row in knowledge["items"]] == ["update_content", "create"]
+     assert knowledge["total"] == 2
+-    assert knowledge["items"][0]["previous_revision"] == 2 and knowledge["items"][0]["revision"] == 3
++    assert (
++        knowledge["items"][0]["previous_revision"] == 2 and knowledge["items"][0]["revision"] == 3
++    )
+     assert knowledge["items"][0]["event_text"] == "内容更新"
+     assert knowledge["items"][0]["doc_id"] == doc_business_id
+     assert knowledge["items"][0]["title"] == "版本留痕合成制度"
+     assert knowledge["items"][0]["actor"] == "测试审核人"
+-    assert knowledge["items"][1]["revision"] == 1 and knowledge["items"][1]["previous_revision"] is None
++    assert (
++        knowledge["items"][1]["revision"] == 1
++        and knowledge["items"][1]["previous_revision"] is None
++    )
+     assert c["school"].id in knowledge["scope_note"]
+     # 跨租户不可见：外校管理员既看不到本校的提示词历史，也看不到知识库修订
+     foreign = await call(c, c["other_admin"], "GET", "/admin/version-trail")
+@@ -945,15 +950,15 @@
+     # 上线前的历史记录没有版本指纹：给空对象而不是按当前配置倒推
+     refused = next(row for row in page["items"] if row["question"] == "合成拒答问题")
+     assert refused["versions"] == {}
+-    assert (
+-        await call(c, c["admin"], "GET", "/qa/records?refused=true")
+-    )["items"][0]["question"] == "合成拒答问题"
+-    assert (
+-        await call(c, c["admin"], "GET", "/qa/records?has_evidence=false")
+-    )["total"] == 1
++    assert (await call(c, c["admin"], "GET", "/qa/records?refused=true"))["items"][0][
++        "question"
++    ] == "合成拒答问题"
++    assert (await call(c, c["admin"], "GET", "/qa/records?has_evidence=false"))["total"] == 1
+     assert (await call(c, c["admin"], "GET", "/qa/records?keyword=转正"))["total"] == 1
+     assert (await call(c, c["admin"], "GET", "/qa/records?data_level=sensitive"))["items"] == []
+-    assert (await call(c, c["admin"], "GET", "/qa/records?user_id=" + str(uuid.uuid4())))["total"] == 0
++    assert (await call(c, c["admin"], "GET", "/qa/records?user_id=" + str(uuid.uuid4())))[
++        "total"
++    ] == 0
+     # 软删除只是不再显示；显式要求时仍能看到，否则删除就成了审计盲区
+     included = await call(c, c["admin"], "GET", "/qa/records?include_deleted=true")
+     assert included["total"] == 3
+@@ -986,9 +991,7 @@
+     """T-SYS-06：导出的 Excel 必须自证筛选口径，且导出动作留审计、超限给可执行提示。"""
+     c = http_case
+     await seed_qa_records(c)
+-    denied = await c["http"].get(
+-        "/api/v1/qa/records/export", headers=authorization(c["author"])
+-    )
++    denied = await c["http"].get("/api/v1/qa/records/export", headers=authorization(c["author"]))
+     assert denied.status_code == 403
+     response = await c["http"].get(
+         "/api/v1/qa/records/export", params={"keyword": "转正"}, headers=authorization(c["admin"])
+@@ -1002,7 +1005,10 @@
+     assert [cell.value for cell in sheet[1]] == list(HEADERS)
+     assert sheet.max_row == 2
+     # 版本留痕（SEC-11）：台账里"这条答案用了哪个版本"要跟着记录走，不能只在界面上有
+-    assert sheet.cell(row=2, column=8).value == "提示词：问答提示词 v1 / 追问改写 v1；工作流：WF-03 wf-03/1 / WF-04 wf-04/1"
++    assert (
++        sheet.cell(row=2, column=8).value
++        == "提示词：问答提示词 v1 / 追问改写 v1；工作流：WF-03 wf-03/1 / WF-04 wf-04/1"
++    )
+     assert sheet.cell(row=2, column=12).value == "转正需要什么材料？"
+     guide = "\n".join(str(cell.value) for cell in workbook["导出说明"]["A"] if cell.value)
+     assert "导出人：测试审核人" in guide
+@@ -1036,7 +1042,14 @@
+     """造审计记录：本租户 3 条（含 1 条拒绝）+ 另一租户 1 条同动作记录，用于验证跨租户边界。"""
+     rows = (
+         ("create", "user", "success", None, datetime(2026, 3, 1, 1, 0), case["school"].id),
+-        ("delete", "member", "denied", "权限或业务校验未通过", datetime(2026, 3, 1, 2, 0), case["school"].id),
++        (
++            "delete",
++            "member",
++            "denied",
++            "权限或业务校验未通过",
++            datetime(2026, 3, 1, 2, 0),
++            case["school"].id,
++        ),
+         ("update", "member", "success", None, datetime(2026, 3, 1, 3, 0), case["school"].id),
+         ("delete", "member", "success", None, datetime(2026, 3, 2, 2, 0), case["other_school"].id),
+     )
+@@ -1127,9 +1140,72 @@
+         params={"tenant_id": c["other_school"].id},
+         status=403,
+     )
+-    foreign = await call(c, c["other_admin"], "GET", "/admin/audit-logs", params={"action": "delete"})
++    foreign = await call(
++        c, c["other_admin"], "GET", "/admin/audit-logs", params={"action": "delete"}
++    )
+     assert foreign["total"] == 1
+     assert foreign["items"][0]["request_id"] != page["items"][0]["request_id"]
++
++
++async def test_platform_audit_reads_and_exports_only_the_validated_target_tenant(http_case):
++    c = http_case
++    await seed_audit_logs(c)
++    platform_id = str(uuid.uuid4())
++    platform_actor = User(
++        id=str(uuid.uuid4()),
++        tenant_id=platform_id,
++        username="audit_platform_" + uuid.uuid4().hex,
++        name="synthetic platform audit administrator",
++        password_hash="synthetic",
++        role=UserRole.SYSTEM_ADMIN,
++        is_active=True,
++        is_deleted=False,
++    )
++    async with c["maker"]() as db:
++        with bypass_tenant_filter():
++            db.add(
++                Tenant(
++                    id=platform_id,
++                    tenant_id=platform_id,
++                    tenant_type="platform",
++                    name="synthetic audit platform",
++                    path="/" + platform_id,
++                    is_active=True,
++                )
++            )
++            db.add(platform_actor)
++            c["school"].parent_id = platform_id
++            c["school"].path = "/" + platform_id + "/" + c["school"].id
++            db.add(c["school"])
++            await db.commit()
++    params = {"tenant_id": c["school"].id, "action": "delete"}
++    page = await call(c, platform_actor, "GET", "/admin/audit-logs", params=params)
++    own = await call(c, c["admin"], "GET", "/admin/audit-logs", params={"action": "delete"})
++    assert page["total"] == 1
++    assert [row["id"] for row in page["items"]] == [row["id"] for row in own["items"]]
++    response = await c["http"].get(
++        "/api/v1/admin/audit-logs/export",
++        params=params,
++        headers=authorization(platform_actor),
++    )
++    assert response.status_code == 200
++    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
++        manifest = json.loads(archive.read(MANIFEST_NAME).decode("utf-8"))
++    assert manifest["导出条数"] == 1
++    assert manifest["筛选口径"] == page["scope_note"]
++    default_scope = await call(
++        c, platform_actor, "GET", "/admin/audit-logs", params={"action": "delete"}
++    )
++    assert default_scope["total"] == 0
++    for actor in (c["admin"], platform_actor):
++        await call(
++            c,
++            actor,
++            "GET",
++            "/admin/audit-logs",
++            params={"tenant_id": c["other_school"].id},
++            status=403,
++        )
+ 
+ 
+ async def test_audit_export_package_is_self_documenting_and_capped(http_case, monkeypatch):
+@@ -1167,6 +1243,7 @@
+                 (
+                     await db.execute(
+                         select(AuditLog).where(
++                            AuditLog.tenant_id == c["school"].id,
+                             AuditLog.action == "export", AuditLog.resource_type == "audit_log"
+                         )
+                     )
+diff --git a/tests/unit/test_record_snapshot.py b/tests/unit/test_record_snapshot.py
+--- a/tests/unit/test_record_snapshot.py
++++ b/tests/unit/test_record_snapshot.py
+@@ -4,10 +4,11 @@
+ ``getattr`` 读它会在同步栈上发起懒加载 SQL，SQLAlchemy 抛 ``MissingGreenlet``。
+ """
+ 
+-from sqlalchemy import create_engine, inspect
++from sqlalchemy import create_engine, event, inspect
+ from sqlalchemy.orm import Session
+ 
+ from app.models.member import MemberMaterial
++from app.models.user import User  # noqa: F401 - register the material's foreign-key target
+ from app.utils.snapshot import record_snapshot
+ 
+ 
+@@ -25,14 +26,16 @@
+ 
+     with Session(engine) as db:
+         material = db.get(MemberMaterial, "m1")
+-        assert "content" in inspect(material).unloaded
++        unloaded = set(inspect(material).unloaded)
++        assert {"content", "extracted_text"} <= unloaded
++        statements = []
++        event.listen(engine, "before_cursor_execute", lambda *args: statements.append(args[2]))
+         snapshot = record_snapshot(material)
++        assert statements == []
+ 
+-    assert "content" not in snapshot
++    assert "content" not in snapshot and "extracted_text" not in snapshot
+     assert snapshot["id"] == "m1" and snapshot["profile_id"] == "p1"
+-    assert set(snapshot) == {column.key for column in MemberMaterial.__table__.columns} - {
+-        "content"
+-    }
++    assert set(snapshot) == {column.key for column in MemberMaterial.__table__.columns} - unloaded
+ 
+ 
+ def test_transient_object_keeps_full_key_set():
+diff --git a/scripts/check_dependency_locks.py b/scripts/check_dependency_locks.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/check_dependency_locks.py
+@@ -0,0 +1,41 @@
++"""Check that CI and runtime locks include every directly pinned dependency."""
++
++from __future__ import annotations
++
++import re
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++PIN = re.compile(r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==([^\s;\\]+)", re.MULTILINE)
++
++
++def pinned_versions(path: Path) -> dict[str, str]:
++    """Read exact pins, normalizing distribution names as Python installers do."""
++    return {
++        re.sub(r"[-_.]+", "-", name).lower(): version
++        for name, version in PIN.findall(path.read_text(encoding="utf-8"))
++    }
++
++
++def check_locks(root: Path = ROOT) -> list[str]:
++    """Return missing or mismatched direct pins in the production and CI locks."""
++    failures = []
++    for source, lock in (
++        ("requirements.txt", "requirements.lock"),
++        ("requirements.txt", "requirements-dev.lock"),
++        ("requirements-dev.txt", "requirements-dev.lock"),
++    ):
++        locked = pinned_versions(root / lock)
++        for name, version in pinned_versions(root / source).items():
++            if locked.get(name) != version:
++                failures.append(f"{lock}: expected {name}=={version} from {source}")
++    return failures
++
++
++if __name__ == "__main__":
++    errors = check_locks()
++    for error in errors:
++        print(error)
++    if not errors:
++        print("Production and CI dependency locks contain all direct pins.")
++    raise SystemExit(bool(errors))
+diff --git a/tests/unit/test_dependency_locks.py b/tests/unit/test_dependency_locks.py
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/test_dependency_locks.py
+@@ -0,0 +1,7 @@
++"""The clean CI environment must contain all declared runtime dependencies."""
++
++from scripts.check_dependency_locks import check_locks
++
++
++def test_runtime_and_ci_locks_include_all_direct_dependencies():
++    assert check_locks() == []
+diff --git a/frontend/tests/session-recovery.mjs b/frontend/tests/session-recovery.mjs
+new file mode 100644
+--- /dev/null
++++ b/frontend/tests/session-recovery.mjs
+@@ -0,0 +1,77 @@
++/** Session restoration must distinguish temporary outages from invalid credentials. */
++import assert from 'node:assert/strict'
++import { fileURLToPath } from 'node:url'
++import { createServer } from 'vite'
++import { chromium } from 'playwright'
++
++const root = fileURLToPath(new URL('../', import.meta.url))
++const server = await createServer({ root, configLoader: 'native', server: { host: '127.0.0.1', port: 0 } })
++let browser
++
++try {
++  await server.listen()
++  const base = `http://127.0.0.1:${server.httpServer.address().port}`
++  browser = await chromium.launch({
++    headless: true,
++    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ?? process.env.PARTY_CHROMIUM,
++  })
++  for (const failure of [429, 503, 'network', 401]) {
++    const context = await browser.newContext()
++    const page = await context.newPage()
++    page.setDefaultTimeout(10000)
++    const pageErrors = []
++    page.on('pageerror', (error) => pageErrors.push(error.message))
++    await page.addInitScript(() => {
++      if (!sessionStorage.getItem('session-test-initialized')) {
++        localStorage.setItem('party.access_token', 'synthetic-session-token')
++        sessionStorage.setItem('session-test-initialized', 'yes')
++      }
++    })
++    let outage = failure
++    const calls = []
++    await page.route(`${base}/api/**`, async (route) => {
++      const path = new URL(route.request().url()).pathname.replace(/^\/api(?:\/v1)?/, '')
++      calls.push(path)
++      if (path === '/auth/me' && outage) {
++        if (outage === 'network') return route.abort('connectionfailed')
++        return route.fulfill({
++          status: outage,
++          headers: outage === 429 ? { 'Retry-After': '1' } : {},
++          json: { code: outage * 100 + 1, message: `合成会话错误 ${outage}`, trace_id: 'synthetic-session' },
++        })
++      }
++      const data = path === '/auth/me'
++        ? { id: 'session-user', username: 'session-user', name: '合成党员', role: 'member', tenant_id: 'session-tenant' }
++        : path === '/auth/codes' ? ['qa.ask']
++          : path === '/qa/sessions' ? { items: [], total: 0, page: 1, page_size: 8 } : undefined
++      assert.notEqual(data, undefined, `Unexpected session recovery API: ${path}`)
++      await route.fulfill({ json: { code: 0, message: '成功', data, trace_id: 'synthetic-session' } })
++    })
++    await page.goto(`${base}/ask`, { waitUntil: 'networkidle' })
++    if (failure === 401) {
++      assert.equal(await page.evaluate(() => localStorage.getItem('party.access_token')), null)
++      assert.equal(new URL(page.url()).pathname, '/login')
++      await page.locator('#username').waitFor()
++      assert.equal(calls.includes('/qa/sessions'), false)
++      console.log('PASS: invalid credentials clear the session and keep business routes protected')
++    } else {
++      assert.equal(await page.evaluate(() => localStorage.getItem('party.access_token')), 'synthetic-session-token')
++      assert.equal(new URL(page.url()).pathname, '/ask')
++      await page.getByRole('alert').waitFor()
++      assert.equal(calls.includes('/qa/sessions'), false, 'Incomplete authentication must not mount business content')
++      outage = null
++      const businessReady = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/qa/sessions')
++      await page.getByRole('button', { name: '重试恢复会话', exact: true }).click()
++      await businessReady
++      await page.getByRole('navigation', { name: '主导航' }).waitFor()
++      assert.equal(new URL(page.url()).pathname, '/ask')
++      assert.equal(calls.includes('/qa/sessions'), true)
++      console.log(`PASS: ${failure} preserves credentials, shows the failure, and retries the original route`)
++    }
++    assert.deepEqual(pageErrors, [], 'No browser runtime errors')
++    await context.close()
++  }
++} finally {
++  await browser?.close()
++  await server.close()
++}

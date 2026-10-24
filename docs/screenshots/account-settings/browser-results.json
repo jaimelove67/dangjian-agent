@@ -1,0 +1,21 @@
+{
+  "results": [
+    {
+      "name": "personal sidebar retains archive/materials while account settings open independently from avatar",
+      "status": "passed"
+    },
+    {
+      "name": "all eight role personas use the same account-only page without adding a sidebar entry",
+      "status": "passed"
+    },
+    {
+      "name": "mobile avatar access, archive navigation and settings fit 390px",
+      "status": "passed"
+    },
+    {
+      "name": "account settings logout reuses the existing session flow",
+      "status": "passed"
+    }
+  ],
+  "errors": []
+}
