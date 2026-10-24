@@ -15,6 +15,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import traceback
 import urllib.error
 import urllib.request
 import uuid
@@ -34,6 +35,17 @@ from app.services.file_store import save_original  # noqa: E402
 from scripts import module6_backup as archive  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def parse_container_readiness(output: str) -> dict:
+    prefix = "DANGJIAN_CI_READINESS="
+    records = [line[len(prefix) :] for line in output.splitlines() if line.startswith(prefix)]
+    if len(records) != 1:
+        raise ValueError("Missing or ambiguous container readiness result")
+    result = json.loads(records[0])
+    if not isinstance(result, dict) or not isinstance(result.get("checks"), dict):
+        raise ValueError("Incomplete container readiness result")
+    return result
 
 
 def run(args: list[str], log: Path, *, environment: dict | None = None) -> None:
@@ -248,7 +260,7 @@ async def check(output: Path, isolated: bool) -> dict:
                     "-c",
                     "import asyncio; from app.api.v1.health import _readiness_details; "
                     "result=asyncio.run(_readiness_details()); "
-                    "print(result.body.decode('utf-8'))",
+                    "print('DANGJIAN_CI_READINESS=' + result.body.decode('utf-8'))",
                 ],
                 cwd=ROOT,
                 check=True,
@@ -256,7 +268,7 @@ async def check(output: Path, isolated: bool) -> dict:
                 text=True,
                 timeout=30,
             )
-            details = json.loads(diagnostic.stdout)
+            details = parse_container_readiness(diagnostic.stdout)
             assert details["checks"]["schema"] == "healthy"
             assert details["checks"]["models"] == "configuration_required"
             certs = owned / "tls"
@@ -439,6 +451,16 @@ def main() -> int:
         result = asyncio.run(check(args.output, args.isolated))
     except Exception as exc:
         result = {"status": "failed", "error": type(exc).__name__}
+        frames = [
+            frame
+            for frame in traceback.extract_tb(exc.__traceback__)
+            if Path(frame.filename).resolve().is_relative_to(ROOT)
+        ]
+        if frames:
+            frame = frames[-1]
+            result["location"] = (
+                f"{Path(frame.filename).resolve().relative_to(ROOT).as_posix()}:{frame.lineno}"
+            )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False))
