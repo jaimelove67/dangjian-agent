@@ -154,9 +154,11 @@ async def check(output: Path, isolated: bool) -> dict:
             conn = await archive.db_connect(source)
             try:
                 await conn.execute(
-                    "INSERT INTO knowledge_docs(id,tenant_id,doc_id,file_name,title,issuer,level,"
-                    "visibility,security_level,effective_date,status,tags,metadata,created_at,"
-                    "updated_at,is_deleted) VALUES($1,$1,$1,'ci.txt','独立CI原件','CI','school',"
+                    "INSERT INTO knowledge_docs(id,tenant_id,doc_id,file_name,title,issuer,"
+                    "authority,level,visibility,security_level,effective_date,status,tags,"
+                    "metadata,created_at,"
+                    "updated_at,is_deleted) VALUES($1,$1,$1,'ci.txt','独立CI原件','CI',"
+                    "'school_policy','school',"
                     "'school','internal',CURRENT_DATE,'effective','{}',$2::json,now(),now(),false)",
                     fixture_id,
                     json.dumps(
@@ -336,7 +338,24 @@ async def check(output: Path, isolated: bool) -> dict:
             before = await archive.snapshot(source)
             await migrate(source, "009_member_workflow", downgrade=True)
             await migrate(source, "head")
-            assert await archive.snapshot(source) == before
+            after = await archive.snapshot(source)
+            if after != before:
+                table_names = set(before["tables"]) | set(after["tables"])
+                print(
+                    json.dumps(
+                        {
+                            "migration_snapshot_changed_tables": sorted(
+                                name
+                                for name in table_names
+                                if before["tables"].get(name) != after["tables"].get(name)
+                            ),
+                            "registered_originals_changed": before["originals"]
+                            != after["originals"],
+                        }
+                    ),
+                    flush=True,
+                )
+            assert after == before
             client = archive.redis_client(source_redis)
             try:
                 await client.set(b"auth:revoked:native-ci", b"1", ex=3600)
