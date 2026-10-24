@@ -336,11 +336,12 @@ async def material_original(
         data_level=record.data_level or "sensitive",
     )
     await service.db.commit()
+    encoded_name = quote(record.file_name, safe="")
     return Response(
         content=content,
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(record.file_name, safe='')}",
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
         },

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # ==================== 基础配置 ====================
     PROJECT_NAME: str = "党建工作智能体"
-    VERSION: str = "2.0.0"
+    VERSION: str = "2.0.1"
     ENV: str = Field(default="development", description="运行环境")
     DEBUG: bool = Field(default=False, description="调试模式")
     MAX_UPLOAD_SIZE: int = Field(default=10 * 1024 * 1024, gt=0, description="上传大小上限（字节）")

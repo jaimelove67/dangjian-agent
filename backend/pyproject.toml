@@ -1,6 +1,6 @@
 [project]
 name = "party-agent"
-version = "2.0.0"
+version = "2.0.1"
 description = "高校党建工作智能体 - 基于 LangChain 的党建辅助系统"
 authors = [
     {name = "Party Agent Team", email = "team@party-agent.local"}

@@ -1,6 +1,6 @@
 {
   "name": "dangjian-workspace",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
   "workspaces": ["frontend"],
@@ -13,7 +13,7 @@
     "build": "npm --workspace frontend run build:sites && node scripts/prepare-sites-build.mjs",
     "build:frontend": "npm --workspace frontend run build",
     "preview": "npm --workspace frontend run preview",
-    "test": "npm --workspace frontend test && node --test --test-isolation=none tests/dev.test.mjs",
+    "test": "npm --workspace frontend test && node --test --test-isolation=none tests/dev.test.mjs tests/dependency-locks.test.mjs",
     "test:sites": "node --test tests/sites-worker.test.mjs"
   }
 }

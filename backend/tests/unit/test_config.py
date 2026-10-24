@@ -15,7 +15,7 @@ class TestSettings:
         settings = Settings(_env_file=None)
 
         assert settings.PROJECT_NAME == "党建工作智能体"
-        assert settings.VERSION == "2.0.0"
+        assert settings.VERSION == "2.0.1"
         assert settings.ENV == "development"
         assert settings.DEBUG is False
 

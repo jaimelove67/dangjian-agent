@@ -236,8 +236,29 @@ async def check(output: Path, isolated: bool) -> dict:
                 raise RuntimeError("实际运行镜像未通过存活检查")
             code, body = get("http://127.0.0.1:8000/api/v1/health/ready")
             readiness = json.loads(body)
-            assert code == 503 and readiness["checks"]["schema"] == "healthy"
-            assert readiness["checks"]["models"] == "configuration_required"
+            assert code == 503 and readiness == {"status": "not_ready"}
+            # Dependency details are private. Inspect inside the owned CI
+            # container instead of expecting them from the public probe.
+            diagnostic = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    containers[0],
+                    "python",
+                    "-c",
+                    "import asyncio; from app.api.v1.health import _readiness_details; "
+                    "result=asyncio.run(_readiness_details()); "
+                    "print(result.body.decode('utf-8'))",
+                ],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            details = json.loads(diagnostic.stdout)
+            assert details["checks"]["schema"] == "healthy"
+            assert details["checks"]["models"] == "configuration_required"
             certs = owned / "tls"
             certs.mkdir(mode=0o700)
             run(
