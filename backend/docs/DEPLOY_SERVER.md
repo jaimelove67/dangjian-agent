@@ -138,3 +138,160 @@ docker stats --no-stream
   未显式配置时按默认值生效，本次无需改 `.env`。
 - 验证：`/api/v1/qa/attachments` 无 token 返回 401（路由存在）；容器内实测 OCR
   （`store_attachment(..., cloud_ocr=True)`）识别中文条款正确；`qa_sessions.attachments` 列已存在。
+
+## 2026-10-25 整体切换到 2.0.1 monorepo（目录结构变更）
+
+**背景**：本地仓库在 2.0.0 起改为 monorepo（后端搬入 `backend/`，旧 Vue 前端降级到 `backend/frontend/`，
+顶层 `frontend/` 换成 React 19 + Vite）。服务器上仍是旧布局（根目录 `app/`、`migrations/`、`frontend/`(Vue)），
+**服务器没有 git**，无法 `git pull`，因此本次改为整包上传切换。
+
+关键前提：**compose 的 `name: party-agent-server` 与数据卷名未变**（`postgres_data` / `redis_data` /
+`originals` / `audit_spool`），所以数据全部保留；迁移从 `026` 顺利升到 `031`。
+
+### 上线步骤（已执行，可复用）
+
+```bash
+# 0) 本机：先验证（构建 + 契约测试），产物不入服务器镜像
+cd frontend && npx vite build                     # 19s，产出 frontend/dist
+node --test tests/*.test.mjs                      # 86/86 通过
+
+# 1) 打包（排除 node_modules/dist/tmp/__pycache__/*.audit，约 10.8MB）
+tar czf tmp/deploy-<日期>.tar.gz \
+  --exclude='backend/frontend' --exclude='backend/frontend-test' --exclude='backend/tmp' \
+  --exclude='backend/audit-spool' --exclude='__pycache__' --exclude='*.pyc' --exclude='*.audit' \
+  --exclude='frontend/node_modules' --exclude='frontend/dist' --exclude='frontend/tmp' \
+  backend frontend package.json package-lock.json scripts
+
+# 2) 服务器备份
+docker exec party-agent-postgres pg_dump -U party_user -d party_agent -Fc > /root/backups/pg_<ts>_pre_v2.dump
+tar czf /root/backups/code_<ts>_pre_v2.tar.gz app config deploy migrations scripts ... .env
+
+# 3) 上传 + 解包（先在旁路目录，别直接覆盖线上）
+scp tmp/deploy-<日期>.tar.gz root@129.204.32.148:/root/
+mkdir -p /opt/dangjian-agent-new && tar xzf /root/deploy-<日期>.tar.gz -C /opt/dangjian-agent-new
+
+# 4) ⚠️ 必做：用服务器原 .env 覆盖包里带来的本地开发 .env
+cp /opt/dangjian-agent/.env /opt/dangjian-agent-new/backend/.env
+#   （本地 .env 的 POSTGRES_PASSWORD 与线上已有数据卷里的库口令不一致，覆盖即失联）
+
+# 5) 回滚保险：给旧镜像打标签
+docker tag party-agent-server-app:latest      party-agent-app-bak-<日期>
+docker tag party-agent-server-frontend:latest party-agent-frontend-bak-<日期>
+
+# 6) 构建（不停止旧容器，零停机）
+cd /opt/dangjian-agent-new/backend && docker compose -f docker-compose.server.yml build
+
+# 7) 切换 + 迁移 + 验证
+docker compose -f docker-compose.server.yml up -d
+docker compose -f docker-compose.server.yml exec -T app python -m alembic upgrade head   # 026 → 031
+curl http://127.0.0.1/api/v1/health/ready                                                # → 200 {"status":"ready"}
+
+# 8) 目录规范化：新布局上位，旧代码留作回滚
+mv /opt/dangjian-agent      /opt/dangjian-agent-old-<日期>
+mv /opt/dangjian-agent-new  /opt/dangjian-agent
+cd /opt/dangjian-agent/backend && docker compose -f docker-compose.server.yml up -d
+```
+
+### 结论与注意
+
+- **compose 文件位置变了**：所有运维命令现在是
+  `cd /opt/dangjian-agent/backend && docker compose -f docker-compose.server.yml <子命令>`。
+  在 `/opt/dangjian-agent` 根目录直接跑 `-f docker-compose.server.yml` 会找不到文件。
+  前端构建上下文是 `../frontend`（相对 compose 文件），两个目录必须同级存在。
+- 前端镜像改为**容器内构建**（`frontend/Dockerfile`：node:24-alpine 构建 + nginx:1.28-alpine 托管），
+  nginx 配置在 `frontend/deploy/nginx-http.conf`，不再用旧的 `Dockerfile.frontend.http`。
+  服务器 3.6G 内存构建无 OOM（本次约 95 秒）。
+- 新版 `.env` 无新增必填项：对比 `backend/.env.example`，服务器原有 21 个键足够，缺的都是有默认值的可选项。
+- 验证结果：`/health/live` 200、`/health/ready` 200；`school_admin` / `admin` 登录 200 且拿到令牌；
+  `/auth/me`、`/admin/org-units`、`/member-full/stats`、`/member-full/batches`、`/education/offerings` 均 200；
+  SPA 深链 `/governance` 200；7 张新表全部建好；数据完好（8 用户 / 4 租户 / 6 档案 / 7909 审计）。
+- 回滚路径：旧代码在 `/opt/dangjian-agent-old-<日期>`，旧镜像标签 `party-agent-app-bak-<日期>` /
+  `party-agent-frontend-bak-<日期>`，数据库备份 `/root/backups/pg_<ts>_pre_v2.dump`。
+
+---
+
+## 2026-10-25（二）全库清空重建 + 重灌演示数据
+
+需求：清掉服务器全部数据并从零重填一套完整演示数据。
+
+### 步骤（顺序不能乱）
+
+1. **全量备份**
+
+   ```bash
+   TS=$(date +%F_%H%M)
+   docker exec party-agent-postgres pg_dump -U party_user -d party_agent -Fc \
+     > /root/backups/pg_${TS}_pre_wipe_full.dump
+   ```
+
+2. **停业务容器并清库**（不动 postgres/redis 容器，数据卷保留）
+
+   ```bash
+   cd /opt/dangjian-agent/backend
+   docker compose -f docker-compose.server.yml stop app frontend
+   docker exec party-agent-postgres psql -U party_user -d party_agent -c \
+     'DROP SCHEMA public CASCADE; CREATE SCHEMA public;
+      GRANT ALL ON SCHEMA public TO party_user; GRANT ALL ON SCHEMA public TO public;'
+   ```
+
+3. **从零跑全部迁移**
+
+   ```bash
+   docker compose -f docker-compose.server.yml run --rm app python -m alembic upgrade head
+   ```
+
+4. **启容器 → 建平台管理员 → 建学校租户与账号 → 灌名册 → 灌业务**
+
+   ```bash
+   docker compose -f docker-compose.server.yml up -d app frontend
+   docker compose -f docker-compose.server.yml exec -T app \
+     python scripts/server_init_admin.py --username admin --password '<口令>'
+   docker compose -f docker-compose.server.yml exec -T app \
+     python scripts/seed_demo_school.py --admin-password '<口令>' --base-url http://127.0.0.1:8000/api/v1
+   ```
+
+   开户第二个学校管理员（审核流程要求「录入人不能自审」，脚本里 `school_admin2` 是审核人）：
+
+   ```bash
+   POST /api/v1/admin/users?tenant_id=<学校租户ID>
+   {"username":"school_admin2","name":"周敏","password":"<口令>",
+    "role":"school_admin","org_unit_id":"<学校党委 org id>"}
+   ```
+
+5. **知识库 → 业务 → 学习收尾 → 名册**（知识库必须先灌，学习计划要引用有效资料）
+
+   ```bash
+   python scripts/seed_knowledge_docs.py  --username school_admin --password '<口令>' --base-url http://127.0.0.1:8000/api/v1
+   python scripts/seed_demo_business.py   --base-url ... --tenant <租户> --school-org <党委> --dept-org <院系>
+   python scripts/seed_demo_study_finish.py --base-url ... --school-org <党委> --tenant <租户>
+   python scripts/seed_member_profiles.py --tenant <租户> --org-unit-id <支部>
+   ```
+
+### 踩坑与修复
+
+- **三个种子脚本硬编码了旧租户/组织 UUID**（`d5584666…`、`c24117e8…`），重建后 ID 全变，脚本必然失败。
+  已改为命令行参数：`--tenant` / `--school-org` / `--dept-org`，重建时传入新 ID 即可复用。
+- **`seed_demo_study_finish.py` 的 `expected_revision` 写死为 1/2**，重跑时 409。
+  已改为每次写操作前重新读取当前 revision。
+- **`seed_demo_business.py` 调用了不存在的 `GET /assessment/tasks`**（405），
+  导致任务审核整段被跳过 → 归集判定「来源记录含未审核内容」，最终审核必然 409。
+  已改为直接审核 `POST /assessment/tasks` 返回的 id；并对归集审核加了「有缺项就跳过并告警」的保护。
+- 考核模块**没有任务列表接口**，只有 `GET /assessment/workspace?org_unit_id=&year=`
+  （缺参数返回 422，不是故障）。审核路由是 `POST /assessment/{tasks|evidence|runs|plans}/{id}/review`，
+  请求体字段是 `status`（不是 `decision`）。
+- `AssessmentTask` / `AssessmentRun` 的状态列叫 `review_status`，没有 `status` 列。
+
+### 重建后数据核对（本次结果）
+
+| 表 | 行数 |
+|---|---|
+| users | 8（8 类角色各一，其中 2 个 school_admin）|
+| tenants | 2（平台 + 湖南科技职业技术学院）|
+| org_units | 6（1 school / 2 department / 3 branch）|
+| member_profiles | 6 |
+| knowledge_docs | 7（embedding_chunks 40）|
+| study_plans | 1（已审核）+ 3 items |
+| assessment_indicators / tasks / runs | 1 / 1（approved）/ 2（1 approved + 1 草稿）|
+| audit_logs | 518 |
+
+8 个账号全部登录 200；`/health/live`、`/health/ready` 200；公网首页 200。

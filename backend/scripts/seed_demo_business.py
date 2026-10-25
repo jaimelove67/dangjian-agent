@@ -25,6 +25,8 @@ from app.core.config import settings  # noqa: E402
 BASE = f"http://127.0.0.1:{settings.PORT}/api/v1"
 YEAR = 2026
 
+# 租户与组织 ID 由部署决定，全库重建后必然变化；下面的默认值只是历史部署的兜底，
+# 实际运行请以 seed_demo_school.py 的输出为准，用命令行参数覆盖。
 SCHOOL_ORG = "c24117e8-5ff8-425f-b2e7-8652708d02dc"
 DEPT1_ORG = "974a8cf4-2f5d-415a-92a1-e90f55e6382e"
 TENANT = "d5584666-6c8a-453c-abf3-036e02dc83e1"
@@ -33,6 +35,27 @@ ADMIN = ("admin", "Pq7#mK2vXz9Rt4")
 DEMO_PW = "Demo@2026hnky"
 
 REASON = "演示数据初始化，供客户演示使用"
+
+
+def _apply_args() -> None:
+    """命令行覆盖租户与组织 ID，避免重建后脚本仍指向已不存在的旧 ID。"""
+    global BASE, SCHOOL_ORG, DEPT1_ORG, TENANT
+    import argparse
+
+    parser = argparse.ArgumentParser(description="演示业务数据种子")
+    parser.add_argument("--base-url", default=None, help="后端接口地址")
+    parser.add_argument("--tenant", default=TENANT, help="学校租户 ID")
+    parser.add_argument("--school-org", default=SCHOOL_ORG, help="学校党委组织 ID")
+    parser.add_argument("--dept-org", default=DEPT1_ORG, help="院系党总支组织 ID")
+    args = parser.parse_args()
+    if args.base_url:
+        BASE = args.base_url
+    TENANT = args.tenant
+    SCHOOL_ORG = args.school_org
+    DEPT1_ORG = args.dept_org
+
+
+_apply_args()
 
 
 def login(client: httpx.Client, username: str, password: str) -> httpx.Client:
@@ -285,30 +308,25 @@ def main() -> None:
         task_id = (body.get("data", {}) or {}).get("id") if code in (200, 201) else None
 
         # 任务须先经人工审核通过，否则归集结果会记为「含未审核内容」。
-        code, listed = call(
-            sc, "get", "/assessment/tasks", params={"org_unit_id": DEPT1_ORG, "year": YEAR}
-        )
-        rows = (
-            (listed.get("data", {}) or {}).get("items")
-            or (listed.get("data", {}) or {}).get("tasks")
-            or []
-        )
-        show("task list", code, [r.get("id") for r in rows], 300)
+        # 注意：考核模块没有 GET /assessment/tasks 列表接口（只有 /assessment/workspace），
+        # 这里直接审核刚创建的任务，避免依赖不存在的列表路由。
         ac = login(httpx.Client(timeout=60.0), "school_admin2", DEMO_PW)
-        for row in rows:
-            if row.get("review_status") == "approved":
-                continue
-            code, body = call(
-                ac,
-                "post",
-                f"/assessment/tasks/{row.get('id')}/review",
-                json={
-                    "status": "approved",
-                    "opinion": "同意任务填报（演示）",
-                    "expected_revision": row.get("revision") or 1,
-                },
-            )
-            show(f"review task {str(row.get('id'))[:8]}", code, body, 200)
+        if task_id:
+            task_revision = (body.get("data", {}) or {}).get("revision") or 1
+            if (body.get("data", {}) or {}).get("review_status") == "approved":
+                show("review task", 200, "已审核，跳过", 120)
+            else:
+                code, body = call(
+                    ac,
+                    "post",
+                    f"/assessment/tasks/{task_id}/review",
+                    json={
+                        "status": "approved",
+                        "opinion": "同意任务填报（演示）",
+                        "expected_revision": task_revision,
+                    },
+                )
+                show(f"review task {task_id[:8]}", code, body, 200)
 
         code, body = call(
             sc,
@@ -321,14 +339,22 @@ def main() -> None:
         run_id = data.get("run_id") or data.get("id") if code in (200, 201) else None
         show("run id", code, run_id, 120)
         if run_id:
-            ac = login(httpx.Client(timeout=60.0), "school_admin2", DEMO_PW)
-            code, body = call(
-                ac,
-                "post",
-                f"/assessment/runs/{run_id}/review",
-                json={"status": "approved", "opinion": "同意归集结果（演示）", "expected_revision": 1},
-            )
-            show("review run", code, body, 400)
+            missing = [r.get("missing") for r in (data.get("results") or [])]
+            if any(missing):
+                print(f"[WARN] 归集仍有缺项，跳过人工确认：{missing}")
+            else:
+                ac = login(httpx.Client(timeout=60.0), "school_admin2", DEMO_PW)
+                code, body = call(
+                    ac,
+                    "post",
+                    f"/assessment/runs/{run_id}/review",
+                    json={
+                        "status": "approved",
+                        "opinion": "同意归集结果（演示）",
+                        "expected_revision": data.get("revision") or 1,
+                    },
+                )
+                show("review run", code, body, 400)
     except Exception as exc:  # noqa: BLE001
         print(f"[ERR] 考核阶段异常：{exc}")
 

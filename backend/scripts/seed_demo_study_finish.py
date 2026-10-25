@@ -22,9 +22,30 @@ from app.core.config import settings  # noqa: E402
 
 BASE = f"http://127.0.0.1:{settings.PORT}/api/v1"
 YEAR = 2026
+# 组织 ID 由部署决定，全库重建后会变化；默认值只是历史部署的兜底，
+# 实际运行请以 seed_demo_school.py 的输出为准，用 --school-org 覆盖。
 SCHOOL_ORG = "c24117e8-5ff8-425f-b2e7-8652708d02dc"
+TENANT = "d5584666-6c8a-453c-abf3-036e02dc83e1"
 DEMO_PW = "Demo@2026hnky"
 REASON = "演示数据初始化，供客户演示使用"
+
+
+def _apply_args() -> None:
+    global BASE, SCHOOL_ORG, TENANT
+    import argparse
+
+    parser = argparse.ArgumentParser(description="演示数据收尾种子")
+    parser.add_argument("--base-url", default=None, help="后端接口地址")
+    parser.add_argument("--school-org", default=SCHOOL_ORG, help="学校党委组织 ID")
+    parser.add_argument("--tenant", default=TENANT, help="学校租户 ID（取账号清单用）")
+    args = parser.parse_args()
+    if args.base_url:
+        BASE = args.base_url
+    SCHOOL_ORG = args.school_org
+    TENANT = args.tenant
+
+
+_apply_args()
 
 
 def login(username: str, password: str) -> httpx.Client:
@@ -66,9 +87,7 @@ def main() -> None:
 
     # 参学人员需要真实账号 id，先从平台管理员接口取本租户账号清单。
     admin = login("admin", "Pq7#mK2vXz9Rt4")
-    code, body = call(
-        admin, "get", "/admin/users", params={"tenant_id": "d5584666-6c8a-453c-abf3-036e02dc83e1"}
-    )
+    code, body = call(admin, "get", "/admin/users", params={"tenant_id": TENANT})
     users = {i.get("username"): i.get("id") for i in (body.get("data", {}) or {}).get("items", [])}
     print("users:", len(users))
 
@@ -168,6 +187,11 @@ def main() -> None:
         print("[ERR] 未取得活动 id")
         return
 
+    # 每次写之前重读当前版本号：并发保护用 expected_revision 拦截过期写入，
+    # 写死版本号在重跑（活动已存在）时必然 409。
+    code, body = call(sc, "get", f"/study/activities/{act_id}")
+    act_rev = (body.get("data", {}) or {}).get("revision") or 1
+
     code, body = call(
         sc,
         "patch",
@@ -182,18 +206,20 @@ def main() -> None:
             "transcript": "学习要点：党章中关于党员义务与发展党员程序的规定。\n"
             "讨论共识：把党员教育管理落到日常，按月组织学习并留存记录。\n"
             "工作要求：各支部年底前完成培训台账归集，报党委备案。",
-            "expected_revision": 1,
+            "expected_revision": act_rev,
             "reason": REASON,
         },
     )
     show("patch activity", code, body, 240)
 
     # 纪要三栏目（学习要点/讨论共识/工作要求）由原文抽取生成，不手工编造。
+    code, body = call(sc, "get", f"/study/activities/{act_id}")
+    act_rev = (body.get("data", {}) or {}).get("revision") or act_rev
     code, body = call(
         sc,
         "post",
         f"/study/activities/{act_id}/generate-minutes",
-        json={"expected_revision": 2, "reason": REASON},
+        json={"expected_revision": act_rev, "reason": REASON},
     )
     show("generate minutes", code, body, 240)
 
