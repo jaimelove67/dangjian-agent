@@ -176,37 +176,22 @@ export const backend = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
-  ask: async (payload) => {
-    const raw = payload.question ?? "";
-    const hasAttachment =
-      Array.isArray(payload.attachment_ids) && payload.attachment_ids.length > 0;
-    // 只上传材料、不写问题时后端允许 question 为空；其余情况仍按「请输入问题。」校验
-    let question = "";
-    if (raw.trim()) question = questionText(raw);
-    else if (!hasAttachment) question = questionText(raw);
-    return request("/qa", {
+  ask: async (payload) =>
+    request("/qa", {
       method: "POST",
       body: JSON.stringify({
         data_level: "public",
         use_reranker: true,
         top_k: 5,
         ...payload,
-        question,
+        question: questionText(payload.question),
       }),
-    });
-  },
+    }),
   knowledge: () => request("/knowledge-docs?page=1&page_size=100"),
   uploadKnowledge: (file) => {
     const body = new FormData();
     body.append("file", file);
     return request("/knowledge-docs", { method: "POST", body });
-  },
-  // 问答附件：上传后在会话缓存中暂存，返回编号随提问回传；只作提问背景，不参与检索。
-  uploadQaAttachment: (file, cloudOcr = false) => {
-    const body = new FormData();
-    body.append("file", file);
-    if (cloudOcr) body.append("cloud_ocr", "true");
-    return request("/qa/attachments", { method: "POST", body });
   },
   self: () => request("/member/self/archive"),
   assessmentOrgs: () => request("/assessment/org-units"),
@@ -215,5 +200,13 @@ export const backend = {
       `/assessment/workspace?org_unit_id=${encodeURIComponent(org)}&year=${year}`,
     ),
   exportRoster: () => request("/member/roster/export", { download: true }),
+  rosterTemplate: () => request("/member/roster/template", { download: true }),
+  importRoster: ({ file, sourceNote, dryRun = true }) => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("source_note", sourceNote);
+    body.append("dry_run", String(dryRun));
+    return request("/member/roster/import", { method: "POST", body });
+  },
   health: () => request("/health/ready"),
 };

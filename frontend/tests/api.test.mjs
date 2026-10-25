@@ -44,6 +44,31 @@ test("explicit account linking sends only the verified username", async () => {
   await roleApi.linkAccount("profile-1", "applicant-1");
 });
 
+test("roster template and import use the school-scoped Excel contract", async () => {
+  const file = new File(["名册"], "党员名册.xlsx", {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  globalThis.fetch = async (url, options) => {
+    if (url === "/api/v1/member/roster/template") {
+      assert.equal(options.download, true);
+      return new Response("xlsx-template", { status: 200 });
+    }
+    assert.equal(url, "/api/v1/member/roster/import");
+    assert.equal(options.method, "POST");
+    assert.equal(options.body.get("file"), file);
+    assert.equal(options.body.get("source_note"), "校内台账导出 2026-10-25");
+    assert.equal(options.body.get("dry_run"), "true");
+    return ok({ total_rows: 1, created: 1, skipped: 0, failed: 0, rows: [] });
+  };
+  const template = await backend.rosterTemplate();
+  assert.equal(await template.text(), "xlsx-template");
+  const report = await backend.importRoster({
+    file,
+    sourceNote: "校内台账导出 2026-10-25",
+  });
+  assert.equal(report.created, 1);
+});
+
 const originalFetch = globalThis.fetch;
 const entries = new Map();
 const events = [];

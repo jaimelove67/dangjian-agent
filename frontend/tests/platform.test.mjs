@@ -6,6 +6,7 @@ import {
   createDemoPasswordService,
   PASSWORD_STORAGE_KEY,
 } from "../src/password-security.js";
+import { approvedResetPassword } from "../src/default-password.js";
 import {
   PLATFORM_NAV_SPEC,
   PLATFORM_ROUTES,
@@ -118,6 +119,37 @@ test("school administrator password edits change login verification without stor
   assert.equal(service.own(target).canChange, false);
   assert.equal(service.own(target).history[0].status, "cancelled");
   assert.equal((await service.verify(target, "Self-test-2026")).valid, false);
+});
+
+test("approved password requests reset the demo password and grant one change", async () => {
+  const { data, saved, service, login } = passwordFixture();
+  const target = data.accounts.find((a) => a.id === "demo-teacher");
+  const platform = login("demo-platform");
+  login(target.id);
+  await service.change(target, {
+    current: "123456",
+    password: "Initial-test-2026",
+    confirmation: "Initial-test-2026",
+  });
+  login(target.id);
+  await service.apply(target, "需要重新设置账号密码");
+  login(platform.id);
+  const request = service.inbox(platform, target.tenant_id)[0];
+  await service.review(platform, request.id, target.tenant_id, "approved", "已完成身份核验");
+  const resetPassword = await approvedResetPassword(target, data.tenants);
+  assert.equal((await service.verify(target, "Initial-test-2026")).valid, false);
+  assert.equal((await service.verify(target, resetPassword)).valid, true);
+  assert.equal(saved.get(PASSWORD_STORAGE_KEY).includes(resetPassword), false);
+  login(target.id);
+  assert.equal(service.own(target).canChange, true);
+  await service.change(target, {
+    current: resetPassword,
+    password: "Approved-test-2026",
+    confirmation: "Approved-test-2026",
+  });
+  login(target.id);
+  assert.equal(service.own(target).canChange, false);
+  assert.equal(service.own(target).history[0].status, "consumed");
 });
 
 test("password administration rejects foreign schools, privilege changes and unauthorized actors without writing credentials", async () => {

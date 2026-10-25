@@ -44,7 +44,18 @@ def public_record(row: Any) -> dict[str, Any]:
     if isinstance(row, OrgLeaderTerm):
         return leader_payload(row)
     fields = {
-        Tenant: ("id", "name", "tenant_type", "parent_id", "is_active", "config_version"),
+        Tenant: (
+            "id",
+            "name",
+            "tenant_type",
+            "parent_id",
+            "is_active",
+            "config_version",
+            "contact_name",
+            "contact_phone",
+            "contact_email",
+            "remark",
+        ),
         OrgUnit: (
             "id",
             "name",
@@ -184,6 +195,10 @@ class IdentityService:
             path=f"{parent.path.rstrip('/')}/{row_id}",
             is_active=True,
             config={"registration": {"status": "pending"}},
+            contact_name=values.get("contact_name"),
+            contact_phone=values.get("contact_phone"),
+            contact_email=values.get("contact_email"),
+            remark=values.get("remark"),
         )
         self.db.add(row)
         await self.db.flush()
@@ -193,8 +208,9 @@ class IdentityService:
         row = await self.tenant(target, lock=True)
         if values.get("is_active") is False and row.id == self.user.tenant_id:
             raise HTTPException(409, "不能停用当前登录租户")
+        clearable = {"contact_name", "contact_phone", "contact_email", "remark"}
         for key, value in values.items():
-            if value is None:
+            if value is None and key not in clearable:
                 raise HTTPException(422, "配置值不能为空")
             setattr(row, key, value)
         await self.db.flush()

@@ -12,6 +12,7 @@ import {
   CaretRight,
   MagnifyingGlass,
   ArrowsLeftRight,
+  UploadSimple,
 } from "@phosphor-icons/react";
 import { useApp } from "../app-context";
 import { useStore } from "../store";
@@ -339,6 +340,12 @@ export function Members({ mode = "members" }) {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(8);
   const [detail, setDetail] = useState(null);
+  const [importDialog, setImportDialog] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importNote, setImportNote] = useState("");
+  const [importReport, setImportReport] = useState(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -348,6 +355,7 @@ export function Members({ mode = "members" }) {
   const canCreate =
     hasPermission(session, "member.stage_transition") &&
     session.user.role !== "school_admin";
+  const canImport = hasPermission(session, "member.stage_transition");
   async function load() {
     if (!IS_LIVE) return;
     setBusy(true);
@@ -371,6 +379,78 @@ export function Members({ mode = "members" }) {
   useEffect(() => {
     setPage(1);
   }, [query, org, stage, size, tab]);
+  function openImportDialog() {
+    setImportDialog(true);
+    setImportFile(null);
+    setImportNote("");
+    setImportReport(null);
+    setImportError(null);
+  }
+  function closeImportDialog(force = false) {
+    if (importBusy && !force) return;
+    setImportDialog(false);
+    setImportFile(null);
+    setImportNote("");
+    setImportReport(null);
+    setImportError(null);
+  }
+  async function downloadRosterTemplate() {
+    setImportError(null);
+    try {
+      downloadBlob(
+        await backend.rosterTemplate(),
+        "党员名册导入模板.xlsx",
+      );
+      notify("名册导入模板已下载");
+    } catch (e) {
+      setImportError(e);
+    }
+  }
+  async function previewRosterImport(e) {
+    e.preventDefault();
+    setImportError(null);
+    if (!importFile) {
+      setImportError(new Error("请选择按模板填写的 .xlsx 名册文件。"));
+      return;
+    }
+    if (importNote.trim().length < 4) {
+      setImportError(new Error("请填写至少 4 个字的名册来源说明。"));
+      return;
+    }
+    setImportBusy(true);
+    try {
+      setImportReport(
+        await backend.importRoster({
+          file: importFile,
+          sourceNote: importNote.trim(),
+          dryRun: true,
+        }),
+      );
+    } catch (e) {
+      setImportError(e);
+    } finally {
+      setImportBusy(false);
+    }
+  }
+  async function commitRosterImport() {
+    if (!importFile || !importReport || importReport.failed > 0) return;
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      const result = await backend.importRoster({
+        file: importFile,
+        sourceNote: importNote.trim(),
+        dryRun: false,
+      });
+      await load();
+      notify(`本次已登记 ${result.created || 0} 份档案，已有记录 ${result.skipped || 0} 份未改动`);
+      closeImportDialog(true);
+    } catch (e) {
+      setImportError(e);
+    } finally {
+      setImportBusy(false);
+    }
+  }
   const filtered = useMemo(
     () =>
       scopedMembers(data, session, IS_LIVE).filter(
@@ -511,6 +591,12 @@ export function Members({ mode = "members" }) {
           <DownloadSimple size={17} />
           导出名册
         </button>
+        {canImport && (
+          <button className="button secondary" onClick={openImportDialog}>
+            <UploadSimple size={17} />
+            {IS_LIVE ? "导入本校档案" : "查看档案导入说明"}
+          </button>
+        )}
         {canCreate && (
           <button
             className="button primary"
@@ -709,6 +795,205 @@ export function Members({ mode = "members" }) {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+      {importDialog && (
+        <Modal
+          title="导入本校档案"
+          wide
+          flat
+          className="roster-import-modal"
+          onClose={closeImportDialog}
+        >
+          {!IS_LIVE ? (
+            <div className="archive-import-unavailable">
+              <UploadSimple size={34} weight="duotone" />
+              <h3>当前未连接学校档案导入服务</h3>
+              <p>
+                本地演示模式不会读取或写入真实学校档案。接入真实服务后，学校管理员或被授权的组织人员可按以下流程导入本校名册。
+              </p>
+              <ol>
+                <li>在“党员档案与材料”中下载名册导入模板。</li>
+                <li>按当前学校的组织权限填写名册和来源说明。</li>
+                <li>上传后先预检，确认逐行结果无误再正式登记。</li>
+              </ol>
+              <p className="page-note">
+                本流程只登记基础档案台账，不导入历史材料原件、不建立账号关联，不改变已有人员阶段，也不代替材料接收、审核或组织关系办理。
+              </p>
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={closeImportDialog}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="archive-import-intro">
+                <strong>按学校权限导入人员名册</strong>
+                <p>
+                  先下载模板并填写名册来源；系统会按当前账号可管理的组织逐行预检，确认后才登记基础档案台账。已有同名同组织记录将跳过，不会被覆盖；历史材料原件和账号关联需另按业务流程办理。
+                </p>
+              </div>
+              <div className="archive-import-template">
+                <div>
+                  <span className="archive-import-step">1</span>
+                  <div>
+                    <strong>下载并填写名册模板</strong>
+                    <p>模板包含可用组织与阶段填写说明，仅支持 .xlsx 文件。</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={downloadRosterTemplate}
+                  disabled={importBusy}
+                >
+                  <DownloadSimple size={17} />
+                  下载导入模板
+                </button>
+              </div>
+              <form onSubmit={previewRosterImport}>
+                <div className="archive-import-form">
+                  <Field label="名册文件" required full>
+                    <input
+                      type="file"
+                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      onChange={(e) => {
+                        setImportFile(e.target.files?.[0] || null);
+                        setImportReport(null);
+                        setImportError(null);
+                      }}
+                      disabled={importBusy}
+                    />
+                    <small className="field-help">
+                      {importFile
+                        ? `${importFile.name} · ${(importFile.size / 1024 / 1024).toFixed(2)} MB`
+                        : "请选择按模板填写的 Excel 文件。"}
+                    </small>
+                  </Field>
+                  <Field label="名册来源说明" required full>
+                    <input
+                      value={importNote}
+                      onChange={(e) => {
+                        setImportNote(e.target.value);
+                        setImportReport(null);
+                        setImportError(null);
+                      }}
+                      maxLength={200}
+                      placeholder="例如：校内党员管理台账导出 2026-10-25"
+                      disabled={importBusy}
+                    />
+                    <small className="field-help">
+                      4–200 个字，将随本次导入写入审计记录，用于事后核对名册来路。
+                    </small>
+                  </Field>
+                </div>
+                {importError && <ErrorBox error={importError} />}
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={closeImportDialog}
+                    disabled={importBusy}
+                  >
+                    取消
+                  </button>
+                  <button
+                    className="button primary"
+                    disabled={importBusy || !importFile}
+                  >
+                    {importBusy ? "正在预检…" : "预检文件"}
+                  </button>
+                </div>
+              </form>
+              {importReport && (
+                <section className="archive-import-report" aria-live="polite">
+                  <div className="archive-import-report-heading">
+                    <div>
+                      <h3>预检结果</h3>
+                      <p>预检不会写入档案，确认后再执行正式登记。</p>
+                    </div>
+                    <div className="archive-import-counts">
+                      <span>共 {importReport.total_rows || 0} 行</span>
+                      <span className="is-created">可登记 {importReport.created || 0}</span>
+                      <span className="is-skipped">跳过 {importReport.skipped || 0}</span>
+                      <span className={importReport.failed ? "is-failed" : ""}>
+                        错误 {importReport.failed || 0}
+                      </span>
+                    </div>
+                  </div>
+                  {!!importReport.rows?.length && (
+                    <div className="archive-import-report-table">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>行号</th>
+                            <th>姓名</th>
+                            <th>结果</th>
+                            <th>说明</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importReport.rows.slice(0, 100).map((row) => (
+                            <tr key={`${row.row}-${row.name}`}>
+                              <td>{row.row}</td>
+                              <td>{row.name || "—"}</td>
+                              <td>
+                                <Badge
+                                  tone={
+                                    row.status === "error"
+                                      ? "orange"
+                                      : row.status === "skipped"
+                                        ? "gray"
+                                        : "green"
+                                  }
+                                >
+                                  {row.status === "error"
+                                    ? "错误"
+                                    : row.status === "skipped"
+                                      ? "跳过"
+                                      : "可登记"}
+                                </Badge>
+                              </td>
+                              <td>{row.message || "校验通过"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {importReport.rows.length > 100 && (
+                        <p className="page-note">仅展示前 100 行结果，完整结果以本次预检返回为准。</p>
+                      )}
+                    </div>
+                  )}
+                  <div className="modal-actions">
+                    {importReport.failed > 0 && (
+                      <span className="archive-import-blocked">
+                        请修正文件中的错误后重新预检
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick={commitRosterImport}
+                      disabled={
+                        importBusy ||
+                        importReport.failed > 0 ||
+                        importReport.created === 0
+                      }
+                    >
+                      {importBusy
+                        ? "正在登记…"
+                        : `确认登记 ${importReport.created || 0} 份档案`}
+                    </button>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
         </Modal>
       )}
       {detail && (

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   IdentificationCard,
   UploadSimple,
@@ -10,6 +10,8 @@ import {
   ArrowRight,
   Sparkle,
   Books,
+  Eye,
+  WarningCircle,
 } from "@phosphor-icons/react";
 import { useApp } from "../app-context";
 import { useStore } from "../store";
@@ -37,6 +39,20 @@ import {
   Pagination,
   downloadBlob,
 } from "../components";
+
+function previewKind(blob, fileName = "") {
+  const mime = String(blob?.type || "").split(";")[0].toLowerCase();
+  const extension = fileName.toLowerCase().split(".").pop();
+  if (mime === "application/pdf" || extension === "pdf") return "pdf";
+  if (mime.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp"].includes(extension)) return "image";
+  if (mime.startsWith("text/") || ["txt", "md", "csv", "json"].includes(extension)) return "text";
+  return "unsupported";
+}
+
+function previewKindLabel(kind) {
+  return { pdf: "PDF", image: "图片", text: "文本" }[kind] || "不可在线预览";
+}
+
 export function PersonalHome() {
   const { session, navigate } = useApp();
   const own = useOwnWorkspace();
@@ -316,11 +332,57 @@ export function OwnMaterials() {
   const [tab, setTab] = useState("全部材料");
   const [upload, setUpload] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [filePreview, setFilePreview] = useState({ status: "idle" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const submissionKey = useRef(crypto.randomUUID());
   const materialDraft = useMaterialDraft({ title: "", category: "", description: "" });
   const alive = () => getSession()?.user?.id === session.user.id;
+  async function readMaterialFile(material) {
+    return IS_LIVE
+      ? roleApi.ownFile(material.id)
+      : getDemoFile(material.id, session.user.id);
+  }
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    if (!detail) {
+      setFilePreview({ status: "idle" });
+      return () => {};
+    }
+    if (!IS_LIVE && !detail.has_file) {
+      setFilePreview({ status: "missing" });
+      return () => {};
+    }
+    setFilePreview({ status: "loading" });
+    readMaterialFile(detail)
+      .then(async (blob) => {
+        if (!active) return;
+        const kind = previewKind(blob, detail.file_name);
+        if (kind === "text") {
+          const text = await blob.text();
+          if (active) setFilePreview({ status: "ready", kind, text });
+          return;
+        }
+        if (kind === "pdf" || kind === "image") {
+          objectUrl = URL.createObjectURL(blob);
+          setFilePreview({ status: "ready", kind, url: objectUrl });
+          return;
+        }
+        setFilePreview({ status: "unsupported", kind });
+      })
+      .catch((error) => {
+        if (active)
+          setFilePreview({
+            status: "error",
+            message: error?.message || "文件读取失败，请下载原件查看。",
+          });
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [detail, session.user.id]);
   const filtered = own.materials.filter(
     (m) =>
       m.title.includes(query) &&
@@ -402,9 +464,7 @@ export function OwnMaterials() {
   }
   async function download(material) {
     try {
-      const blob = IS_LIVE
-        ? await roleApi.ownFile(material.id)
-        : await getDemoFile(material.id, session.user.id);
+      const blob = await readMaterialFile(material);
       if (alive()) downloadBlob(blob, material.file_name);
     } catch (e) {
       notify(e.message, "error");
@@ -619,6 +679,64 @@ export function OwnMaterials() {
             </div>
           </div>
           <p className="body-copy">{detail.description || "暂无补充说明"}</p>
+          <div className="material-preview" aria-label="文件预览">
+            <div className="material-preview-header">
+              <div className="material-preview-title">
+                <Eye size={16} />
+                <strong>文件预览</strong>
+              </div>
+              {filePreview.status === "ready" && (
+                <span className="material-preview-type">
+                  {previewKindLabel(filePreview.kind)}
+                </span>
+              )}
+            </div>
+            {filePreview.status === "loading" && (
+              <div className="material-preview-state" role="status">
+                <span className="material-preview-loader" />
+                <p>正在加载文件预览…</p>
+              </div>
+            )}
+            {filePreview.status === "missing" && (
+              <div className="material-preview-state">
+                <WarningCircle size={22} />
+                <p>当前记录未附可读取的原件</p>
+                <small>请重新选择文件提交后查看预览。</small>
+              </div>
+            )}
+            {filePreview.status === "error" && (
+              <div className="material-preview-state">
+                <WarningCircle size={22} />
+                <p>暂时无法加载预览</p>
+                <small>{filePreview.message}</small>
+              </div>
+            )}
+            {filePreview.status === "unsupported" && (
+              <div className="material-preview-state">
+                <FileText size={22} />
+                <p>当前文件类型暂不支持在线预览</p>
+                <small>请下载原件后使用本地应用查看。</small>
+              </div>
+            )}
+            {filePreview.status === "ready" && filePreview.kind === "pdf" && (
+              <div className="material-preview-viewer pdf">
+                <iframe
+                  src={filePreview.url}
+                  title={`${detail.file_name}预览`}
+                />
+              </div>
+            )}
+            {filePreview.status === "ready" && filePreview.kind === "image" && (
+              <div className="material-preview-viewer image">
+                <img src={filePreview.url} alt={`${detail.file_name}预览`} />
+              </div>
+            )}
+            {filePreview.status === "ready" && filePreview.kind === "text" && (
+              <div className="material-preview-viewer text">
+                <pre>{filePreview.text}</pre>
+              </div>
+            )}
+          </div>
           <div className="inline-note">
             {detail.file_name} · 已提交
             {!IS_LIVE && !detail.has_file ? " · 尚未附原件" : ""}

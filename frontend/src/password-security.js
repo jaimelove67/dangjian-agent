@@ -2,6 +2,7 @@ import { IS_LIVE, getSession } from "./api.js";
 import { validateAdminChange } from "./platform-identity-api.js";
 import { accountSecurityApi } from "./account-security-api.js";
 import { normalizeSystemAuditCopy } from "./system-copy.js";
+import { approvedResetPassword } from "./default-password.js";
 
 export const PASSWORD_STORAGE_KEY = "dangjian.demo-password-security.v1";
 export const PASSWORD_EVENT = "dangjian:password-security";
@@ -349,7 +350,7 @@ export function createDemoPasswordService({
       });
     },
     review(user, requestId, tenantId, decision, comment) {
-      return exclusive(() => {
+      return exclusive(async () => {
         const administrator = actor(user, true);
         if (!["approved", "rejected"].includes(decision))
           throw new Error("请选择批准或驳回。");
@@ -370,11 +371,33 @@ export function createDemoPasswordService({
           throw new Error("该账号当前不适用改密申请流程。");
         if (!record(state, target).self_change_used)
           throw new Error("账号改密记录已变化，请核实后处理。");
+        const now = new Date().toISOString();
+        if (decision === "approved") {
+          const resetPassword = await approvedResetPassword(target, directory().tenants || []);
+          const salt = Array.from(crypto.getRandomValues(new Uint8Array(16)));
+          const hash = await derive(resetPassword, salt);
+          // Recheck identity and storage after the asynchronous hash work.
+          actor(user, true);
+          if (JSON.stringify(read()) !== JSON.stringify(state))
+            throw new Error("改密记录已变化，请重新打开后重试。");
+          state.accounts[accountKey(target)] = {
+            ...record(state, target),
+            credential: {
+              algorithm: "PBKDF2-SHA256",
+              iterations: ITERATIONS,
+              salt,
+              hash,
+            },
+            admin_changed_at: now,
+            changed_at: now,
+            password_version: (record(state, target).password_version || 0) + 1,
+          };
+        }
         Object.assign(request, {
           status: decision,
           reviewed_by: administrator.id,
           reviewer_name: administrator.name,
-          reviewed_at: new Date().toISOString(),
+          reviewed_at: now,
           review_comment: text,
         });
         audit(
@@ -383,7 +406,7 @@ export function createDemoPasswordService({
           decision === "approved" ? "批准改密申请" : "驳回改密申请",
           request,
           decision === "approved"
-            ? "授权申请人再次修改一次密码"
+            ? "已按学校名称和姓名拼音首字母规则恢复默认密码，并授权申请人再次修改一次密码"
             : "已驳回，申请人可补充原因后重新申请",
         );
         write(state);

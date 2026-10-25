@@ -6,10 +6,11 @@ import { IS_LIVE } from "../api";
 import { canChangeOwnPassword, passwordService } from "../password-security";
 import { usePasswordState } from "../password-hooks";
 import { formatBusinessTime } from "../business-time";
+import { APPROVED_RESET_PASSWORD_RULE } from "../default-password";
 import { Badge, ErrorBox, Field, Modal } from "../components";
 import "../password-security.css";
 
-export const PASSWORD_STATUS = { pending: "待审核", approved: "已批准 · 可修改一次", rejected: "已驳回", consumed: "已完成修改", cancelled: "已撤销" };
+export const PASSWORD_STATUS = { pending: "待审核", approved: "已批准 · 待使用规则默认密码改密", rejected: "已驳回", consumed: "已完成修改", cancelled: "已撤销" };
 export const passwordTime = (value) => IS_LIVE ? formatBusinessTime(value) : value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "—";
 
 export function PasswordDialog({ onClose, onChanged }) {
@@ -51,13 +52,13 @@ function PasswordContent({ onClose, onChanged }) {
       {(error || state.error) && <ErrorBox error={error || state.error} />}
       {!state.error && !state.loading && <>
         <div className="password-policy" role="status">
-          {canChange ? state.used ? <><CheckCircle size={20} /><div><strong>申请已批准，可再修改一次</strong><p>本次修改成功后授权即失效；之后修改需重新申请。</p></div></> : <><Key size={20} /><div><strong>首次自主修改 · 剩余1次</strong><p>每个账号仅可自主修改一次，后续修改需向平台管理员申请。</p></div></> : <><Clock size={20} /><div><strong>{state.pending ? "申请已提交，等待审核" : "首次自主修改机会已使用"}</strong><p>{state.pending ? "管理员处理后可在此查看结果，请勿重复提交。" : "请填写修改原因，经平台管理员批准后可再修改一次。"}</p></div></>}
+          {canChange ? state.used ? <><CheckCircle size={20} /><div><strong>申请已批准，请使用规则默认密码修改一次</strong><p>登录密码为“{APPROVED_RESET_PASSWORD_RULE}”；本次修改成功后授权即失效。</p></div></> : <><Key size={20} /><div><strong>首次自主修改 · 剩余1次</strong><p>每个账号仅可自主修改一次，后续修改需向平台管理员申请。</p></div></> : <><Clock size={20} /><div><strong>{state.pending ? "申请已提交，等待审核" : "首次自主修改机会已使用"}</strong><p>{state.pending ? "管理员处理后可在此查看结果，请勿重复提交。" : "请填写修改原因，经平台管理员批准后可再修改一次。"}</p></div></>}
         </div>
         {canChange ? <form onSubmit={submit} className="password-form">
           <Field label="当前密码" required full><input name="current" type="password" autoComplete="current-password" required disabled={busy} /></Field>
           <Field label="新密码" required full><input name="password" type="password" autoComplete="new-password" minLength={8} maxLength={72} required disabled={busy} aria-describedby="password-requirements" /></Field>
           <Field label="确认新密码" required full><input name="confirmation" type="password" autoComplete="new-password" minLength={8} maxLength={72} required disabled={busy} /></Field>
-          <p className="password-help" id="password-requirements">新密码至少8位，UTF-8 编码不超过72字节，且与当前密码不同。修改成功后需重新登录。</p>
+          <p className="password-help" id="password-requirements">{state.used ? `当前密码填写按“${APPROVED_RESET_PASSWORD_RULE}”生成的默认密码。` : ""}新密码至少8位，UTF-8 编码不超过72字节，且与当前密码不同。修改成功后需重新登录。</p>
           <div className="modal-actions"><button type="button" className="button secondary" disabled={busy} onClick={onClose}>取消</button><button className="button primary" disabled={busy}>{busy ? "正在修改…" : "确认修改并重新登录"}</button></div>
         </form> : !state.pending && <form onSubmit={submit} className="password-form">
           <Field label="申请原因" required full><textarea name="reason" rows={3} minLength={5} maxLength={300} placeholder="请说明再次修改密码的原因，不要填写当前密码或新密码" required disabled={busy} /></Field>

@@ -13,6 +13,7 @@ from app.core.security import hash_password, verify_password
 from app.core.tenant import bypass_tenant_filter
 from app.models.account_security import PasswordChange, PasswordRequest
 from app.models.user import User, UserRole
+from app.services.default_password import approved_reset_password
 from app.services.identity_service import IdentityService, masked_username
 
 SELF_ROLES = {UserRole.BRANCH_SECRETARY, UserRole.ORGANIZER, UserRole.MEMBER, UserRole.APPLICANT}
@@ -162,6 +163,16 @@ async def review(
         raise HTTPException(409, "申请已处理，请刷新后重试")
     if target.role not in SELF_ROLES or not await used(db, str(tenant.id), str(target.id)):
         raise HTTPException(409, "该账号当前不适用再次改密流程")
+    if decision == "approved":
+        # Approval is a temporary-password reset, not the consumption of the
+        # one-use self-change grant. Generate the password only in this server
+        # process; only its hash is persisted or used by authentication.
+        try:
+            reset_password = approved_reset_password(tenant.name, target.name)
+        except ValueError as exc:
+            raise HTTPException(409, "账号资料不完整，暂时无法生成默认密码，请先完善学校名称和姓名") from exc
+        target.password_hash = hash_password(reset_password)
+        target.updated_at = datetime.utcnow()
     row.status, row.review_comment, row.reviewed_by = decision, comment, actor.id
     row.reviewed_at = datetime.utcnow()
     row.version += 1

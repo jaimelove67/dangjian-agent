@@ -16,11 +16,31 @@ class TenantCreate(StrictInput):
     name: str = Field(min_length=1, max_length=100)
     tenant_type: Literal["school", "department", "branch"] = "school"
     parent_id: str = Field(min_length=1, max_length=36)
+    contact_name: str | None = Field(None, max_length=50)
+    contact_phone: str | None = Field(None, max_length=20)
+    contact_email: str | None = Field(None, max_length=100)
+    remark: str | None = Field(None, max_length=500)
+
+    @field_validator("contact_name", "contact_phone", "contact_email", "remark")
+    @classmethod
+    def blank_to_none(cls, value: str | None) -> str | None:
+        text = (value or "").strip()
+        return text or None
 
 
 class TenantUpdate(StrictInput):
     name: str | None = Field(None, min_length=1, max_length=100)
     is_active: bool | None = None
+    contact_name: str | None = Field(None, max_length=50)
+    contact_phone: str | None = Field(None, max_length=20)
+    contact_email: str | None = Field(None, max_length=100)
+    remark: str | None = Field(None, max_length=500)
+
+    @field_validator("contact_name", "contact_phone", "contact_email", "remark")
+    @classmethod
+    def blank_to_none(cls, value: str | None) -> str | None:
+        text = (value or "").strip()
+        return text or None
 
 
 class OrgLeaderFields(BaseModel):

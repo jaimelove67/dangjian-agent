@@ -18,6 +18,7 @@ def case(workspace):
     workspace.client.app.include_router(governance.router, prefix="/api/v1")
     platform = workspace.session.get(Tenant, "account-tenant-a")
     platform.tenant_type = "platform"
+    workspace.session.get(Tenant, "account-tenant-b").name = "湖南科技职业学院"
     workspace.actor.org_unit_id = None
     workspace.session.get(Tenant, "account-tenant-b").parent_id = platform.id
     workspace.session.add(
@@ -25,7 +26,7 @@ def case(workspace):
             id="password-member",
             tenant_id="account-tenant-b",
             username="password-member",
-            name="合成改密对象",
+            name="张山",
             role=UserRole.MEMBER,
             org_unit_id="branch-b",
             password_hash=hash_password("synthetic-original", rounds=4),
@@ -94,12 +95,18 @@ def test_lifetime_change_and_atomic_approved_grant(case):
     endpoint = f"/api/v1/admin/password-requests/{row['id']}/review?tenant_id=account-tenant-b"
     decision = {"decision": "approved", "comment": "已完成合成身份核验", "version": row["version"]}
     assert case.client.post(endpoint, headers=headers(second), json=decision).status_code == 403
-    assert case.client.post(endpoint, headers=case.headers, json=decision).status_code == 200
+    approval = case.client.post(endpoint, headers=case.headers, json=decision)
+    assert approval.status_code == 200 and "hnkjzyxy_zs" not in approval.text
     assert case.client.post(endpoint, headers=case.headers, json=decision).status_code == 409
-    assert change(case, second, "wrong-current", "synthetic-third").status_code == 422
-    state = case.client.get("/api/v1/auth/password-state", headers=headers(second)).json()["data"]
+    assert case.client.get("/api/v1/auth/me", headers=headers(second)).status_code == 401
+    assert case.client.post(
+        "/api/v1/auth/login",
+        json={"username": "password-member", "password": "synthetic-second"},
+    ).status_code == 401
+    reset = login(case, "hnkjzyxy_zs")
+    state = case.client.get("/api/v1/auth/password-state", headers=headers(reset)).json()["data"]
     assert state["approved"] and state["canChange"]
-    assert change(case, second, "synthetic-second", "synthetic-third").status_code == 200
+    assert change(case, reset, "hnkjzyxy_zs", "synthetic-third").status_code == 200
     third = login(case, "synthetic-third")
     state = case.client.get("/api/v1/auth/password-state", headers=headers(third)).json()["data"]
     assert state["used"] and not state["canChange"] and state["history"][0]["status"] == "consumed"

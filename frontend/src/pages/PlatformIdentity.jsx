@@ -238,8 +238,16 @@ export function PlatformTenants() {
       if (!name) throw new Error("请输入学校名称。");
       if (schools.some((t) => t.name === name && t.id !== selected?.id))
         throw new Error("学校名称已存在。");
+      const contact_name = String(f.get("contact_name") || "").trim();
+      const contact_phone = String(f.get("contact_phone") || "").trim();
+      const contact_email = String(f.get("contact_email") || "").trim();
+      const remark = String(f.get("description") || "").trim();
       const body = {
         name,
+        contact_name: contact_name || null,
+        contact_phone: contact_phone || null,
+        contact_email: contact_email || null,
+        remark: remark || null,
         ...(!selected
           ? { tenant_type: "school", parent_id: platformTenant?.id }
           : {}),
@@ -261,7 +269,8 @@ export function PlatformTenants() {
           contact_phone: f.get("contact_phone").trim(),
           contact_email: f.get("contact_email").trim(),
           service_plan: f.get("service_plan"),
-          description: f.get("description").trim(),
+          description: remark,
+          remark,
           updated_at: new Date().toISOString(),
         };
         update("tenants", (prev) =>
@@ -279,7 +288,9 @@ export function PlatformTenants() {
         );
       }
       notify(
-        selected ? "学校资料已保存" : "学校租户已开通，请继续分配学校管理员",
+        selected
+          ? "学校资料已保存"
+          : "学校租户已开通；请在账号与权限中创建校级管理员",
       );
       setModal(null);
     } catch (e) {
@@ -554,57 +565,60 @@ export function PlatformTenants() {
                     defaultValue={selected?.name || ""}
                   />
                 </Field>
-                {!IS_LIVE ? (
-                  <>
-                    <Field label="联系人">
-                      <input
-                        name="contact_name"
-                        maxLength={50}
-                        defaultValue={selected?.contact_name || ""}
-                      />
-                    </Field>
-                    <Field label="联系电话">
-                      <input
-                        name="contact_phone"
-                        maxLength={30}
-                        defaultValue={selected?.contact_phone || ""}
-                      />
-                    </Field>
-                    <Field label="联系邮箱">
-                      <input
-                        name="contact_email"
-                        type="email"
-                        maxLength={100}
-                        defaultValue={selected?.contact_email || ""}
-                      />
-                    </Field>
-                    <Field label="服务方案">
-                      <select
-                        name="service_plan"
-                        defaultValue={selected?.service_plan || "标准学校服务"}
-                      >
-                        {selected?.service_plan &&
-                          !["标准学校服务", "试用学校服务"].includes(
-                            selected.service_plan,
-                          ) && <option>{selected.service_plan}</option>}
-                        <option>标准学校服务</option>
-                        <option>试用学校服务</option>
-                      </select>
-                    </Field>
-                    <Field label="学校备注" full>
-                      <textarea
-                        name="description"
-                        rows={3}
-                        maxLength={500}
-                        defaultValue={selected?.description || ""}
-                      />
-                    </Field>
-                  </>
-                ) : (
-                  <p className="inline-note field full">
-                    当前支持学校名称和启停状态维护；联系人与服务方案暂不支持在此修改。
-                  </p>
+                <Field label="学校联系人">
+                  <input
+                    name="contact_name"
+                    maxLength={50}
+                    defaultValue={selected?.contact_name || ""}
+                    placeholder="例如：党委组织部李老师"
+                  />
+                </Field>
+                <Field label="联系电话">
+                  <input
+                    name="contact_phone"
+                    maxLength={20}
+                    defaultValue={selected?.contact_phone || ""}
+                    placeholder="请输入便于联系的办公电话"
+                  />
+                </Field>
+                <Field label="联系邮箱">
+                  <input
+                    name="contact_email"
+                    type="email"
+                    maxLength={100}
+                    defaultValue={selected?.contact_email || ""}
+                    placeholder="用于接收平台通知"
+                  />
+                </Field>
+                {!IS_LIVE && (
+                  <Field label="服务方案">
+                    <select
+                      name="service_plan"
+                      defaultValue={selected?.service_plan || "标准学校服务"}
+                    >
+                      {selected?.service_plan &&
+                        !["标准学校服务", "试用学校服务"].includes(
+                          selected.service_plan,
+                        ) && <option>{selected.service_plan}</option>}
+                      <option>标准学校服务</option>
+                      <option>试用学校服务</option>
+                    </select>
+                  </Field>
                 )}
+                <Field label="学校备注" full>
+                  <textarea
+                    name="description"
+                    rows={3}
+                    maxLength={500}
+                    defaultValue={selected?.description || selected?.remark || ""}
+                    placeholder="补充学校对接说明或服务备注"
+                  />
+                </Field>
+                <p className="inline-note field full identity-form-guidance">
+                  {selected
+                    ? "学校名称和已登记联系资料可在此维护；服务方案按平台配置管理。"
+                    : "开通学校只要求填写学校名称；联系人资料可同时登记，也可以开通后在学校详情中补充。服务方案按平台配置管理。"}
+                </p>
               </div>
               <FormActions
                 busy={busy}
@@ -666,7 +680,9 @@ export function PlatformTenants() {
                     <dt>联系邮箱</dt>
                     <dd>{selected.contact_email || "未登记"}</dd>
                     <dt>服务方案</dt>
-                    <dd>{selected.service_plan || "未登记"}</dd>
+                    <dd>{selected.service_plan || (IS_LIVE ? "按平台配置" : "未登记")}</dd>
+                    <dt>学校备注</dt>
+                    <dd>{selected.description || selected.remark || "未登记"}</dd>
                   </dl>
                   <h3 className="identity-section-heading">服务使用情况</h3>
                   {IS_LIVE || !usage ? (
@@ -695,6 +711,21 @@ export function PlatformTenants() {
                       </div>
                     </div>
                   )}
+                  <h3 className="identity-section-heading">本校档案导入</h3>
+                  <div className="identity-handoff">
+                    <strong>由学校管理员在学校端办理</strong>
+                    <p>
+                      平台管理员完成学校开通和校级管理员授权后，学校登录本校账号进入“组织与党员 → 党员档案与材料”，下载名册模板并按当前组织权限导入。
+                    </p>
+                    <ol>
+                      <li>下载导入模板，按模板填写姓名、所属组织和当前发展阶段。</li>
+                      <li>填写名册来源说明，先预检文件并处理逐行错误。</li>
+                      <li>确认无误后提交；系统只登记基础档案台账，不导入材料原件、不建立账号关联，也不代替材料审核。</li>
+                    </ol>
+                    <span className="page-note">
+                      平台管理员不会跨学校代导入人员档案，导入记录按学校租户写入审计。
+                    </span>
+                  </div>
                 </>
               )}
               <h3 className="identity-section-heading">校级管理员</h3>

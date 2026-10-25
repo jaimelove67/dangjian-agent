@@ -139,6 +139,35 @@
   color: #384052;
   overflow-wrap: anywhere;
 }
+.identity-form-guidance {
+  margin-top: -2px !important;
+}
+.identity-handoff {
+  display: grid;
+  gap: 10px;
+  padding: 16px 17px;
+  border: 1px solid #f0e1dc;
+  border-radius: 6px;
+  background: #fffaf8;
+  color: #665d5c;
+}
+.identity-handoff strong {
+  color: #4e3c38;
+  font-size: 13px;
+}
+.identity-handoff p,
+.identity-handoff ol {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.identity-handoff ol {
+  padding-left: 20px;
+}
+.identity-handoff .page-note {
+  margin: 0;
+  padding: 0;
+}
 .identity-section-heading {
   font-size: 14px;
   color: #394154;
@@ -413,6 +442,9 @@
   .identity-detail-banner {
     padding: 15px;
     gap: 10px;
+  }
+  .identity-handoff {
+    padding: 14px;
   }
 }
 @media (max-width: 410px) {
