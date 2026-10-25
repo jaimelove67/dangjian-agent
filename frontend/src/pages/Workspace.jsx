@@ -13,6 +13,8 @@ import {
   FileText,
   ArrowRight,
   MagnifyingGlass,
+  Paperclip,
+  X,
   CheckCircle,
   UsersThree,
   CalendarBlank,
@@ -147,11 +149,54 @@ export function Assistant() {
   const [citation, setCitation] = useState(null);
   const [sessionId, setSessionId] = useState(null);
   const [started, setStarted] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [pendingOcr, setPendingOcr] = useState(null);
   const [conversationId, setConversationId] = useState(() =>
     crypto.randomUUID(),
   );
   const inputRef = useRef(null);
   const endRef = useRef(null);
+  const fileRef = useRef(null);
+
+  async function uploadAttachment(file, cloudOcr = false) {
+    setUploading(true);
+    setError(null);
+    try {
+      const res = await backend.uploadQaAttachment(file, cloudOcr);
+      const item = res?.data || res || {};
+      setAttachments((prev) => [
+        ...prev,
+        {
+          id: item.id || item.attachment_id,
+          file_name: item.file_name || file.name,
+          chars: item.chars,
+          truncated: item.truncated,
+        },
+      ]);
+      notify(`已附加材料：${item.file_name || file.name}`);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function pickAttachment(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    // 图片与扫描件要送到云端识别，须先取得本人确认（涉密材料不出网）
+    if (/\.(png|jpe?g|webp|bmp|tiff?)$/i.test(file.name)) {
+      setPendingOcr(file);
+      return;
+    }
+    uploadAttachment(file);
+  }
+
+  function removeAttachment(id) {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }
   const messages = started
     ? data.messages.filter(
         (m) =>
@@ -166,18 +211,22 @@ export function Assistant() {
   }, [messages.length, busy]);
   async function send(e) {
     e?.preventDefault();
-    if (!input.trim() || busy) return;
-    let q;
-    try {
-      q = questionText(input);
-    } catch (err) {
-      setError(err);
-      return;
+    if (busy || uploading) return;
+    if (!input.trim() && !attachments.length) return;
+    let q = "";
+    if (input.trim()) {
+      try {
+        q = questionText(input);
+      } catch (err) {
+        setError(err);
+        return;
+      }
     }
     setError(null);
     setBusy(true);
     setStarted(true);
     const id = crypto.randomUUID();
+    const names = attachments.map((a) => a.file_name);
     update("messages", (prev) => [
       ...prev,
       {
@@ -185,7 +234,8 @@ export function Assistant() {
         role: "user",
         owner_id: session.user.id,
         conversationId,
-        content: q,
+        content: q || "请结合我上传的材料作答。",
+        attachments: names,
         createdAt: Date.now(),
       },
     ]);
@@ -194,10 +244,15 @@ export function Assistant() {
       const answer = IS_LIVE
         ? await backend.ask({
             question: q,
+            ...(attachments.length
+              ? { attachment_ids: attachments.map((a) => a.id) }
+              : {}),
             ...(sessionId ? { session_id: sessionId } : {}),
           })
-        : demoAnswer(q);
+        : demoAnswer(q || "请结合我上传的材料作答。");
       setSessionId(answer.session_id || sessionId);
+      // 附件只服务本次提问，回答生成后即摘除，不再随后续追问带出
+      setAttachments([]);
       update("messages", (prev) => [
         ...prev,
         {
@@ -230,6 +285,7 @@ export function Assistant() {
     setStarted(false);
     setSessionId(null);
     setInput("");
+    setAttachments([]);
     setError(null);
     notify("已新建会话");
   }
@@ -312,6 +368,16 @@ export function Assistant() {
                     )}
                   </div>
                   <div className="message-text">{m.content}</div>
+                  {m.attachments?.length > 0 && (
+                    <div className="message-attachments">
+                      {m.attachments.map((n, i) => (
+                        <span key={`${n}-${i}`}>
+                          <Paperclip size={11} />
+                          {n}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {m.citations?.length > 0 && (
                     <div className="citations">
                       {m.citations.map((c, i) => (
@@ -348,6 +414,24 @@ export function Assistant() {
       <div className="ai-composer-area">
         {error && <ErrorBox error={error} />}
         <form className="ai-composer" onSubmit={send}>
+          {attachments.length > 0 && (
+            <div className="qa-attachment-bar">
+              {attachments.map((a) => (
+                <span className="qa-attachment-chip" key={a.id}>
+                  <Paperclip size={12} />
+                  {a.file_name}
+                  {a.truncated && <em>（正文已截断）</em>}
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(a.id)}
+                    aria-label={`移除材料 ${a.file_name}`}
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             ref={inputRef}
             value={input}
@@ -367,15 +451,43 @@ export function Assistant() {
             placeholder="请输入您的问题，例如：“帮我起草一份主题党日活动方案”"
           />
           <div className="ai-composer-bottom">
+            <button
+              type="button"
+              className="qa-attach-button"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading || busy || !IS_LIVE}
+              aria-label="上传附件"
+              title={
+                IS_LIVE
+                  ? "附加本次提问要参考的材料（.txt/.md/.pdf/.docx；图片与扫描件须确认后送识别）"
+                  : "当前为办理参考，暂不提供材料附加"
+              }
+            >
+              {uploading ? (
+                <CircleNotch className="spin" size={15} />
+              ) : (
+                <Paperclip size={15} />
+              )}
+              <span>{uploading ? "正在解析…" : "附件"}</span>
+            </button>
             <span>最多 {QA_QUESTION_MAX_LENGTH} 字 · Enter 发送 · Shift + Enter 换行</span>
             <button
               className="send-button"
-              disabled={!input.trim() || busy}
+              disabled={
+                (!input.trim() && !attachments.length) || busy || uploading
+              }
               aria-label="发送问题"
             >
               <PaperPlaneTilt size={21} weight="fill" />
             </button>
           </div>
+          <input
+            ref={fileRef}
+            type="file"
+            hidden
+            accept=".txt,.md,.pdf,.doc,.docx,.png,.jpg,.jpeg"
+            onChange={pickAttachment}
+          />
         </form>
         <div className="ai-footer">
           <button className="text-button muted" onClick={newConversation}>
@@ -427,6 +539,37 @@ export function Assistant() {
               description="发送问题后，可在此查阅问答记录。"
             />
           )}
+        </Modal>
+      )}
+      {pendingOcr && (
+        <Modal
+          title="图片材料识别确认"
+          onClose={() => setPendingOcr(null)}
+        >
+          <p className="body-copy">
+            材料「{pendingOcr.name}」为图片或扫描件，读取其中文字需发送至已授权的识别服务处理。
+            涉密、敏感或未授权对外提供的材料请勿提交。
+          </p>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setPendingOcr(null)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => {
+                const file = pendingOcr;
+                setPendingOcr(null);
+                uploadAttachment(file, true);
+              }}
+            >
+              确认送识别
+            </button>
+          </div>
         </Modal>
       )}
       {citation && (
