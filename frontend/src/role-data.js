@@ -118,6 +118,24 @@ export const MATERIAL_CATEGORIES = {
   certificate: "证明材料",
   other: "其他材料",
 };
+export function materialSource(material) {
+  if (material?.legacy_material) return "legacy";
+  if (["personal", "development", "legacy"].includes(material?.source))
+    return material.source;
+  return material?.material_type ? "development" : "personal";
+}
+export function materialTypeLabel(material) {
+  if (materialSource(material) === "personal")
+    return `${MATERIAL_CATEGORIES[material.category] || material.title || "个人材料"}（个人提交）`;
+  return material.material_type || material.title || "未分类";
+}
+export function materialSourceNote(material) {
+  return {
+    personal: "个人材料，不纳入发展材料核验",
+    legacy: "历史登记，待核验原件",
+    development: "组织登记",
+  }[materialSource(material)];
+}
 export const REQUIRED_DEMO_MATERIALS = [
   "入党申请书",
   "培养考察记录",

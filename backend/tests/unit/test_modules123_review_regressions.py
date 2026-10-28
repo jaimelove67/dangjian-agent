@@ -148,6 +148,43 @@ async def test_material_level_is_snapshotted_and_third_party_text_is_hidden(memb
 
 
 @pytest.mark.asyncio
+async def test_personal_material_is_not_a_development_material(member_data):
+    """本人提交与组织登记分开：个人材料可展示，但不进入发展材料核验。"""
+    service, db = member_data
+    personal = MemberMaterial(
+        tenant_id="review-a",
+        profile_id="own",
+        org_unit_id="branch-a",
+        stage="activist",
+        user_id="member-own",
+        submission_key="submission-personal-1",
+        title="个人思想汇报",
+        category="thought_report",
+        file_name="thought-report.txt",
+    )
+    development = await service.add_material(
+        "own", MaterialCreate(material_type="入党申请书", reason="登记入党申请书")
+    )
+    db.add(personal)
+    db.commit()
+
+    items = await service.list_materials("own")
+    personal_item = next(item for item in items if item.get("id") == str(personal.id))
+    development_item = next(item for item in items if item.get("id") == str(development.id))
+    assert personal_item["source"] == "personal"
+    assert personal_item["material_type"] == ""
+    assert development_item["source"] == "development"
+
+    with pytest.raises(HTTPException) as error:
+        await service.review_material(
+            str(personal.id),
+            MaterialReview(review_status="approved", note="误核验", reason="回归测试"),
+        )
+    assert error.value.status_code == 422
+    assert personal.review_status == "pending"
+
+
+@pytest.mark.asyncio
 async def test_future_decision_cannot_skip_training_period(member_data):
     service, _ = member_data
     with pytest.raises(HTTPException) as error:

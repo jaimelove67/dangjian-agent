@@ -9,6 +9,8 @@ import { get, send, key, rows } from "../business-api";
 import { BusinessForm, BusinessTable, RecordTrace, ResourceState, Status, options, useResource } from "../components/BusinessForms";
 
 const stages = [["activist", "入党积极分子"], ["candidate", "发展对象"], ["probationary", "预备党员"], ["member", "正式党员"]];
+// 培养记录类型的中文名与 RoleManagement 的登记表单同一份口径（改一处要改两处）。
+const cultivationLabels = { theory_test: "理论学习", volunteer_service: "志愿服务", academic: "学业表现", public_review: "群众评议", party_review: "党员评议", other: "其他培养记录" };
 const reason = { name: "reason", label: "办理依据与说明", type: "textarea" };
 
 export function LiveMemberBusiness({ initialTab = "选优结论" }) {
@@ -25,14 +27,70 @@ export function LiveMemberBusiness({ initialTab = "选优结论" }) {
   const list = tab === "民主评议" ? (records.value?.targets || []).map(r => ({ ...r, id: r.review_id || r.profile_id })) : rows(records.value);
   const personOptions = options(rows(people.value));
   const orgOptions = options(rows(orgs.value).filter(o => o.org_type === "branch"));
+  const batchChoices = rows(batches.value).map(b => [b.batch_no, [b.batch_no, b.label].filter(Boolean).join(" ")]);
+  // 批次是主数据：已登记批次时供选择；一条都没登记时改为直接填写批次编号，
+  // 否则下拉里只有占位项，业务无法继续，也看不出下一步该做什么。
+  const batchField = (label = "发展批次") => batchChoices.length
+    ? { name: "batch_no", label, options: batchChoices }
+    : { name: "batch_no", label, maxLength: 20, help: "本校尚未登记发展批次。可先用工具栏「登记发展批次」建立批次；此处也可直接填写批次编号。" };
   const profile = { name: "profile_id", label: "本人档案", options: personOptions };
   function open(title, fields, submit, initial = {}, description) { setForm({ title, fields, submit, initial, description }); }
   async function save(url, body, method = "POST") { const result = await send(url, body, method); records.reload(); detail.reload(); people.reload(); batches.reload(); notify("业务记录已保存"); return result; }
+  const stageText = value => (stages.find(([id]) => id === value) || [, value])[1] || "未记录阶段";
+  const personMap = new Map(rows(people.value).map(p => [p.id, p]));
+  // 依据栏可按现有记录汇总成草稿：系统只把已经发生的过程记录搬过来，不做结论、不补数据。
+  // 名下没有的东西一律如实写"尚未登记"，避免编出审核人对不上的依据。
+  async function assembleBasis(values) {
+    const batchNo = String(values.batch_no || "").trim(), roundNo = Number(values.round_no || 1) || 1;
+    const ids = (values.candidate_ids || []).filter(Boolean);
+    if (!batchNo) throw new Error("请先选择或填写发展批次");
+    if (!ids.length) throw new Error("请先勾选拟推荐对象");
+    const summary = await get("/member-full/votes/summary", { batch_no: batchNo, round_no: roundNo });
+    const tally = summary?.tally || {}, voterCount = Number(summary?.voter_count || 0);
+    const target = stageText(values.target_stage);
+    const blocks = await Promise.all(ids.map(async id => {
+      const person = personMap.get(id) || {};
+      const detail = await get(`/member-full/profiles/${id}`).catch(() => null);
+      const name = detail?.name || person.name || "该同志";
+      const orgName = detail?.org_name || person.org_name || "所属支部";
+      const bucket = tally[id] || { agree: 0, disagree: 0, abstain: 0 };
+      const materials = detail?.materials || [];
+      const verified = materials.filter(m => m.review_status === "approved").length;
+      const typeCounts = materials.reduce((map, m) => { const name = m.title || m.material_type; if (name) map.set(name, (map.get(name) || 0) + 1); return map; }, new Map());
+      const typeText = [...typeCounts].slice(0, 6).map(([name, count]) => count > 1 ? `${name} ${count} 份` : name).join("、");
+      const dates = materials.map(m => m.submit_date).filter(Boolean).sort();
+      const materialText = materials.length
+        ? `发展材料已登记 ${materials.length} 份（${typeText}），其中 ${verified} 份已核验${dates.length ? `，最近提交 ${dates[dates.length - 1]}` : ""}`
+        : "尚未登记发展材料";
+      const cultivation = detail?.cultivation || [];
+      const cultivationText = cultivation.length
+        ? `培养与表现记录 ${cultivation.length} 条：${cultivation.slice(0, 4).map(c => { const label = cultivationLabels[c.category] || "培养记录"; return c.period ? `${label}（${c.period}）` : label; }).join("、")}`
+        : "暂无培养与表现记录";
+      const history = detail?.stage_history || [];
+      const last = history[history.length - 1];
+      const flowText = last
+        ? `阶段流转 ${history.length} 次，最近 ${last.decision_date} 由${stageText(last.from_stage)}转为${stageText(last.to_stage)}`
+        : "暂无阶段流转记录";
+      const joinedOn = detail?.stage_joined_on || person.stage_joined_on;
+      return `${name}（${orgName}，现为${stageText(detail?.current_stage || person.current_stage)}${joinedOn ? `，${joinedOn} 进入本阶段` : ""}）：本轮同意 ${bucket.agree || 0} 票、反对 ${bucket.disagree || 0} 票、弃权 ${bucket.abstain || 0} 票；${materialText}；${cultivationText}；${flowText}。`;
+    }));
+    const head = `${batchNo} 批次第 ${roundNo} 轮${target ? `拟推进至${target}` : ""}；本轮共 ${voterCount} 人参与投票。`;
+    const limit = 1900;
+    let text = [head, ...blocks].join("\n");
+    if (text.length > limit) text = `${text.slice(0, limit)}…（人数较多已截断，请分条或另择批次登记）`;
+    return text;
+  }
+  const basisField = {
+    name: "basis", label: "投票、材料及培养记录依据", type: "textarea", rows: 4, max: 2000,
+    help: "可点「按现有记录生成」汇总本轮无记名票数、本人发展材料与培养记录；生成后仍需核对修改，材料或培养记录缺失处会如实写明。",
+    generate: { label: "按现有记录生成", relabel: "按现有记录重新生成" },
+  };
+  basisField.generate.run = assembleBasis;
   function selection(record) {
     open(record ? "修订拟推荐名单" : "登记选优结论草案", [
-      ...(!record ? [{ name: "batch_no", label: "发展批次", options: rows(batches.value).map(b => [b.batch_no, `${b.batch_no} ${b.label}`]) }, { name: "round_no", label: "研究轮次", type: "number", min: 1, max: 20, value: 1 }] : []),
+      ...(!record ? [batchField(), { name: "round_no", label: "研究轮次", type: "number", min: 1, max: 20, value: 1 }] : []),
       { name: "target_stage", label: "拟推进阶段", options: stages }, { name: "candidate_ids", label: "拟推荐对象（多选）", type: "multi", options: personOptions },
-      { name: "basis", label: "投票、材料及培养记录依据", type: "textarea" }, { name: "research_on", label: "研究日期", type: "date" },
+      basisField, { name: "research_on", label: "研究日期", type: "date" },
       { name: "research_method", label: "研究程序", options: [["committee", "支委会研究"], ["member_meeting", "党员大会研究"]] }, reason,
     ], values => save(record ? `${path}/${key(record.id)}` : path, { ...values, ...(record ? { expected_revision: record.revision } : {}) }, record ? "PATCH" : "POST"), record ? { ...record, candidate_ids: record.candidates.map(c => c.profile_id) } : {}, "名单与依据由组织人员填写，系统保留过程证据；另一位有权限的人员审核通过后生效。");
   }
@@ -76,7 +134,7 @@ export function LiveMemberBusiness({ initialTab = "选优结论" }) {
   }
   function revoke(record) { open("作废当前登记并保留留痕", [reason], values => save(`${path}/${key(record.id)}/revoke`, values)); }
   function createBatch() { open("登记发展批次", [{ name: "batch_no", label: "批次编号", maxLength: 20 }, { name: "label", label: "批次名称", maxLength: 200 }, { name: "year", label: "年度", type: "number", min: 2000, max: 2100, value: year }, { name: "org_unit_id", label: "归属支部", options: orgOptions }, reason], values => save("/member-full/batches", values)); }
-  function vote() { open("登记本人研究投票", [{ name: "batch_no", label: "批次", options: rows(batches.value).map(b => [b.batch_no, b.label]) }, { name: "round_no", label: "轮次", type: "number", min: 1, max: 20, value: 1 }, profile, { name: "vote", label: "本人投票意见", options: [["agree", "同意"], ["disagree", "不同意"], ["abstain", "弃权"]] }, { name: "comment", label: "说明", type: "textarea", required: false, max: 500 }], values => { const { batch_no, round_no, ...entry } = values; return save("/member-full/votes", { batch_no, round_no, votes: [entry] }); }); }
+  function vote() { open("登记本人研究投票", [batchField("批次"), { name: "round_no", label: "轮次", type: "number", min: 1, max: 20, value: 1 }, { ...profile, label: "投票对象", help: "投票人按当前登录账号自动记录；同一批次同一轮次每人只能投一次" }, { name: "vote", label: "本人投票意见", options: [["agree", "同意"], ["disagree", "不同意"], ["abstain", "弃权"]] }, { name: "comment", label: "说明", type: "textarea", required: false, max: 500 }], values => { const { batch_no, round_no, ...entry } = values; return save("/member-full/votes", { batch_no, round_no, votes: [entry] }); }); }
   const d = detail.value;
   return <section className="panel workspace-panel"><PageHeader title="组织业务办理" subtitle="选优、民主评议、组织关系与上级报送业务台账" />
     <Tabs items={Object.keys(paths)} active={tab} onChange={value => { setTab(value); setPage(1); setSelected(null); }} />

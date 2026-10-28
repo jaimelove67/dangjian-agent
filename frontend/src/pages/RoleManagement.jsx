@@ -21,6 +21,9 @@ import { useManagedWorkspace } from "../role-hooks";
 import { scopedMeetings, hasPermission, memberInScope } from "../roles";
 import {
   MATERIAL_CATEGORIES,
+  materialSource,
+  materialSourceNote,
+  materialTypeLabel,
   newAudit,
   getDemoDevelopment,
 } from "../role-data";
@@ -47,6 +50,7 @@ import {
   Pagination,
   downloadBlob,
 } from "../components";
+
 export function MaterialInbox() {
   const { session, routeParams } = useApp();
   const { data, update, notify } = useStore();
@@ -719,6 +723,10 @@ export function DevelopmentWorkbench() {
       : getDemoDevelopment(member, data.developmentProfiles[member.id])
     : null;
   const materials = detail?.materials || [];
+  // 个人提交材料只在清单里展示来源，不参与发展材料核对与阶段流转。
+  const developmentMaterials = materials.filter(
+    (m) => materialSource(m) !== "personal",
+  );
   const stage = IS_LIVE
     ? STAGE_LABELS[detail?.current_stage] || member?.stage
     : member?.stage;
@@ -877,7 +885,7 @@ export function DevelopmentWorkbench() {
       } else
         setModal({
           type: "check",
-          missing: materials
+          missing: developmentMaterials
             .filter((m) => m.review_status !== "approved")
             .map((m) => m.material_type),
           note: "当前仅核对已登记材料的状态，完整性结论须由组织人员核验原件后确认。",
@@ -1053,58 +1061,103 @@ export function DevelopmentWorkbench() {
                         </tr>
                       </thead>
                       <tbody>
-                        {materials.map((m, i) => (
-                          <tr key={m.id || i}>
-                            <td>{m.material_type}</td>
-                            <td>
-                              {m.file_version || "—"}
-                              <small className="cell-subtext">
-                                {m.submit_date || "未登记"}
-                              </small>
-                            </td>
-                            <td>
-                              <Badge
-                                tone={
-                                  m.review_status === "approved"
-                                    ? "green"
-                                    : m.review_status === "rejected"
-                                      ? "red"
-                                      : "orange"
-                                }
-                              >
-                                {
-                                  {
-                                    approved: "已核验",
-                                    pending: "待核验",
-                                    rejected: "已退回",
-                                  }[m.review_status]
-                                }
-                              </Badge>
-                            </td>
-                            <td>
-                              <button
-                                className="text-button link"
-                                disabled={!m.id}
-                                onClick={() => reviewMaterial(m)}
-                              >
-                                核验
-                              </button>
-                              {IS_LIVE && m.has_file && <button type="button" className="text-button link separated-action" onClick={async () => {
-                                try { downloadBlob(await roleApi.developmentFile(m.id), m.file_name || `${m.material_type}.bin`); }
-                                catch (e) { notify(e.message, "error"); }
-                              }}>下载原件</button>}
-                            </td>
-                          </tr>
-                        ))}
+                        {materials.map((m, i) => {
+                          const personal = materialSource(m) === "personal";
+                          return (
+                            <tr key={m.id || i}>
+                              <td>
+                                {materialTypeLabel(m)}
+                                <small className="cell-subtext">
+                                  {materialSourceNote(m)}
+                                </small>
+                              </td>
+                              <td>
+                                {m.file_version || "—"}
+                                <small className="cell-subtext">
+                                  {m.submit_date || "未登记"}
+                                </small>
+                              </td>
+                              <td>
+                                {personal ? (
+                                  <Badge tone="blue">未纳入发展材料</Badge>
+                                ) : (
+                                  <Badge
+                                    tone={
+                                      m.review_status === "approved"
+                                        ? "green"
+                                        : m.review_status === "rejected"
+                                          ? "red"
+                                          : "orange"
+                                    }
+                                  >
+                                    {
+                                      {
+                                        approved: "已核验",
+                                        pending: "待核验",
+                                        rejected: "已退回",
+                                      }[m.review_status]
+                                    }
+                                  </Badge>
+                                )}
+                              </td>
+                              <td>
+                                {personal ? (
+                                  <button
+                                    className="text-button link"
+                                    onClick={() =>
+                                      navigate("inbox", { profileId: member.id })
+                                    }
+                                  >
+                                    材料接收查阅
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      className="text-button link"
+                                      disabled={!m.id}
+                                      onClick={() => reviewMaterial(m)}
+                                    >
+                                      核验
+                                    </button>
+                                    {IS_LIVE && m.has_file && (
+                                      <button
+                                        type="button"
+                                        className="text-button link separated-action"
+                                        onClick={async () => {
+                                          try {
+                                            downloadBlob(
+                                              await roleApi.developmentFile(m.id),
+                                              m.file_name ||
+                                                `${m.material_type}.bin`,
+                                            );
+                                          } catch (e) {
+                                            notify(e.message, "error");
+                                          }
+                                        }}
+                                      >
+                                        下载原件
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                     {!materials.length && <Empty title="暂无登记材料" />}
                   </div>
+                  {materials.some((m) => materialSource(m) === "personal") && (
+                    <div className="inline-note">
+                      个人提交材料在此仅作查阅，不纳入发展材料核验、材料完整性判断和阶段流转。
+                    </div>
+                  )}
                   <button
                     className="work-guidance-link"
                     onClick={() => navigate("inbox", { profileId: member.id })}
                   >
-                    查看本人提交的私有原件
+                    查看该成员提交的个人材料
                     <ArrowRight size={15} />
                   </button>
                 </>

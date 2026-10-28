@@ -465,6 +465,11 @@ class MemberDevelopment:
             data.pop("file_path", None)
             data.pop("extracted_text", None)
             data["has_file"] = bool(record.file_path or record.content_sha256)
+            # 本人提交与组织登记共用一张材料表：来源只用于展示和过滤，
+            # 个人材料没有 material_type，不能计入发展材料核验或阶段流转。
+            data["source"] = (
+                "personal" if record.user_id or record.submission_key else "development"
+            )
             items.append(data)
         if records:
             revisions = (
@@ -495,6 +500,7 @@ class MemberDevelopment:
                 items.append(
                     {
                         "legacy_material": True,
+                        "source": "legacy",
                         "material_type": legacy,
                         "review_status": "pending",
                         "note": "历史材料名称，待组织人员核验原始文件后归档",
@@ -521,6 +527,8 @@ class MemberDevelopment:
         ).scalar_one_or_none()
         if material is None:
             raise HTTPException(404, "材料记录不存在或无权访问")
+        if material.user_id or material.submission_key:
+            raise HTTPException(422, "个人提交材料不纳入发展材料核验，请另行登记发展材料")
         latest = await self.db.scalar(
             select(func.max(ContentRevision.revision)).where(
                 ContentRevision.tenant_id == self.tenant_id,

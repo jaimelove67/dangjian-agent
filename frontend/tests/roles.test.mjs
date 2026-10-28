@@ -13,7 +13,13 @@ import {
   sessionForAccount,
 } from "../src/roles.js";
 import { seedMembers, STAGES } from "../src/data.js";
-import { roleSeed, extendRoleData } from "../src/role-data.js";
+import {
+  roleSeed,
+  extendRoleData,
+  materialSource,
+  materialSourceNote,
+  materialTypeLabel,
+} from "../src/role-data.js";
 import {
   submitDemoMeeting,
   reviewDemoMeeting,
@@ -242,6 +248,39 @@ test("material validation rejects empty, oversized, unsupported and path-like fi
   assert.doesNotThrow(() =>
     validateMaterialFile({ name: "学习心得.TXT", size: 10 }, 10),
   );
+});
+test("personal material shows its category and source without becoming a development material", () => {
+  const personal = {
+    id: "material-personal",
+    material_type: "",
+    category: "thought_report",
+    title: "111",
+    source: "personal",
+  };
+  assert.equal(materialSource(personal), "personal");
+  assert.equal(materialTypeLabel(personal), "思想汇报（个人提交）");
+  assert.equal(
+    materialSourceNote(personal),
+    "个人材料，不纳入发展材料核验",
+  );
+
+  const development = {
+    id: "material-development",
+    material_type: "入党申请书",
+    source: "development",
+  };
+  assert.equal(materialSource(development), "development");
+  assert.equal(materialTypeLabel(development), "入党申请书");
+  assert.equal(materialSourceNote(development), "组织登记");
+
+  const legacy = {
+    legacy_material: true,
+    material_type: "思想汇报",
+    source: "legacy",
+  };
+  assert.equal(materialSource(legacy), "legacy");
+  assert.equal(materialTypeLabel(legacy), "思想汇报");
+  assert.equal(materialSourceNote(legacy), "历史登记，待核验原件");
 });
 test("explicit account linking rejects different organizations, duplicate ownership and overwrites", () => {
   const s = demoSession("organizer"),
