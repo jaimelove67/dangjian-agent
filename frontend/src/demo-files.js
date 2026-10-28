@@ -39,3 +39,21 @@ export async function getDemoFile(id, ownerId) {
     db.close();
   }
 }
+export async function deleteDemoFile(id, ownerId) {
+  const db = await open();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("files", "readwrite");
+      const store = tx.objectStore("files");
+      const req = store.get(id);
+      req.onsuccess = () => {
+        if (req.result?.ownerId === ownerId) store.delete(id);
+      };
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(new Error("文件未能删除，请重试。"));
+      tx.onabort = () => reject(new Error("文件删除被中止，请重试。"));
+    });
+  } finally {
+    db.close();
+  }
+}

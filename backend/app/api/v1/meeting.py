@@ -7,11 +7,24 @@
 
 from datetime import date
 from typing import Any
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.audit import audit_operation
+from app.core.config import settings
 from app.core.security import Permission
 from app.db.session import get_db
 from app.deps import require_permissions
@@ -20,6 +33,7 @@ from app.schemas.common import APIResponse
 from app.schemas.meeting import (
     ActivityCreate,
     ActivityUpdate,
+    ImageMutation,
     ReviewRequest,
     RevisionRequest,
     TaskCreate,
@@ -134,6 +148,105 @@ async def create_record(
     record = await service.create(body)
     return await respond(
         request, service, await service.record_data(record), "create", "meeting", str(record.id)
+    )
+
+
+@router.post(
+    "/meeting/records/{record_id}/images",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage)],
+)
+async def upload_record_image(
+    record_id: str,
+    request: Request,
+    file: UploadFile = File(..., description="JPG、PNG 或 WebP 会议现场图片"),
+    expected_revision: int = Form(..., ge=1),
+    reason: str = Form(..., min_length=1, max_length=2000),
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """上传一张现场图片；图片加密留存，只把元数据写入会议版本。"""
+    content = await file.read(settings.MAX_UPLOAD_SIZE + 1)
+    if len(content) > settings.MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            413,
+            f"图片超过 {settings.MAX_UPLOAD_SIZE // 1024 // 1024}MB，请压缩后重试",
+        )
+    try:
+        body = ImageMutation(expected_revision=expected_revision, reason=reason)
+    except ValidationError:
+        raise HTTPException(422, "请检查会议版本号和图片上传说明") from None
+    record, image = await service.add_image(
+        record_id,
+        file_name=file.filename or "会议现场图片",
+        content=content,
+        body=body,
+    )
+    data = await service.record_data(record)
+    await audit_operation(
+        service.db,
+        request,
+        service.user,
+        action="meeting_image_upload",
+        resource_type="meeting",
+        resource_id=str(record.id),
+        data_level="sensitive",
+        new_value={
+            "image_id": image["id"],
+            "file_name": image["file_name"],
+            "size": image["size"],
+            "revision": record.revision,
+        },
+    )
+    await service.db.commit()
+    return APIResponse(data=data, trace_id=getattr(request.state, "trace_id", None))
+
+
+@router.delete(
+    "/meeting/records/{record_id}/images/{image_id}",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage)],
+)
+async def delete_record_image(
+    record_id: str,
+    image_id: str,
+    body: ImageMutation,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """移除当前版本的图片引用；历史版本和加密原件仍保留可追溯。"""
+    record = await service.remove_image(record_id, image_id, body)
+    data = await service.record_data(record)
+    await audit_operation(
+        service.db,
+        request,
+        service.user,
+        action="meeting_image_remove",
+        resource_type="meeting",
+        resource_id=str(record.id),
+        data_level="sensitive",
+        new_value={"image_id": image_id, "revision": record.revision},
+    )
+    await service.db.commit()
+    return APIResponse(data=data, trace_id=getattr(request.state, "trace_id", None))
+
+
+@router.get("/meeting/records/{record_id}/images/{image_id}")
+async def download_record_image(
+    record_id: str,
+    image_id: str,
+    service: ActivityService = Depends(activity_service),
+) -> Response:
+    """按会议记录的授权范围读取图片原件；不暴露本地存储路径。"""
+    content, image = await service.read_image(record_id, image_id)
+    file_name = str(image.get("file_name") or "会议现场图片")
+    return Response(
+        content=content,
+        media_type=str(image.get("content_type") or "application/octet-stream"),
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(file_name, safe='')}",
+        },
     )
 
 

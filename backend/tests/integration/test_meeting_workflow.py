@@ -3,11 +3,13 @@
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
+from io import BytesIO
 
 import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
+from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -660,7 +662,9 @@ async def test_frequency_reminder_counts_only_approved_and_scopes_to_branches(li
         assert "other" not in {row["activity_type"] for row in before["rows"]}
         assert before["branch_count"] == 2
         # 已结束周期形成缺口：Q1 支部大会 / 党课，1—4 月支委会 / 党小组会
-        gaps = {gap["activity_type"]: gap for gap in before["gaps"] if gap["org_unit_id"] == "branch-c"}
+        gaps = {
+            gap["activity_type"]: gap for gap in before["gaps"] if gap["org_unit_id"] == "branch-c"
+        }
         assert set(gaps) == {
             "branch_member_meeting",
             "branch_committee_meeting",
@@ -854,3 +858,76 @@ async def test_organizational_life_meeting_uses_its_own_minutes_template(life_ur
         assert row["required"] == 1 and row["annual_required"] == 1
         assert row["state"] == "met"
 
+
+def _demo_png() -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (96, 64), (210, 38, 48)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_meeting_images_are_scoped_encrypted_and_versioned(life_url, tmp_path, monkeypatch):
+    """现场图片只随会议版本公开元数据，原件按组织范围鉴权并加密留存。"""
+    monkeypatch.setenv("FILE_STORAGE_DIR", str(tmp_path))
+    content = _demo_png()
+    async with client_for(life_url, actor()) as (client, _):
+        record = await new_record(client)
+        response = await client.post(
+            f"/api/v1/meeting/records/{record['id']}/images",
+            files={"file": ("会议现场.png", content, "image/png")},
+            data={"expected_revision": record["revision"], "reason": "补充会议现场图片"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["revision"] == record["revision"] + 1
+        images = data["context"]["images"]
+        assert len(images) == 1
+        image = images[0]
+        assert image["file_name"] == "会议现场.png"
+        assert image["content_type"] == "image/png"
+        assert image["size"] == len(content)
+        assert image["uploaded_by"] == "life-author"
+
+        downloaded = await client.get(
+            f"/api/v1/meeting/records/{record['id']}/images/{image['id']}"
+        )
+        assert downloaded.status_code == 200
+        assert downloaded.content == content
+        assert downloaded.headers["content-type"].startswith("image/png")
+        assert "no-store" in downloaded.headers["cache-control"]
+
+        invalid = await client.post(
+            f"/api/v1/meeting/records/{record['id']}/images",
+            files={"file": ("伪造图片.png", b"not an image", "image/png")},
+            data={"expected_revision": data["revision"], "reason": "补充会议现场图片"},
+        )
+        assert invalid.status_code == 415
+
+        stale = await client.post(
+            f"/api/v1/meeting/records/{record['id']}/images",
+            files={"file": ("旧版本.png", content, "image/png")},
+            data={"expected_revision": record["revision"], "reason": "并发补充"},
+        )
+        assert stale.status_code == 409
+
+        stored = list(tmp_path.rglob("*.bin"))
+        assert stored
+        assert content not in stored[0].read_bytes()
+
+        removed = await client.request(
+            "DELETE",
+            f"/api/v1/meeting/records/{record['id']}/images/{image['id']}",
+            json={"expected_revision": data["revision"], "reason": "删除重复图片"},
+        )
+        assert removed.status_code == 200, removed.text
+        removed_data = removed.json()["data"]
+        assert removed_data["context"]["images"] == []
+        assert removed_data["revision"] == data["revision"] + 1
+        assert (
+            await client.get(f"/api/v1/meeting/records/{record['id']}/images/{image['id']}")
+        ).status_code == 404
+
+    async with client_for(life_url, actor("life-other", tenant="life-b")) as (client, _):
+        assert (
+            await client.get(f"/api/v1/meeting/records/{record['id']}/images/{image['id']}")
+        ).status_code == 404

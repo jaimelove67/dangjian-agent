@@ -870,6 +870,179 @@
 .meeting-source-note > svg {
   color: #71af97;
 }
+.meeting-images-block {
+  margin-top: 20px;
+  padding-top: 17px;
+  border-top: 1px solid #f0f2f7;
+}
+.meeting-images-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #7d8594;
+  font-size: 11px;
+}
+.meeting-images-heading > span:last-child {
+  color: #a4acb9;
+  font-size: 10px;
+}
+.meeting-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.meeting-image {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid #e8ecf2;
+  border-radius: 5px;
+  background: #f7f8fb;
+  min-width: 0;
+}
+button.meeting-image {
+  cursor: zoom-in;
+}
+.meeting-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.meeting-image-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: #a5adbc;
+  font-size: 10px;
+}
+.meeting-image-placeholder > svg {
+  color: #c3c9d4;
+}
+.meeting-images-empty {
+  margin: 10px 0 0;
+  padding: 18px;
+  border: 1px dashed #e6eaf1;
+  border-radius: 5px;
+  background: #fbfcfe;
+  color: #a1a8b6;
+  font-size: 11px;
+  text-align: center;
+}
+.meeting-image-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.meeting-image-edit-grid {
+  margin-top: 0;
+}
+.meeting-image-edit-item {
+  position: relative;
+  min-width: 0;
+}
+.meeting-image-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(28, 33, 43, 0.76);
+  color: #fff;
+}
+.meeting-image-remove:hover {
+  background: var(--red);
+}
+.meeting-image-remove:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.meeting-image-name {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #98a0af;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meeting-image-upload {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px dashed #d9dfe9;
+  border-radius: 6px;
+  background: #fbfcfe;
+  color: #7c8595;
+  cursor: pointer;
+  font-size: 11px;
+}
+.meeting-image-upload:hover {
+  border-color: var(--red);
+  background: #fff9f9;
+  color: var(--red);
+}
+.meeting-image-upload.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.meeting-image-upload input {
+  display: none;
+}
+.meeting-image-upload > svg {
+  color: var(--red);
+}
+.meeting-image-upload small {
+  margin-left: auto;
+  color: #a4acb9;
+  font-size: 10px;
+}
+.form-error {
+  margin: 0;
+  color: #d9363e;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.meeting-image-preview-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  padding: 14px;
+  border-radius: 6px;
+  background: #14171c;
+}
+.meeting-image-preview {
+  width: 100%;
+  max-width: 100%;
+  height: min(70vh, 640px);
+  max-height: 70vh;
+  aspect-ratio: auto;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+.meeting-image-preview img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
 .mini-stat-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

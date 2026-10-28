@@ -5,6 +5,8 @@
 租户及有效组织范围，审核与归档按共用合规规则执行。
 """
 
+import asyncio
+import uuid
 from datetime import date
 from typing import Any
 
@@ -18,6 +20,7 @@ from app.models.user import User
 from app.schemas.meeting import (
     ActivityCreate,
     ActivityUpdate,
+    ImageMutation,
     ReviewRequest,
     RevisionRequest,
     TaskCreate,
@@ -32,6 +35,8 @@ from app.services.activity_frequency import (
     load_requirements,
 )
 from app.services.archive_service import require_archive_policy
+from app.services.file_store import read_original, save_original
+from app.services.meeting_images import MEETING_IMAGE_LIMIT, inspect_meeting_image
 from app.services.meeting_service import (
     ORG_LIFE_ACTIVITY_TYPE,
     apply_review,
@@ -294,6 +299,89 @@ class ActivityService:
         reset_review(record)
         await self.save_revision(record, "meeting", "revise", body.reason)
         return record
+
+    # ==================== 现场图片 ====================
+
+    async def _editable_image_record(self, record_id: str, expected_revision: int) -> MeetingRecord:
+        record = await self.record(record_id, lock=True)
+        self.check_revision(record, expected_revision)
+        if record.archived_at:
+            raise HTTPException(409, "已归档会议不能增删现场图片，请保留正式版本")
+        return record
+
+    async def add_image(
+        self,
+        record_id: str,
+        *,
+        file_name: str,
+        content: bytes,
+        body: ImageMutation,
+    ) -> tuple[MeetingRecord, dict[str, Any]]:
+        """保存现场图片元数据与加密原件；不改变会议正文，但会使旧审核失效。"""
+        record = await self._editable_image_record(record_id, body.expected_revision)
+        context = dict(record.context or {})
+        images = [item for item in (context.get("images") or []) if isinstance(item, dict)]
+        if len(images) >= MEETING_IMAGE_LIMIT:
+            raise HTTPException(409, f"每场会议最多上传 {MEETING_IMAGE_LIMIT} 张现场图片")
+        content_type = inspect_meeting_image(content, file_name)
+        image_id = str(uuid.uuid4())
+        stored = await asyncio.to_thread(
+            save_original, self.tenant_id, image_id, 1, content, file_name
+        )
+        image = {
+            "id": image_id,
+            "file_name": file_name,
+            "content_type": content_type,
+            "size": len(content),
+            "sha256": stored["sha256"],
+            "uploaded_at": utc_now().isoformat(),
+            "uploaded_by": str(self.user.id),
+        }
+        context["images"] = [*images, image]
+        record.context = context
+        reset_review(record)
+        await self.save_revision(record, "meeting", "add_image", body.reason)
+        return record, image
+
+    async def remove_image(
+        self, record_id: str, image_id: str, body: ImageMutation
+    ) -> MeetingRecord:
+        """移除记录中的图片元数据；已追加版本保留可追溯的旧依据。"""
+        record = await self._editable_image_record(record_id, body.expected_revision)
+        context = dict(record.context or {})
+        images = [item for item in (context.get("images") or []) if isinstance(item, dict)]
+        remaining = [item for item in images if str(item.get("id")) != image_id]
+        if len(remaining) == len(images):
+            raise HTTPException(404, "现场图片不存在或已被移除")
+        context["images"] = remaining
+        record.context = context
+        reset_review(record)
+        await self.save_revision(record, "meeting", "remove_image", body.reason)
+        return record
+
+    async def read_image(self, record_id: str, image_id: str) -> tuple[bytes, dict[str, Any]]:
+        record = await self.record(record_id)
+        await self.require_visible_content(record)
+        image = next(
+            (
+                item
+                for item in ((record.context or {}).get("images") or [])
+                if isinstance(item, dict) and str(item.get("id")) == image_id
+            ),
+            None,
+        )
+        if image is None:
+            raise HTTPException(404, "现场图片不存在或无权访问")
+        content = await asyncio.to_thread(
+            read_original,
+            self.tenant_id,
+            image_id,
+            1,
+            image.get("sha256"),
+        )
+        if content is None:
+            raise HTTPException(404, "现场图片原件不存在，请联系管理员核对存储")
+        return content, image
 
     async def recommendations(self, record_id: str, query: str | None = None) -> dict[str, Any]:
         """从授权知识库推荐议题材料，不补写虚构文件。"""

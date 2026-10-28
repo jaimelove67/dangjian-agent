@@ -176,6 +176,29 @@ export const backend = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  uploadMeetingImage: (id, file, expectedRevision, reason) => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("expected_revision", String(expectedRevision));
+    body.append("reason", reason);
+    return request(`/meeting/records/${encodeURIComponent(id)}/images`, {
+      method: "POST",
+      body,
+    });
+  },
+  deleteMeetingImage: (id, imageId, expectedRevision, reason) =>
+    request(
+      `/meeting/records/${encodeURIComponent(id)}/images/${encodeURIComponent(imageId)}`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({ expected_revision: expectedRevision, reason }),
+      },
+    ),
+  meetingImage: (id, imageId) =>
+    request(
+      `/meeting/records/${encodeURIComponent(id)}/images/${encodeURIComponent(imageId)}`,
+      { download: true },
+    ),
   ask: async (payload) =>
     request("/qa", {
       method: "POST",

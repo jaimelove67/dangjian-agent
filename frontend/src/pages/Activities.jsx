@@ -14,10 +14,18 @@ import {
   CheckCircle,
   ArrowRight,
   Flag,
+  CircleNotch,
+  Trash,
 } from "@phosphor-icons/react";
 import { useStore } from "../store";
 import { useApp } from "../app-context";
 import { backend, IS_LIVE, request } from "../api";
+import { deleteDemoFile, getDemoFile, saveDemoFile } from "../demo-files";
+import {
+  MEETING_IMAGE_ACCEPT,
+  MEETING_IMAGE_LIMIT,
+  meetingImageSelectionError,
+} from "../meeting-images";
 import {
   scopedMeetings,
   scopedOrganizations,
@@ -77,8 +85,83 @@ function normalizeMeeting(m) {
             : "待召开",
     agenda: m.context?.agenda || "",
     minutes: typeof m.transcript === "string" ? m.transcript : "",
+    images: Array.isArray(m.context?.images)
+      ? m.context.images
+      : Array.isArray(m.images)
+        ? m.images
+        : [],
     revision: m.revision,
   };
+}
+function MeetingImage({ recordId, image, className = "", onClick }) {
+  const { session } = useApp();
+  const [state, setState] = useState({
+    status: image?.data_url ? "ready" : "loading",
+    url: image?.data_url || "",
+  });
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    if (!image?.id) {
+      setState({ status: "error", url: "" });
+      return () => {};
+    }
+    if (image.data_url) {
+      setState({ status: "ready", url: image.data_url });
+      return () => {};
+    }
+    setState({ status: "loading", url: "" });
+    const ownerId = image.owner_id || recordId || session.user.id;
+    const load = IS_LIVE
+      ? backend.meetingImage(recordId, image.id)
+      : getDemoFile(image.id, ownerId);
+    load
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setState({ status: "ready", url: objectUrl });
+      })
+      .catch(() => {
+        if (active) setState({ status: "error", url: "" });
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [recordId, image?.id, image?.owner_id, image?.data_url, session.user.id]);
+  if (state.status === "loading")
+    return (
+      <div className={`meeting-image meeting-image-placeholder ${className}`}>
+        <CircleNotch size={17} className="spin" />
+        <span>加载图片</span>
+      </div>
+    );
+  if (state.status === "error")
+    return (
+      <div className={`meeting-image meeting-image-placeholder ${className}`}>
+        <Image size={18} />
+        <span>图片读取失败</span>
+      </div>
+    );
+  const content = (
+    <img
+      src={state.url}
+      alt={image?.file_name || "会议现场图片"}
+      loading="lazy"
+    />
+  );
+  return onClick ? (
+    <button
+      type="button"
+      className={`meeting-image ${className}`}
+      onClick={onClick}
+      aria-label={`查看${image?.file_name || "会议现场图片"}`}
+    >
+      {content}
+    </button>
+  ) : (
+    <div className={`meeting-image ${className}`}>{content}</div>
+  );
 }
 export function Meetings() {
   const { data, update, notify } = useStore();
@@ -93,12 +176,75 @@ export function Meetings() {
   const [archiving, setArchiving] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [formImages, setFormImages] = useState([]);
+  const [pendingImages, setPendingImages] = useState([]);
+  const [removedImages, setRemovedImages] = useState([]);
+  const [imageError, setImageError] = useState("");
+  const [previewImage, setPreviewImage] = useState(null);
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
   );
   const canEdit =
     hasPermission(session, "meeting.manage") &&
     session.user.role !== "school_admin";
+  function clearEditor() {
+    pendingImages.forEach((item) => URL.revokeObjectURL(item.preview));
+    setEditing(null);
+    setFormImages([]);
+    setPendingImages([]);
+    setRemovedImages([]);
+    setImageError("");
+    setPreviewImage(null);
+  }
+  function closeEditor() {
+    if (busy) return;
+    clearEditor();
+  }
+  function openEditor(record = {}) {
+    setEditing(record);
+    setFormImages(Array.isArray(record.images) ? record.images : []);
+    setPendingImages([]);
+    setRemovedImages([]);
+    setImageError("");
+    setPreviewImage(null);
+    setError(null);
+  }
+  function chooseImages(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    const message = meetingImageSelectionError(
+      files,
+      formImages.length + pendingImages.length,
+    );
+    if (message) {
+      setImageError(message);
+      return;
+    }
+    setImageError("");
+    setPendingImages((prev) => [
+      ...prev,
+      ...files.map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        preview: URL.createObjectURL(file),
+        name: file.name,
+        size: file.size,
+      })),
+    ]);
+  }
+  function removePendingImage(id) {
+    setPendingImages((prev) => {
+      const item = prev.find((entry) => entry.id === id);
+      if (item) URL.revokeObjectURL(item.preview);
+      return prev.filter((entry) => entry.id !== id);
+    });
+  }
+  function removeExistingImage(image) {
+    setFormImages((prev) => prev.filter((entry) => entry.id !== image.id));
+    setRemovedImages((prev) =>
+      prev.some((entry) => entry.id === image.id) ? prev : [...prev, image],
+    );
+  }
   async function load() {
     if (!IS_LIVE) return;
     setBusy(true);
@@ -132,6 +278,7 @@ export function Meetings() {
           : true),
   );
   const current = filtered.find((m) => m.id === selected) || filtered[0];
+  const imageCount = formImages.length + pendingImages.length;
   async function submitReview(e) {
     e.preventDefault();
     setBusy(true);
@@ -182,8 +329,11 @@ export function Meetings() {
   async function save(e) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
+    const pending = [...pendingImages];
+    const removed = [...removedImages];
     setBusy(true);
     setError(null);
+    setImageError("");
     try {
       const chosen = orgs.find(
         (o) => o.id === (form.get("orgId") || editing.orgId),
@@ -218,6 +368,7 @@ export function Meetings() {
       let record = {
         ...editing,
         ...values,
+        images: [...formImages],
         id: editing.id || crypto.randomUUID(),
         status: editing.status || "待召开",
         revision: (editing.revision || 0) + 1,
@@ -229,6 +380,79 @@ export function Meetings() {
             ? backend.updateMeeting(editing.id, body)
             : backend.createMeeting(body)),
         );
+        const remainingPending = [...pending];
+        const remainingRemoved = [...removed];
+        const imageReason = editing.id
+          ? "调整会议现场图片"
+          : "登记会议现场图片";
+        try {
+          for (const image of removed) {
+            record = normalizeMeeting(
+              await backend.deleteMeetingImage(
+                record.id,
+                image.id,
+                record.revision,
+                imageReason,
+              ),
+            );
+            const index = remainingRemoved.findIndex(
+              (entry) => entry.id === image.id,
+            );
+            if (index >= 0) remainingRemoved.splice(index, 1);
+          }
+          for (const image of pending) {
+            record = normalizeMeeting(
+              await backend.uploadMeetingImage(
+                record.id,
+                image.file,
+                record.revision,
+                imageReason,
+              ),
+            );
+            const index = remainingPending.findIndex(
+              (entry) => entry.id === image.id,
+            );
+            if (index >= 0) remainingPending.splice(index, 1);
+          }
+        } catch (err) {
+          // 文字内容已经落库，保留可继续重试的图片状态，避免重复新建会议。
+          update("meetings", (prev) =>
+            editing.id
+              ? prev.map((m) => (m.id === record.id ? record : m))
+              : [record, ...prev],
+          );
+          setSelected(record.id);
+          setEditing(record);
+          setFormImages(Array.isArray(record.images) ? record.images : []);
+          setPendingImages(remainingPending);
+          setRemovedImages(remainingRemoved);
+          setImageError(
+            "会议文字内容已保存，但部分现场图片未完成，请核对后重试。",
+          );
+          throw err;
+        }
+      } else {
+        const savedImages = [];
+        for (const item of pending) {
+          await saveDemoFile(item.id, record.id, item.file);
+          savedImages.push({
+            id: item.id,
+            file_name: item.name,
+            size: item.size,
+            content_type: item.file.type || "application/octet-stream",
+            owner_id: record.id,
+            uploaded_at: new Date().toISOString(),
+            uploaded_by: session.user.id,
+          });
+        }
+        for (const image of removed) {
+          try {
+            await deleteDemoFile(image.id, image.owner_id || record.id);
+          } catch {
+            // 记录引用已经移除，浏览器文件清理失败不阻断本次保存。
+          }
+        }
+        record = { ...record, images: [...formImages, ...savedImages] };
       }
       update("meetings", (prev) =>
         editing.id
@@ -237,8 +461,12 @@ export function Meetings() {
       );
       setSelected(record.id);
       setQuery("");
-      setEditing(null);
-      notify("会议记录已保存");
+      clearEditor();
+      notify(
+        pending.length || removed.length
+          ? "会议记录及现场图片已保存"
+          : "会议记录已保存",
+      );
     } catch (err) {
       setError(err);
     } finally {
@@ -332,10 +560,7 @@ export function Meetings() {
                       ["待召开", "已退回"].includes(current.status) && (
                         <button
                           className="button secondary"
-                          onClick={() => {
-                            setEditing(current);
-                            setError(null);
-                          }}
+                          onClick={() => openEditor(current)}
                         >
                           <PencilSimple size={16} />
                           编辑
@@ -402,6 +627,36 @@ export function Meetings() {
                       {current.minutes || "会议尚未召开，暂无记录。"}
                     </dd>
                   </dl>
+                  <div className="meeting-images-block">
+                    <div className="meeting-images-heading">
+                      <span>现场图片</span>
+                      <span>{current.images?.length || 0} 张</span>
+                    </div>
+                    {current.images?.length ? (
+                      <div className="meeting-image-grid">
+                        {current.images.map((image) => (
+                          <MeetingImage
+                            key={image.id}
+                            recordId={current.id}
+                            image={image}
+                            onClick={() =>
+                              setPreviewImage({
+                                recordId: current.id,
+                                image,
+                              })
+                            }
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="meeting-images-empty">
+                        尚未上传现场图片
+                        {canEdit && ["待召开", "已退回"].includes(current.status)
+                          ? "，可在编辑会议记录时补充。"
+                          : "。"}
+                      </p>
+                    )}
+                  </div>
                   <div className="meeting-source-note">
                     <CheckCircle size={15} />
                     {current.status === "已归档"
@@ -417,10 +672,7 @@ export function Meetings() {
           {canEdit && (
             <button
               className="button primary new-meeting"
-              onClick={() => {
-                setEditing({});
-                setError(null);
-              }}
+              onClick={() => openEditor({})}
             >
               <Plus size={17} />
               新增会议
@@ -482,7 +734,7 @@ export function Meetings() {
         <Modal
           title={editing.id ? "编辑会议记录" : "新增会议"}
           wide
-          onClose={() => setEditing(null)}
+          onClose={closeEditor}
         >
           <form onSubmit={save}>
             <div className="form-grid">
@@ -606,6 +858,82 @@ export function Meetings() {
                   placeholder="请根据实际会议情况填写"
                 />
               </Field>
+              <div className="field full">
+                <span>现场图片（最多 {MEETING_IMAGE_LIMIT} 张）</span>
+                <div className="meeting-image-editor">
+                  {imageCount > 0 && (
+                    <div className="meeting-image-grid meeting-image-edit-grid">
+                      {formImages.map((image) => (
+                        <div className="meeting-image-edit-item" key={image.id}>
+                          <MeetingImage
+                            recordId={editing.id}
+                            image={image}
+                          />
+                          <button
+                            type="button"
+                            className="meeting-image-remove"
+                            onClick={() => removeExistingImage(image)}
+                            disabled={busy}
+                            aria-label="移除现场图片"
+                          >
+                            <Trash size={13} />
+                          </button>
+                          <span className="meeting-image-name">
+                            {image.file_name || "现场图片"}
+                          </span>
+                        </div>
+                      ))}
+                      {pendingImages.map((item) => (
+                        <div className="meeting-image-edit-item" key={item.id}>
+                          <div className="meeting-image">
+                            <img src={item.preview} alt={item.name} />
+                          </div>
+                          <button
+                            type="button"
+                            className="meeting-image-remove"
+                            onClick={() => removePendingImage(item.id)}
+                            disabled={busy}
+                            aria-label="移除待上传图片"
+                          >
+                            <Trash size={13} />
+                          </button>
+                          <span className="meeting-image-name">
+                            {item.name}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <label
+                    className={`meeting-image-upload ${
+                      imageCount >= MEETING_IMAGE_LIMIT ? "disabled" : ""
+                    }`}
+                  >
+                    <input
+                      type="file"
+                      multiple
+                      accept={MEETING_IMAGE_ACCEPT}
+                      onChange={chooseImages}
+                      disabled={busy || imageCount >= MEETING_IMAGE_LIMIT}
+                    />
+                    <Image size={20} />
+                    <span>
+                      {imageCount >= MEETING_IMAGE_LIMIT
+                        ? "已达到图片上限"
+                        : "选择现场图片"}
+                    </span>
+                    <small>JPG、PNG 或 WebP，单张不超过 10 MB</small>
+                  </label>
+                  <div className="inline-note">
+                    现场图片随会议版本留存，仅作会议记录佐证；请勿上传涉密材料。
+                  </div>
+                  {imageError && (
+                    <p className="form-error" role="alert">
+                      {imageError}
+                    </p>
+                  )}
+                </div>
+              </div>
               {IS_LIVE && editing.id && <div className="inline-note field full">
                 原文按“学习要点：”“讨论共识：”“工作要求：”分行记录；组织生活会使用“查摆问题：”“批评意见：”“整改方向：”。提取只保留原文中已明确记载的内容。
               </div>}
@@ -615,7 +943,7 @@ export function Meetings() {
               <button
                 type="button"
                 className="button secondary"
-                onClick={() => setEditing(null)}
+                onClick={closeEditor}
               >
                 取消
               </button>
@@ -624,6 +952,21 @@ export function Meetings() {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+      {previewImage && (
+        <Modal
+          title={previewImage.image.file_name || "会议现场图片"}
+          wide
+          onClose={() => setPreviewImage(null)}
+        >
+          <div className="meeting-image-preview-wrap">
+            <MeetingImage
+              recordId={previewImage.recordId}
+              image={previewImage.image}
+              className="meeting-image-preview"
+            />
+          </div>
         </Modal>
       )}
     </section>

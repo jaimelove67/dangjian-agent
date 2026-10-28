@@ -1181,6 +1181,20 @@
     gap: 17px 10px;
     grid-template-columns: 65px minmax(0, 1fr);
   }
+  .meeting-image-grid {
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  }
+  .meeting-image-upload {
+    align-items: flex-start;
+  }
+  .meeting-image-upload small {
+    width: 100%;
+    margin-left: 0;
+  }
+  .meeting-image-preview-wrap {
+    min-height: 180px;
+    padding: 8px;
+  }
   .meeting-detail-actions {
     margin-bottom: 20px;
   }
