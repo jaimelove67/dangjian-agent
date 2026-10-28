@@ -407,28 +407,6 @@ function Login() {
         </div>
         {mode === "账号登录" ? (
           <form onSubmit={submit}>
-            {!IS_LIVE && (
-              <Field label="选择登录身份">
-                <select
-                  aria-label="选择登录身份"
-                  onChange={(e) => {
-                    const input = e.currentTarget.form.elements.username;
-                    Object.getOwnPropertyDescriptor(
-                      HTMLInputElement.prototype,
-                      "value",
-                    ).set.call(input, e.target.value);
-                    input.dispatchEvent(new Event("input", { bubbles: true }));
-                  }}
-                  defaultValue="admin"
-                >
-                  {DEMO_PERSONAS.map((p) => (
-                    <option value={p.user.username} key={p.id}>
-                      {p.title} · {p.user.username}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
             <Field label="账号">
               <input
                 name="username"
