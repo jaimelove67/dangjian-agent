@@ -4,6 +4,7 @@ import { DEPARTMENTS, organizations, seedMembers } from "./data.js";
 const selfPermissions = [
   "qa.ask",
   "knowledge.query",
+  "education.query",
   "member.self_query",
   "member.material_submit",
 ];
@@ -17,6 +18,7 @@ const branchPermissions = [
   "meeting.manage",
   "meeting.review",
   "meeting.archive",
+  "education.query",
   "assessment.query",
   "assessment.manage",
   "assessment.export",
@@ -87,6 +89,7 @@ export const SELF_ROUTES = new Set([
   "dashboard",
   "self-archive",
   "self-materials",
+  "learning",
   "assistant",
 ]);
 export const PLATFORM_NAV_SPEC = [

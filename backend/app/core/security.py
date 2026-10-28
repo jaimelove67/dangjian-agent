@@ -245,6 +245,7 @@ class Permission(str, Enum):
     STUDY_QUERY = "study.query"
     STUDY_MANAGE = "study.manage"
     STUDY_REVIEW = "study.review"
+    EDUCATION_QUERY = "education.query"  # 学习教育课程与活动查看：全体党员和申请人
     ARCHIVE_CONFIRM = "admin.archive_confirm"
     CONFIG_MANAGE = "admin.config"  # 配置管理：系统管理员
     AUDIT_QUERY = "admin.audit"  # 审计查询：系统管理员
@@ -299,6 +300,7 @@ _MANAGER_PERMISSIONS = frozenset(
         Permission.STUDY_QUERY,
         Permission.STUDY_MANAGE,
         Permission.STUDY_REVIEW,
+        Permission.EDUCATION_QUERY,
         Permission.ASSESSMENT_QUERY,
         Permission.ASSESSMENT_MANAGE,
         Permission.ASSESSMENT_REVIEW,
@@ -317,6 +319,7 @@ _BRANCH_PERMISSIONS = frozenset(
         Permission.MEETING_MANAGE,
         Permission.MEETING_REVIEW,
         Permission.MEETING_ARCHIVE,
+        Permission.EDUCATION_QUERY,
         Permission.ASSESSMENT_QUERY,
         Permission.ASSESSMENT_MANAGE,
         Permission.ASSESSMENT_EXPORT,
@@ -326,8 +329,10 @@ _BRANCH_PERMISSIONS = frozenset(
 # 本人服务：查看本人档案与提交私有材料。党员与申请人共用，
 # 组织人员通过名册把账号与档案明确关联后才生效。
 _SELF_SERVICE_PERMISSIONS = frozenset({Permission.SELF_QUERY, Permission.MATERIAL_SUBMIT})
-# 基层查看能力：制度问答与只读的制度目录。党员与申请人共用。
-_BASE_VIEW_PERMISSIONS = frozenset({Permission.QA_ASK, Permission.KNOWLEDGE_QUERY})
+# 基层查看能力：制度问答、只读的制度目录和学习课程。党员与申请人共用。
+_BASE_VIEW_PERMISSIONS = frozenset(
+    {Permission.QA_ASK, Permission.KNOWLEDGE_QUERY, Permission.EDUCATION_QUERY}
+)
 _APPLICANT_PERMISSIONS = _BASE_VIEW_PERMISSIONS | _SELF_SERVICE_PERMISSIONS
 # 不变式：申请人 ⊆ 党员 ⊆ 组织管理角色。党员要新增能力时在下方累加，
 # 不允许出现"低角色看得到、高角色看不到"的交叉集合。

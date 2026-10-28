@@ -257,7 +257,7 @@ export const NAV = [
     label: "学习教育",
     icon: BookOpen,
     section: "学习与发展",
-    permission: "study.query",
+    permission: "education.query",
   },
   {
     id: "development",
@@ -935,7 +935,15 @@ function Shell() {
             ) : route === "activities" ? (
               IS_LIVE ? <LiveEducation eventOnly /> : <Activities />
             ) : route === "learning" ? (
-              IS_LIVE ? <LiveLearning /> : <Learning />
+              IS_LIVE ? (
+                hasPermission(session, "study.query") ? (
+                  <LiveLearning />
+                ) : (
+                  <LiveEducation />
+                )
+              ) : (
+                <Learning />
+              )
             ) : route === "analytics" ? (
               school ? (
                 <SchoolStatistics />

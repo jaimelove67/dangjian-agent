@@ -73,9 +73,21 @@ test("self-service menus exclude all organization and knowledge routes", () => {
       "dashboard",
       "self-archive",
       "self-materials",
+      "learning",
       "assistant",
     ])
       assert.equal(canAccess(s, { id: route }), true);
+  }
+});
+test("learning courses are visible to members and applicants without center-group authority", () => {
+  for (const id of ["teacher", "student", "applicant"]) {
+    const s = demoSession(id);
+    assert.equal(hasPermission(s, "education.query"), true);
+    assert.equal(hasPermission(s, "study.query"), false);
+    assert.equal(
+      canAccess(s, { id: "learning", permission: "education.query" }),
+      true,
+    );
   }
 });
 test("school identity permissions do not open platform-only account management", () => {

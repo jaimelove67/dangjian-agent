@@ -69,7 +69,7 @@ export function Dashboard() {
       desc: "学习与成长",
       icon: BookOpen,
       route: "learning",
-      permission: "study.query",
+      permission: "education.query",
       color: "blue",
     },
     {
@@ -374,7 +374,7 @@ export function Dashboard() {
               className="text-button primary-text"
               onClick={() =>
                 navigate(
-                  can({ id: "learning", permission: "study.query" })
+                  can({ id: "learning", permission: "education.query" })
                     ? "learning"
                     : "assistant",
                 )

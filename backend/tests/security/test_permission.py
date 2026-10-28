@@ -28,6 +28,7 @@ class TestInterfacePermissions:
             {
                 Permission.QA_ASK,
                 Permission.KNOWLEDGE_QUERY,
+                Permission.EDUCATION_QUERY,
                 Permission.SELF_QUERY,
                 Permission.MATERIAL_SUBMIT,
             }
@@ -42,6 +43,7 @@ class TestInterfacePermissions:
             {
                 Permission.QA_ASK,
                 Permission.KNOWLEDGE_QUERY,
+                Permission.EDUCATION_QUERY,
                 Permission.SELF_QUERY,
                 Permission.MATERIAL_SUBMIT,
             }
@@ -50,6 +52,14 @@ class TestInterfacePermissions:
     def test_base_roles_can_read_knowledge_directory(self):
         for role in (UserRole.MEMBER, UserRole.APPLICANT):
             assert has_permission(role, Permission.KNOWLEDGE_QUERY)
+
+    def test_learning_courses_are_readable_without_center_group_scope(self):
+        """党员与申请人可查看学习课程，但不能借此进入中心组学习工作台。"""
+        for role in (UserRole.MEMBER, UserRole.APPLICANT):
+            assert has_permission(role, Permission.EDUCATION_QUERY)
+            assert not has_permission(role, Permission.STUDY_QUERY)
+        assert has_permission(UserRole.BRANCH_SECRETARY, Permission.EDUCATION_QUERY)
+        assert not has_permission(UserRole.BRANCH_SECRETARY, Permission.STUDY_QUERY)
 
     def test_knowledge_manage_requires_department_or_above(self):
         assert has_permission(UserRole.SYSTEM_ADMIN, Permission.KNOWLEDGE_MANAGE)

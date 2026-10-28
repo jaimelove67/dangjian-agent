@@ -16,6 +16,7 @@ const PERMISSION_NAMES = [
   ["meeting.manage", "登记与维护组织生活"], ["meeting.review", "独立审核组织生活记录"],
   ["meeting.archive", "办理组织生活归档"], ["admin.review", "处理授权范围内的业务审核"],
   ["admin.archive_confirm", "确认校级业务归档"], ["study.query", "查看学习教育记录"],
+  ["education.query", "查看学习课程与活动"],
   ["study.manage", "维护学习教育安排"], ["study.review", "核验学习教育记录"],
   ["assessment.query", "查阅考核评价记录"], ["assessment.manage", "登记考核与佐证材料"],
   ["assessment.review", "核验考核材料"], ["assessment.export", "导出授权范围内的考核记录"],
