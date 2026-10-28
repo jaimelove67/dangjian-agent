@@ -133,7 +133,14 @@ async def ok(client, method, path, body=None, params=None):
     return response.json()["data"]
 
 
-async def new_profile(client, name, org="sel-branch", stage="activist"):
+async def new_profile(
+    client,
+    name,
+    org="sel-branch",
+    stage="activist",
+    birth_date=None,
+    league_joined_on=None,
+):
     return await ok(
         client,
         "POST",
@@ -142,6 +149,8 @@ async def new_profile(client, name, org="sel-branch", stage="activist"):
             "name": name,
             "org_unit_id": org,
             "current_stage": stage,
+            "birth_date": birth_date,
+            "league_joined_on": league_joined_on,
             "materials": [],
             "pending": 0,
         },
@@ -431,9 +440,26 @@ async def test_selection_rejects_backward_stage_and_out_of_scope_candidates(sele
 
 
 @pytest.mark.asyncio
-async def test_league_recommendation_records_facts_without_judging_age(selection_url):
+async def test_league_recommendation_enforces_age_and_tenure_without_blocking_selection(
+    selection_url,
+):
     async with client_for(selection_url, actor("sel-author4")) as (client, _):
+        birth = date(2000, 1, 1)
+        joined = date(2020, 1, 1)
         profile = await new_profile(client, "推优对象")
+        # 真实流程：先在党员档案补录出生年月与入团时间，再登记推优
+        updated = await ok(
+            client,
+            "PATCH",
+            f"/member-full/profiles/{profile['id']}",
+            {
+                "birth_date": birth.isoformat(),
+                "league_joined_on": joined.isoformat(),
+                "reason": "按档案原件补录出生年月与入团时间",
+            },
+        )
+        assert updated["birth_date"] == birth.isoformat()
+        assert updated["league_joined_on"] == joined.isoformat()
         other = await new_profile(client, "无推优对象")
         created = await ok(
             client,
@@ -449,16 +475,72 @@ async def test_league_recommendation_records_facts_without_judging_age(selection
         )
         assert created["active"] is True
         assert created["stage"] == "activist"
-        # 系统判不了年龄：只提示"请组织核对"，不做任何年龄校验
-        assert "系统不判断年龄" in created["age_notice"]
+        assert "年满18周岁" in created["eligibility_note"]
+        assert "入团已满1年" in created["eligibility_note"]
+        assert "年满18周岁" in created["age_notice"]
         assert "不阻断" in created["age_notice"]
         assert created["data_level"] == "sensitive"
+
+        # 档案缺出生年月 / 入团时间：不默认通过，提示先补录
+        missing = await new_profile(client, "档案缺项")
+        response = await client.post(
+            "/api/v1/member-full/league-recommendations",
+            json={
+                "profile_id": missing["id"],
+                "league_org": "某某学院团委",
+                "recommended_on": date.today().isoformat(),
+                "note": "",
+                "reason": "档案缺项",
+            },
+        )
+        assert response.status_code == 422
+        assert "缺少" in response.text
+
+        # 未满18周岁
+        underage = await new_profile(
+            client,
+            "未满十八",
+            birth_date=date(date.today().year - 17, 1, 1).isoformat(),
+            league_joined_on=joined.isoformat(),
+        )
+        response = await client.post(
+            "/api/v1/member-full/league-recommendations",
+            json={
+                "profile_id": underage["id"],
+                "league_org": "某某学院团委",
+                "recommended_on": date.today().isoformat(),
+                "note": "",
+                "reason": "年龄不足",
+            },
+        )
+        assert response.status_code == 422
+        assert "18周岁" in response.text
+
+        # 入团未满1年
+        short_tenure = await new_profile(
+            client,
+            "团龄不足",
+            birth_date=birth.isoformat(),
+            league_joined_on=(date.today() - timedelta(days=330)).isoformat(),
+        )
+        response = await client.post(
+            "/api/v1/member-full/league-recommendations",
+            json={
+                "profile_id": short_tenure["id"],
+                "league_org": "某某学院团委",
+                "recommended_on": date.today().isoformat(),
+                "note": "",
+                "reason": "团龄不足",
+            },
+        )
+        assert response.status_code == 422
+        assert "入团满1年" in response.text
 
         # 推荐日期不能在未来
         response = await client.post(
             "/api/v1/member-full/league-recommendations",
             json={
-                "profile_id": other["id"],
+                "profile_id": profile["id"],
                 "league_org": "某某学院团委",
                 "recommended_on": (date.today() + timedelta(days=1)).isoformat(),
                 "note": "",
@@ -467,7 +549,7 @@ async def test_league_recommendation_records_facts_without_judging_age(selection
         )
         assert response.status_code == 422
 
-        # 按人查询"有没有推优记录"：只回标记，不判断年龄、不阻断
+        # 按人查询"有没有推优记录"：只回标记，不阻断
         status = await ok(
             client,
             "GET",

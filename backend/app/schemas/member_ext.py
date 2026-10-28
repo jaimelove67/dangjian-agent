@@ -26,10 +26,26 @@ class ProfileUpdate(MemberInput):
     name: str | None = Field(default=None, min_length=1, max_length=50)
     # 身份证号即开户时的登录账号来源：历史档案缺号时在此补录，录错可更正，但不允许清空。
     id_card_no: str | None = Field(default=None, max_length=32)
+    # 团组织推优资格：仅补录 / 更正，不提供清空；缺项时推优接口会拒绝登记。
+    birth_date: date | None = None
+    league_joined_on: date | None = None
     batch_no: str | None = Field(default=None, max_length=20)
     year: int | None = Field(default=None, ge=2000, le=2100)
     is_active: bool | None = None
     reason: Reason
+
+    @field_validator("birth_date", "league_joined_on")
+    @classmethod
+    def dates_not_in_future(cls, value: date | None) -> date | None:
+        if value and value > date.today():
+            raise ValueError("出生年月和入团时间不能晚于今天")
+        return value
+
+    @model_validator(mode="after")
+    def league_after_birth(self) -> "ProfileUpdate":
+        if self.birth_date and self.league_joined_on and self.league_joined_on < self.birth_date:
+            raise ValueError("入团时间不能早于出生年月")
+        return self
 
     @field_validator("id_card_no")
     @classmethod

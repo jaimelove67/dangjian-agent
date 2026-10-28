@@ -10,10 +10,11 @@ import re
 from datetime import date
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.decision_boundary import STAGE_TRANSITION_NOTE
 from app.core.desensitization import mask_id_card
+from app.rules.member_league import league_eligibility
 from app.rules.member_stages import MemberStage
 
 DECISION_BOUNDARY_NOTE = STAGE_TRANSITION_NOTE
@@ -97,9 +98,17 @@ class MemberRosterItem(BaseModel):
     batch_no: Optional[str] = None
     # 身份证号只回脱敏值：完整号不出网。为空表示档案还没补录，此时不能开户。
     id_card_masked: Optional[str] = None
+    # 推优资格摘要：只回结论与原因，不在名册里铺开出生年月 / 入团时间。
+    league_eligible: Optional[bool] = None
+    league_eligibility_note: str = ""
 
     @classmethod
     def from_profile(cls, profile: Any) -> "MemberRosterItem":
+        eligible, eligibility_note = league_eligibility(
+            getattr(profile, "birth_date", None),
+            getattr(profile, "league_joined_on", None),
+            date.today(),
+        )
         return cls(
             id=str(profile.id),
             user_id=getattr(profile, "user_id", None),
@@ -117,6 +126,8 @@ class MemberRosterItem(BaseModel):
             id_card_masked=(
                 mask_id_card(profile.id_card_no) if getattr(profile, "id_card_no", None) else None
             ),
+            league_eligible=eligible,
+            league_eligibility_note=eligibility_note,
         )
 
 
@@ -136,6 +147,9 @@ class MemberCreateRequest(BaseModel):
     org_name: Optional[str] = Field(None, max_length=200)
     current_stage: MemberStage = MemberStage.APPLICANT
     stage_joined_on: Optional[date] = None
+    # 团组织推优资格：出生年月、入团时间；均为选填，缺失时不影响建档，但无法登记推优。
+    birth_date: Optional[date] = None
+    league_joined_on: Optional[date] = None
     materials: List[str] = Field(default_factory=list, max_length=50)
     pending: int = Field(0, ge=0, le=2147483647)
 
@@ -161,6 +175,19 @@ class MemberCreateRequest(BaseModel):
         if value and value > date.today():
             raise ValueError("进入阶段日期不能晚于今天")
         return value
+
+    @field_validator("birth_date", "league_joined_on")
+    @classmethod
+    def dates_not_in_future(cls, value: Optional[date]) -> Optional[date]:
+        if value and value > date.today():
+            raise ValueError("出生年月和入团时间不能晚于今天")
+        return value
+
+    @model_validator(mode="after")
+    def league_after_birth(self) -> "MemberCreateRequest":
+        if self.birth_date and self.league_joined_on and self.league_joined_on < self.birth_date:
+            raise ValueError("入团时间不能早于出生年月")
+        return self
 
     @field_validator("materials")
     @classmethod

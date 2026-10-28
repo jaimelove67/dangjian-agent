@@ -322,6 +322,8 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 
 ## 选优结论双人审核与团组织推优回归（T-MEM-13、T-MEM-06）
 
+> 2026-10-28 更新：团组织推优已改为按档案出生年月 / 入团时间核验 18 周岁与 1 年团龄；本节“系统不判断年龄”“不新增出生年月字段”是 2026-10-17 的历史口径，现由下一节取代。
+
 2026-10-17，多轮选优的**人工结论**落地：新表 `member_selections` 与 `member_league_recommendations`（迁移 `021_member_selection`）。结论走「草稿 → 送审 → **第二位组织人员审核** → 生效」，`candidates`（逐人勾选）与 `basis`（依据原文）都是人填的必填输入，`evidence` 只是本轮 `vote_summary` 的无记名汇总按名单裁剪后的**依据快照**（只含票数与 `voter_count`，不含投票人身份）；系统不排序、不自动补人、不定等次，生效也不改 `member_profiles.current_stage`，只按目标阶段给「该报哪一项上级备案 / 审批」的提示（只提示不自动报送）。团组织推优只登记事实（推荐团组织 / 推荐日期 / 推优说明，可作废保留记录）：**系统不判断年龄**（全仓库没有出生年月字段，不新增生日字段、不做 28 周岁校验），缺推优记录只在结论明细里提示、不阻断选优与阶段流转。同时修掉一个只有真机会暴露的既有问题（迁移 `022_member_vote_dedup_batch`）：`member_votes` 的唯一约束漏了 `batch_no`，比服务层查重更严，同一投票人在新年度批次的第 1 轮投票会被抛成 500。
 
 - `tests/unit/test_member_selection.py`：13 项通过（无需数据库）。覆盖结论必须由人给名单与依据（不按票数生成）、研究日期不得晚于今天、目标阶段只能向前、只有 `approved` 才生效且自己送审的版本不给审核入口（`can_review` 为假）、低等级查看者不能审核、结论视图带密级与边界口径、四个目标阶段都有对应的上级备案 / 审批提示、四种审核状态都有中文标签、推优说明对低等级查看者脱敏（密级抬高到涉密时不返回正文且不入向量库）、**年龄从不被判成结论且缺推优记录不阻断任何环节**、请求体不能伪造结论内容（`extra="forbid"`）、创建契约只接受人填字段（`evidence` / `review_status` / 审核人这类字段根本不接受客户端提交）。
@@ -334,6 +336,25 @@ python tests/evaluation/run_evaluation.py --base-url http://127.0.0.1:8000/api/v
 - 开发库端到端手工核对（`TEST_TENANT` / 支部秘书 + 组织员两个账号，脚本可重复执行）：登记推优 → `active: true` / `age_notice` 含「系统不判断年龄」/ `data_level: sensitive`；登记结论（入党积极分子 → 拟推荐列为发展对象）→ `draft` / `effective: false` / `can_review: false` / `voter_count: 1` / 依据快照里既无 `voter_id` 也无登记人账号 / 提示指向细则第十三条备案；送审 → `pending`；**登记人自己审核 → 403**；过期版本号修订 → 409；换组织员账号 → `can_review: true` → 审核通过 → `effective: true`、留痕 `['create', 'submit', 'review']`；回读档案阶段不变；再修订 → 回到 `draft`、`submitted_by: null`；作废推优 → `active: false`、重复作废 409、已生效结论不受影响；未来研究日期 422、同阶段登记 422。
 
 未覆盖：**不自动生成结论、不排序、不定等次**（只存人填的名单与依据）；**不判断年龄、不新增出生年月字段**；不新增权限码（沿用 `member.query` / `member.scoring` / `member.stage_transition`）；生效结论**不自动改阶段、不自动向上级报送**；不产生个体通知与待办；不与 `T-MEM-09` 档案检查联动；结论的「同批次同轮次」不加唯一约束（重复由双人审核与留痕约束）；推优记录不自动写进结论；`evidence` 是无记名汇总快照，**不含投票明细**（要核对到票只能另开投票明细，且明细本身按最小权限）。
+
+## 团组织推优资格校验（T-MEM-06，2026-10-28）
+
+中央《共青团推优入党工作实施办法（试行）》要求推优对象年满 18 周岁、入团满 1 年。本次在 `member_profiles` 增加可空的 `birth_date`、`league_joined_on`（迁移 `032_member_league_eligibility`），并在 `member_league_recommendations` 增加 `eligibility_note` 保存登记时的核验结论。登记推优时按**推荐日期**核算：
+
+- 档案缺出生年月或入团时间：拒绝登记，提示先补录，不默认通过；
+- 未满 18 周岁、入团未满 1 年、入团时间晚于推荐日期：拒绝登记并说明原因；
+- 2 月 29 日出生 / 入团：非闰年按 2 月 28 日满周年；
+- 28 周岁以上：资格通过但提示组织核对是否仍适用团组织推优；
+- 推优记录仍不阻断选优与阶段流转；名册只回资格摘要，不铺开出生日期。
+
+新增与更新的测试：
+
+- `tests/unit/test_member_league_eligibility.py`：年龄、团龄、2 月 29 日、缺项、未来日期、28 周岁提示的边界。
+- `tests/unit/test_member_league_schema.py`：建档 / 补录日期契约、未来日期与入团早于出生拒绝、名册资格摘要不暴露日期。
+- `tests/unit/test_member_selection.py`：推优提示改为 18 周岁 + 1 年团龄口径；缺推优记录仍不阻断选优。
+- `tests/unit/test_migrations.py`：离线 SQL 含两个档案字段与 `eligibility_note`。
+- `tests/integration/test_member_selection_workflow.py`：有效档案可登记、缺项 / 未满 18 周岁 / 团龄不足 / 未来推荐日期分别 422、按人查询与作废流程不变。
+- `frontend/tests/contracts.test.mjs`：建档请求携带日期字段；前端与后端同一资格边界。
 
 ## 名册按支部筛选与名册统计回归（T-MEM-02）
 

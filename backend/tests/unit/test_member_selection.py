@@ -1,8 +1,8 @@
 """选优结论与团组织推优的边界单元测试（T-MEM-13、T-MEM-06）。
 
 钉住三件不能退让的事：**结论由人填写**（系统不按票数自动出名单）、**必须第二位组织人员
-审核**（自审与低权限角色都过不去）、**团组织推优只登记不判断年龄**（缺记录不阻断业务）；
-另外钉住密级标注 / 脱敏与请求契约不能伪造结论内容。
+审核**（自审与低权限角色都过不去）、**团组织推优按档案核验18周岁与1年团龄**（缺推优记录
+不阻断选优）；另外钉住密级标注 / 脱敏与请求契约不能伪造结论内容。
 """
 
 from datetime import date, timedelta
@@ -89,9 +89,12 @@ def test_only_approved_is_effective_and_self_review_is_blocked():
     assert service.selection_view(pending)["effective"] is False
     assert service.selection_view(pending)["can_review"] is True
     # 自己提交的不能自己审核：界面给出的"可审核"标记也必须是假
-    assert service.selection_view(full_conclusion(review_status="pending", submitted_by="u1"))[
-        "can_review"
-    ] is False
+    assert (
+        service.selection_view(full_conclusion(review_status="pending", submitted_by="u1"))[
+            "can_review"
+        ]
+        is False
+    )
     assert service.selection_view(full_conclusion(review_status="approved"))["effective"] is True
     assert service.selection_view(full_conclusion(review_status="rejected"))["effective"] is False
 
@@ -101,9 +104,12 @@ def test_lower_role_cannot_review_conclusions():
     assert build_service().can_decide is True
     lower = build_service(UserRole.MEMBER)
     assert lower.can_decide is False
-    assert lower.selection_view(full_conclusion(review_status="pending", submitted_by="u2"))[
-        "can_review"
-    ] is False
+    assert (
+        lower.selection_view(full_conclusion(review_status="pending", submitted_by="u2"))[
+            "can_review"
+        ]
+        is False
+    )
 
 
 def test_conclusion_view_is_marked_with_level_and_boundary():
@@ -160,16 +166,22 @@ def test_raised_recommendation_level_hides_note_and_blocks_embedding():
     assert view["embedding_allowed"] is False
 
 
-def test_age_is_never_judged_and_missing_record_never_blocks():
-    """名册里没有出生年月：推优只提示、不判断年龄、也不阻断业务。"""
-    assert "系统不判断年龄" in AGE_NOTICE
+def test_league_notice_requires_age_and_tenure_but_missing_record_never_blocks():
+    """推优资格按档案日期核验；缺推优记录仍不进"送审必填项"。"""
+    assert "年满18周岁" in AGE_NOTICE
+    assert "入团满1年" in AGE_NOTICE
     assert "不阻断" in AGE_NOTICE
     view = build_service().recommendation_view(
         MemberLeagueRecommendation(
-            stage="activist", league_org="某某学院团委", note="", data_level="sensitive"
+            stage="activist",
+            league_org="某某学院团委",
+            note="",
+            eligibility_note="推荐日已年满18周岁（19 周岁），入团已满1年",
+            data_level="sensitive",
         )
     )
     assert view["age_notice"] == AGE_NOTICE
+    assert view["eligibility_note"] == "推荐日已年满18周岁（19 周岁），入团已满1年"
     # 缺推优记录不进"送审必填项"：不阻断选优与阶段流转
     assert build_service().missing(full_conclusion()) == []
 

@@ -215,7 +215,7 @@ async def create_league_recommendation(
     body: LeagueRecommendationCreate,
     service: MemberSelectionService = Depends(selection_service),
 ) -> APIResponse[dict]:
-    """登记团组织推优：只登记事实，不判断年龄、不阻断选优与阶段流转。"""
+    """登记团组织推优：按推荐日期核验年满18周岁、入团满1年；不阻断选优与阶段流转。"""
     data = await service.create_recommendation(body)
     return await respond(
         request,

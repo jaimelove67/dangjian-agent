@@ -52,6 +52,8 @@ export function memberPayload(values) {
       Object.keys(STAGE_LABELS).find(
         (code) => STAGE_LABELS[code] === values.stage,
       ) || "applicant",
+    birth_date: values.birth_date || null,
+    league_joined_on: values.league_joined_on || null,
     materials: [],
     pending: 0,
   };

@@ -214,6 +214,14 @@ class MemberDevelopment:
             profile.name = body.name
         if body.id_card_no is not None:
             await self._assign_id_card(profile, body.id_card_no)
+        birth_date = body.birth_date or profile.birth_date
+        league_joined_on = body.league_joined_on or profile.league_joined_on
+        if birth_date and league_joined_on and league_joined_on < birth_date:
+            raise HTTPException(422, "入团时间不能早于出生年月，请核对档案")
+        if body.birth_date is not None:
+            profile.birth_date = body.birth_date
+        if body.league_joined_on is not None:
+            profile.league_joined_on = body.league_joined_on
         if body.batch_no is not None:
             profile.batch_no = body.batch_no
         if body.year is not None:

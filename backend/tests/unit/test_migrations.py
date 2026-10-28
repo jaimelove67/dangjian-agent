@@ -53,6 +53,15 @@ def test_chinese_fts_ddl_rendered(offline_sql):
     assert "ix_knowledge_docs_title_trgm" in offline_sql
 
 
+def test_league_eligibility_migration_renders_profile_and_audit_fields(offline_sql):
+    assert "ALTER TABLE member_profiles ADD COLUMN birth_date DATE" in offline_sql
+    assert "ALTER TABLE member_profiles ADD COLUMN league_joined_on DATE" in offline_sql
+    assert (
+        "ALTER TABLE member_league_recommendations ADD COLUMN eligibility_note VARCHAR(200)"
+        in offline_sql
+    )
+
+
 def test_self_service_migration_has_explicit_account_and_retry_constraints(offline_sql):
     assert "ALTER TABLE member_profiles ADD COLUMN user_id" in offline_sql
     assert "uq_member_profiles_tenant_user UNIQUE (tenant_id, user_id)" in offline_sql

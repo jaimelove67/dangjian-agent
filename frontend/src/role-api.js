@@ -43,6 +43,8 @@ export const roleApi = {
       download: true,
     }),
   profile: (profile) => request(`/member-full/profiles/${id(profile)}`),
+  updateProfile: (profile, body) =>
+    request(`/member-full/profiles/${id(profile)}`, json("PATCH", body)),
   linkAccount: (profile, username) =>
     request(`/member/roster/${id(profile)}/account`, json("PUT", { username })),
   addMaterial: (profile, body) =>

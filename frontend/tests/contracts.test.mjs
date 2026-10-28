@@ -9,6 +9,7 @@ import {
   meetingParticipants,
   branchOrganizations,
 } from "../src/contracts.js";
+import { leagueEligibility } from "../src/league-eligibility.js";
 
 test("stored system text upgrades preserve identity, attachments and user-authored business content", () => {
   const input = {
@@ -87,6 +88,8 @@ test("member creation uses the actual backend stage codes and only supported fie
     name: "测试人员",
     org_unit_id: "org-1",
     current_stage: "member",
+    birth_date: null,
+    league_joined_on: null,
     materials: [],
     pending: 0,
   });
@@ -94,6 +97,24 @@ test("member creation uses the actual backend stage codes and only supported fie
     memberPayload({ name: "小王", orgId: "org-2", stage: "发展对象" })
       .current_stage,
     "candidate",
+  );
+  assert.deepEqual(
+    memberPayload({
+      name: "小李",
+      orgId: "org-3",
+      stage: "入党积极分子",
+      birth_date: "2000-05-04",
+      league_joined_on: "2018-05-04",
+    }),
+    {
+      name: "小李",
+      org_unit_id: "org-3",
+      current_stage: "activist",
+      birth_date: "2000-05-04",
+      league_joined_on: "2018-05-04",
+      materials: [],
+      pending: 0,
+    },
   );
 });
 test("backend roster stages and relation state remain readable without inventing personal fields", () => {
@@ -173,4 +194,17 @@ test("meeting attendance preserves actual names and identifiers and update sends
   assert.throws(() => meetingParticipants("staff-1 | 张三 | 出席\nstaff-1 | 李四 | 出席"), /重复/);
   assert.throws(() => meetingParticipants("staff-1 | 张三"), /编号/);
   assert.throws(() => meetingParticipants("staff-1 | 张三 | 未知"), /出席/);
+});
+
+test("league recommendation eligibility checks age and one-year tenure at the recommendation date", () => {
+  const on = new Date(2026, 9, 28);
+  assert.equal(leagueEligibility("2008-10-28", "2025-10-28", on).eligible, true);
+  assert.equal(leagueEligibility("2008-10-29", "2025-10-28", on).eligible, false);
+  assert.match(leagueEligibility("2008-10-29", "2025-10-28", on).note, /18周岁/);
+  assert.equal(leagueEligibility("2008-01-01", "2025-10-29", on).eligible, false);
+  assert.match(leagueEligibility("2008-01-01", "2025-10-29", on).note, /入团满1年/);
+  assert.equal(leagueEligibility("", "2025-10-28", on).eligible, null);
+  assert.match(leagueEligibility("", "2025-10-28", on).note, /出生年月/);
+  assert.equal(leagueEligibility("2008-01-01", "", on).eligible, null);
+  assert.equal(leagueEligibility("2008-02-29", "2025-02-28", new Date(2026, 1, 28)).eligible, true);
 });

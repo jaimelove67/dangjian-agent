@@ -12,9 +12,10 @@
    不得自审（``apply_review``），修订后必须重新送审，全过程只追加留痕；审核另走
    ``member.stage_transition`` 权限点（登记只需 ``member.scoring``），两个权限点分开，
    将来把登记与审核拆给不同角色时不用改代码。
-3. **不"用年龄规则编数据"**。细则要求 28 周岁以下青年入党有团组织推优环节，但名册里没有
-   出生年月，系统判不了年龄：因此推优只登记 + 提示"请组织核对"，**不因为缺记录就阻断**
-   选优或阶段流转（否则只会逼出假日期）。
+3. **推优资格按档案核验，不编数据**。中央《共青团推优入党工作实施办法（试行）》要求推优
+   对象年满18周岁、入团满1年；名册补录出生年月与入团时间后，登记推优时按推荐日期核验。
+   档案缺项或明确不符时**拒绝登记**并提示补录，不默认通过；但**缺推优记录仍不阻断**选优
+   或阶段流转（真实推优材料往往后补，硬拦只会逼出假日期）。
 
 结论生效也不等于流转：阶段仍由授权人员在 ``member_stage_history`` 上人工办理，系统不自动
 改阶段，也不自动向上级报送（报送走 `T-MEM-11` 台账，由人登记）。
@@ -37,6 +38,7 @@ from app.rules.data_sensitivity import (
     selection_level,
     viewer_level,
 )
+from app.rules.member_league import league_eligibility
 from app.rules.member_stages import STAGE_LABELS, MemberStage, load_stage_rules
 from app.schemas.member_selection import (
     LeagueRecommendationCreate,
@@ -76,9 +78,10 @@ DECISION_BOUNDARY = (
 RECOMMENDATION_NOTICE = (
     "团组织推优只登记事实：推荐团组织、推荐日期与推优说明；推优记录不自动写进选优结论"
 )
+# 字段名 ``age_notice`` 保留给既有界面与接口；内容已从"不判断年龄"改为资格核验口径。
 AGE_NOTICE = (
-    "系统不判断年龄（名册里没有出生年月）：是否属 28 周岁以下青年请组织核对，"
-    "缺推优记录不阻断选优与阶段流转"
+    "团组织推优须核验：推优对象年满18周岁、入团满1年；档案缺少出生年月或入团时间时，"
+    "请先在党员档案中补录。缺推优记录不阻断选优与阶段流转"
 )
 
 # 生效结论对应的上级党组织事项：**只提示，不自动报送**（报送走 T-MEM-11 台账，由人登记）。
@@ -535,13 +538,20 @@ class MemberSelectionService:
     # ==================== 团组织推优台账 ====================
 
     async def create_recommendation(self, body: LeagueRecommendationCreate) -> dict[str, Any]:
-        """登记一条推优记录：不判断年龄、不阻断业务，只把事实记下来。"""
+        """登记一条推优记录：按推荐日期核验18周岁与1年团龄，再记录事实。"""
         profile = await self.profile(body.profile_id)
         if not profile.org_unit_id:
             raise HTTPException(422, "该党员未归属有效组织，请先在档案中补齐")
         self._require_org(profile.org_unit_id)
         if body.recommended_on > date.today():
             raise HTTPException(422, "推荐日期不能晚于今天")
+        eligible, eligibility_note = league_eligibility(
+            profile.birth_date,
+            profile.league_joined_on,
+            body.recommended_on,
+        )
+        if eligible is not True:
+            raise HTTPException(422, eligibility_note)
         row = MemberLeagueRecommendation(
             tenant_id=self.tenant_id,
             profile_id=str(profile.id),
@@ -551,6 +561,7 @@ class MemberSelectionService:
             stage=profile.current_stage,
             league_org=body.league_org,
             recommended_on=body.recommended_on,
+            eligibility_note=eligibility_note,
             note=body.note,
             data_level=selection_level().value,
             revision=1,
@@ -585,6 +596,7 @@ class MemberSelectionService:
             "org_name": row.org_name,
             "league_org": row.league_org,
             "recommended_on": row.recommended_on,
+            "eligibility_note": getattr(row, "eligibility_note", "") or "",
             "note": row.note,
             "revoked_on": row.revoked_on,
             "revoke_reason": row.revoke_reason,
@@ -649,7 +661,7 @@ class MemberSelectionService:
         }
 
     async def recommendation_status(self, profile_ids: str) -> list[dict[str, Any]]:
-        """按人给出"有没有推优记录"：只回标记与最近一次，不做年龄判断、不阻断业务。"""
+        """按人给出"有没有推优记录"：只回标记与最近一次，不阻断选优与阶段流转。"""
         ids = [item.strip() for item in profile_ids.split(",") if item.strip()]
         if not ids:
             return []

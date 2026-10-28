@@ -35,6 +35,7 @@ import {
 } from "../role-actions";
 import { STAGES } from "../data";
 import { STAGE_LABELS } from "../contracts";
+import { leagueEligibility, todayIso } from "../league-eligibility";
 import {
   PageHeader,
   PanelTitle,
@@ -723,6 +724,9 @@ export function DevelopmentWorkbench() {
       : getDemoDevelopment(member, data.developmentProfiles[member.id])
     : null;
   const materials = detail?.materials || [];
+  const eligibility = detail
+    ? leagueEligibility(detail.birth_date, detail.league_joined_on)
+    : null;
   // 个人提交材料只在清单里展示来源，不参与发展材料核对与阶段流转。
   const developmentMaterials = materials.filter(
     (m) => materialSource(m) !== "personal",
@@ -747,7 +751,28 @@ export function DevelopmentWorkbench() {
         throw new Error("当前档案不在办理权限范围。");
       if (!detail) throw new Error("档案尚未加载完成，请重试。");
       const reason = String(f.get("reason") || "").trim();
-      if (modal === "link") {
+      if (modal === "profile") {
+        const birth_date = f.get("birth_date") || null;
+        const league_joined_on = f.get("league_joined_on") || null;
+        if (!birth_date && !league_joined_on)
+          throw new Error("请至少填写出生年月或入团时间。");
+        if (birth_date && league_joined_on && league_joined_on < birth_date)
+          throw new Error("入团时间不能早于出生年月。");
+        if (IS_LIVE) {
+          await roleApi.updateProfile(member.id, {
+            ...(birth_date ? { birth_date } : {}),
+            ...(league_joined_on ? { league_joined_on } : {}),
+            reason,
+          });
+          w.reload();
+        } else {
+          saveDemoProfile({
+            ...detail,
+            ...(birth_date ? { birth_date } : {}),
+            ...(league_joined_on ? { league_joined_on } : {}),
+          });
+        }
+      } else if (modal === "link") {
         const username = f.get("username").trim();
         if (IS_LIVE) {
           await roleApi.linkAccount(member.id, username);
@@ -852,10 +877,12 @@ export function DevelopmentWorkbench() {
         update("auditEntries", (prev) => [
           newAudit(
             session.user,
-            modal === "link"
-              ? "明确关联本人档案账号"
-              : modal === "transition"
-                ? "人工登记发展阶段"
+            modal === "profile"
+              ? "补录党员档案信息"
+              : modal === "link"
+                ? "明确关联本人档案账号"
+                : modal === "transition"
+                  ? "人工登记发展阶段"
                 : modal === "material"
                   ? "登记发展材料"
                   : "登记培养记录",
@@ -990,6 +1017,16 @@ export function DevelopmentWorkbench() {
                   <p>{member.organization}</p>
                 </div>
                 <div className="development-actions">
+                  <button
+                    className="button secondary"
+                    disabled={!detail || busy}
+                    onClick={() => {
+                      setModal("profile");
+                      setError(null);
+                    }}
+                  >
+                    补录档案信息
+                  </button>
                   {session.user.role !== "school_admin" && (
                     <button
                       className="button secondary"
@@ -1024,6 +1061,26 @@ export function DevelopmentWorkbench() {
                     <span>{s}</span>
                   </div>
                 ))}
+              </div>
+              <div className="inline-note">
+                <span>出生年月：{detail?.birth_date || "未登记"}</span>
+                <span>入团时间：{detail?.league_joined_on || "未登记"}</span>
+                <Badge
+                  tone={
+                    eligibility?.eligible === true
+                      ? "green"
+                      : eligibility?.eligible === false
+                        ? "orange"
+                        : "blue"
+                  }
+                >
+                  {eligibility?.eligible === true
+                    ? "推优资格已核验"
+                    : eligibility?.eligible === false
+                      ? "推优资格不符"
+                      : "待补录"}
+                </Badge>
+                <span>{eligibility?.note}</span>
               </div>
               <Tabs
                 items={["材料清单", "培养记录", "阶段流转"]}
@@ -1255,13 +1312,15 @@ export function DevelopmentWorkbench() {
       {typeof modal === "string" && (
         <Modal
           title={
-            modal === "link"
-              ? "明确关联登录账号"
-              : modal === "material"
-                ? "登记发展材料"
-                : modal === "cultivation"
-                  ? "登记培养记录"
-                  : "人工登记阶段变更"
+            modal === "profile"
+              ? "补录档案信息"
+              : modal === "link"
+                ? "明确关联登录账号"
+                : modal === "material"
+                  ? "登记发展材料"
+                  : modal === "cultivation"
+                    ? "登记培养记录"
+                    : "人工登记阶段变更"
           }
           wide
           flat
@@ -1269,7 +1328,39 @@ export function DevelopmentWorkbench() {
         >
           <form onSubmit={save}>
             <div className="form-grid">
-              {modal === "link" ? (
+              {modal === "profile" ? (
+                <>
+                  <Field label="出生年月">
+                    <input
+                      name="birth_date"
+                      type="date"
+                      max={todayIso()}
+                      defaultValue={detail?.birth_date || ""}
+                    />
+                  </Field>
+                  <Field label="入团时间">
+                    <input
+                      name="league_joined_on"
+                      type="date"
+                      max={todayIso()}
+                      defaultValue={detail?.league_joined_on || ""}
+                    />
+                  </Field>
+                  <div className="inline-note field full">
+                    团组织推优按推荐日期核验：年满18周岁、入团满1年。共青团员请填写入团时间；
+                    非团员可留空，但无法登记团组织推优。系统不推算、不补造日期。
+                  </div>
+                  <Field label="补录依据" required full>
+                    <textarea
+                      name="reason"
+                      rows={3}
+                      required
+                      maxLength={2000}
+                      placeholder="填写档案原件、组织核实情况等依据"
+                    />
+                  </Field>
+                </>
+              ) : modal === "link" ? (
                 <>
                   <Field label="本人登录账号" required full>
                     <input

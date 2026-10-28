@@ -76,7 +76,7 @@ class SelectionDecision(SelectionInput):
 
 
 class LeagueRecommendationCreate(SelectionInput):
-    """登记团组织推优：推荐团组织与推荐日期由人填写，系统不判断年龄。"""
+    """登记团组织推优：推荐团组织与推荐日期由人填写，资格按档案日期核验。"""
 
     profile_id: str = Field(min_length=1, max_length=36)
     league_org: Label

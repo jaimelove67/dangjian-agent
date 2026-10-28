@@ -35,6 +35,10 @@ class MemberProfile(Base):
     name: Mapped[str] = mapped_column(String(50), nullable=False)
     # 身份证号：学校用它做登录账号，故存明文可读；对外展示一律经 mask_id_card 脱敏。
     id_card_no: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 团组织推优资格核验：出生年月与入团时间。均允许为空，缺失时不允许登记推优，
+    # 但不用 NULL 冒充日期；由组织人员按档案原件补录。
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    league_joined_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     org_name: Mapped[str] = mapped_column(String(200), nullable=False)
     org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
@@ -408,11 +412,11 @@ class MemberSelection(Base):
 class MemberLeagueRecommendation(Base):
     """团组织推优台账（`T-MEM-06`）：记录"28 周岁以下青年入党"要有的推优环节。
 
-    细则要求发展青年党员注重团组织推优，但**这项判断系统做不了**：名册里没有出生年月，
-    也没有可核对的"是否属 28 周岁以下"的权威字段。因此本表只做两件事——把推优这件事
-    如实记下来（推荐团组织 / 推荐日期 / 推优说明），以及在界面上提示"系统不判断年龄，
-    请组织核对"。**不因为缺这条记录就阻断选优或阶段流转**（宁缺勿假：真实推优材料
-    往往后补，硬拦会逼人填假日期），也不自动把推优记录写成选优结论。
+    中央《共青团推优入党工作实施办法（试行）》要求推优对象**年满18周岁、入团满1年**。
+    本表登记时按推荐日期核验档案中的出生年月与入团时间：档案缺项或明确不符时不允许登记，
+    避免把不符合条件的人记成推优对象；校验结论写入 ``eligibility_note`` 留痕。
+    **推优记录仍不阻断选优与阶段流转**（真实推优材料往往后补），也不自动把推优记录写成
+    选优结论。
 
     ``note`` 是推优说明，属第三人信息（可能含团组织 / 他人的评价意见），读取出口按
     密级（`member_selection_level`，默认敏感）收敛；作废保留记录与理由，不删除。
@@ -444,6 +448,8 @@ class MemberLeagueRecommendation(Base):
     # 推荐团组织名称文本：可能是院系团委、校团委或校外团组织，未必在本系统组织树里
     league_org: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     recommended_on: Mapped[date] = mapped_column(Date, nullable=False)
+    # 登记时按推荐日期核验年龄 / 团龄的结论快照；历史记录不回改。
+    eligibility_note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # 字段级敏感分级（T-MEM-12）：推优说明含第三人评价意见
     data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="sensitive")

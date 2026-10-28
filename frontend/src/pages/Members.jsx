@@ -26,6 +26,7 @@ import {
 import { organizations, DEPARTMENTS, STAGES } from "../data";
 import { normalizeMember, memberPayload } from "../contracts";
 import { organizationForest, organizationType } from "../organization-tree";
+import { todayIso } from "../league-eligibility";
 import {
   PageHeader,
   PanelTitle,
@@ -492,10 +493,18 @@ export function Members({ mode = "members" }) {
         status: "正常",
         joined: new Date().toISOString().slice(0, 10),
         year: 2026,
+        birth_date: String(form.get("birth_date") || ""),
+        league_joined_on: String(form.get("league_joined_on") || ""),
         note: String(form.get("note") || "").trim(),
       };
       if (!member.name || (!IS_LIVE && !member.number))
         throw new Error("姓名和学号 / 工号不能为空。");
+      if (
+        member.birth_date &&
+        member.league_joined_on &&
+        member.league_joined_on < member.birth_date
+      )
+        throw new Error("入团时间不能早于出生年月。");
       if (!IS_LIVE && data.members.some((m) => m.number === member.number))
         throw new Error("该学号 / 工号已存在，请核对后重试。");
       if (IS_LIVE) {
@@ -756,6 +765,22 @@ export function Members({ mode = "members" }) {
                   ))}
                 </select>
               </Field>
+              <Field label="出生年月">
+                <input
+                  name="birth_date"
+                  type="date"
+                  max={todayIso()}
+                  aria-label="出生年月"
+                />
+              </Field>
+              <Field label="入团时间">
+                <input
+                  name="league_joined_on"
+                  type="date"
+                  max={todayIso()}
+                  aria-label="入团时间"
+                />
+              </Field>
               {!IS_LIVE && (
                 <Field label="性别">
                   <select name="gender">
@@ -778,6 +803,7 @@ export function Members({ mode = "members" }) {
               {IS_LIVE && (
                 <div className="inline-note field full">
                   请核对姓名、所属组织和当前发展阶段后登记，其他信息按学校档案管理要求维护。
+                  出生年月与入团时间用于核验团组织推优资格；可后补，但缺项无法登记推优。
                 </div>
               )}
             </div>

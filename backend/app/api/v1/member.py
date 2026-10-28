@@ -260,6 +260,8 @@ async def create_member(
         org_name=organization.name,
         current_stage=body.current_stage.value,
         stage_joined_on=body.stage_joined_on or date.today(),
+        birth_date=body.birth_date,
+        league_joined_on=body.league_joined_on,
         materials=body.materials,
         pending=body.pending,
     )
