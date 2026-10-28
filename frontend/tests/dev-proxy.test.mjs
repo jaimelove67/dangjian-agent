@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import net from "node:net";
 import { once } from "node:events";
 import { createServer as createViteServer } from "vite";
 import viteConfig from "../vite.config.mjs";
@@ -9,6 +10,17 @@ async function listen(server) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return `http://127.0.0.1:${server.address().port}`;
+}
+
+// Vite treats a falsy port (including 0) as "use the default 5173", which makes
+// this test fail whenever a developer already has a dev server on that port.
+async function freePort() {
+  const probe = net.createServer();
+  probe.listen(0, "127.0.0.1");
+  await once(probe, "listening");
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  return port;
 }
 
 function get(url) {
@@ -40,7 +52,7 @@ async function startProxy(target) {
     server: {
       ...config.server,
       host: "127.0.0.1",
-      port: 0,
+      port: await freePort(),
       strictPort: true,
       hmr: false,
       watch: null,

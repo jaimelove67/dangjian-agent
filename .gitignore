@@ -18,6 +18,9 @@ coverage/
 .workbuddy/
 .codex/
 .agents/
+.playwright-mcp/
+.sisyphus/
+logs/
 .aws/
 .ssh/
 .env

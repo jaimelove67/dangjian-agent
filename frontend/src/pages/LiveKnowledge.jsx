@@ -16,7 +16,7 @@ export function LiveKnowledge() {
   const chunks = useResource(() => selected ? get(`/knowledge-docs/${key(selected)}/chunks`, { page: 1, page_size: 100 }) : Promise.resolve(null), [selected]);
   const processing = useResource(() => selected ? get(`/knowledge-docs/${key(selected)}/processing-status`) : Promise.resolve(null), [selected]);
   const d = detail.value;
-  function open(title, fields, submit, initial = {}, description) { setForm({ title, fields, submit, initial, description }); }
+  function open(title, fields, submit, initial = {}, description, suggest) { setForm({ title, fields, submit, initial, description, suggest }); }
   function reload() { documents.reload(); detail.reload(); chunks.reload(); processing.reload(); }
   async function save(path, body, method = "POST") { const result = await send(path, body, method); reload(); notify("知识库记录已保存"); return result; }
   function upload() {
@@ -38,7 +38,19 @@ export function LiveKnowledge() {
       body.append("file_name", values.file.name);
       const result = await request("/knowledge-docs", { method: "POST", body });
       reload(); setSelected(result.document.doc_id); notify(`入库成功，解析为${result.chunk_count}个片段；向量化及发布状态请单独核对`);
-    }, {}, "上传后保存加密原件并解析正文。公开库内容经审核后发布；向量化需要已配置的模型，处理失败会显示实际原因。");
+    }, {}, "选择文件后系统会读取正文，自动识别标题、发文字号、发文机关等信息并预填空白项，识别不到的请人工填写。上传后保存加密原件并解析正文。公开库内容经审核后发布；向量化需要已配置的模型，处理失败会显示实际原因。", {
+      fileField: "file",
+      run: file => {
+        const body = new FormData();
+        body.append("file", file);
+        return request("/knowledge-docs/suggest-meta", { method: "POST", body, timeout: 120000 });
+      },
+      apply: s => ({
+        title: s.title, issuer: s.issuer, level: s.level, doc_number: s.doc_number,
+        effective_date: s.effective_date, expiration_date: s.expiration_date,
+        tags: Array.isArray(s.tags) ? s.tags.join(",") : "", summary: s.summary,
+      }),
+    });
   }
   function replace() {
     open("上传新的原件版本", [{ name: "file", label: "新原件", type: "file", accept: ".pdf,.docx,.txt,.md" }, { name: "reason", label: "更换原件原因", type: "textarea" }], async values => {

@@ -11,7 +11,7 @@
     "build": "vite build",
     "build:sites": "vite build --outDir ../dist/client --emptyOutDir",
     "preview": "vite preview",
-    "test": "node --test --test-isolation=none tests/contracts.test.mjs tests/organization-tree.test.mjs tests/roles.test.mjs tests/api.test.mjs tests/platform.test.mjs tests/platform-health.test.mjs tests/school.test.mjs tests/dev-proxy.test.mjs tests/api-config.test.mjs"
+    "test": "node --test tests/contracts.test.mjs tests/organization-tree.test.mjs tests/roles.test.mjs tests/api.test.mjs tests/platform.test.mjs tests/platform-health.test.mjs tests/school.test.mjs tests/dev-proxy.test.mjs tests/api-config.test.mjs"
   },
   "dependencies": {
     "@iconify-icons/mdi": "^2.0.0",
