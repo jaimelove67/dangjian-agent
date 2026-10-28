@@ -252,6 +252,13 @@ export function scopedMembers(data, session, live = false) {
     ? data.members
     : data.members.filter((m) => memberInScope(session?.user, m));
 }
+export function memberMatchesOrganization(member, org, orgIds = []) {
+  const ids =
+    orgIds instanceof Set ? orgIds : new Set((orgIds || []).filter(Boolean));
+  if (ids.size)
+    return ids.has(String(member.orgId || member.org_unit_id || ""));
+  return !org || member.organization === org || member.department === org;
+}
 export function recordInScope(user, record) {
   const org = organizations.find(
     (o) => o.id === (record.orgId || record.org_unit_id),

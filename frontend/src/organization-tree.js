@@ -1,3 +1,19 @@
+// The search accepts either a display name or an exact organization id. Callers
+// sometimes navigate with an id (for example from a scoped business record), so
+// treating it as a name would silently filter the whole list away.
+export function organizationMatches(org, query = "") {
+  const term = String(query || "").trim();
+  if (!term) return true;
+  return org.name.includes(term) || String(org.id) === term;
+}
+
+export function organizationMemberCount(org, members = [], allowLocalFallback = true) {
+  if (Number.isFinite(org?.member_count)) return org.member_count;
+  if (!allowLocalFallback || !org?.id || !Array.isArray(members)) return null;
+  return members.filter((member) => (member.orgId || member.org_unit_id) === org.id)
+    .length;
+}
+
 // Parent links are meaningful only when both organizations are authorized.
 export function organizationForest(organizations, query = "") {
   const nodes = new Map(
@@ -25,7 +41,7 @@ export function organizationForest(organizations, query = "") {
   if (!term) return roots;
   function matching(node) {
     // Keep a matching parent's full subtree and a matching child's ancestors.
-    if (node.name.includes(term)) return node;
+    if (organizationMatches(node, term)) return node;
     const children = node.children.map(matching).filter(Boolean);
     return children.length ? { ...node, children } : null;
   }

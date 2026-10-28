@@ -103,6 +103,7 @@ def business_url(storage_url):
                             org_type=kind,
                             parent_id=parent,
                             path=org_id,
+                            leader_name="负责人-" + org_id,
                             is_deleted=deleted,
                         )
                     )
@@ -115,6 +116,7 @@ def business_url(storage_url):
                             org_type="department",
                             parent_id="school-a",
                             path="inactive-dept",
+                            leader_name="负责人-inactive-dept",
                             is_active=False,
                         ),
                         OrgUnit(
@@ -124,6 +126,7 @@ def business_url(storage_url):
                             org_type="branch",
                             parent_id="inactive-dept",
                             path="hidden-inactive-child",
+                            leader_name="负责人-hidden-inactive-child",
                         ),
                     ]
                 )
@@ -287,6 +290,55 @@ async def test_org_hierarchy_exposes_only_visible_parent_links(
             assert item["org_type"] in {"school", "department", "branch"}
             assert item["parent_id"] is None or item["parent_id"] in expected_parents
             assert item["id"] not in {"foreign", "inactive-dept", "deleted-branch"}
+
+
+@pytest.mark.parametrize(
+    "role,org,expected_counts",
+    [
+        (
+            UserRole.SCHOOL_ADMIN,
+            "school-a",
+            {
+                "school-a": 3,
+                "dept-a": 2,
+                "branch-a": 1,
+                "dept-b": 1,
+                "branch-b": 1,
+            },
+        ),
+        (
+            UserRole.DEPARTMENT_ADMIN,
+            "dept-a",
+            {"dept-a": 2, "branch-a": 1},
+        ),
+        (UserRole.BRANCH_SECRETARY, "branch-a", {"branch-a": 1}),
+        (UserRole.ORGANIZER, "branch-a", {"branch-a": 1}),
+        (
+            UserRole.SYSTEM_ADMIN,
+            None,
+            {
+                "school-a": 3,
+                "dept-a": 2,
+                "branch-a": 1,
+                "dept-b": 1,
+                "branch-b": 1,
+                "hidden-child": 1,
+                "hidden-inactive-child": 0,
+            },
+        ),
+    ],
+)
+async def test_org_options_expose_leader_and_aggregate_in_place_roster(
+    business_url, role, org, expected_counts
+):
+    async with client_for(business_url, user(role, org)) as (client, _):
+        response = await client.get("/api/v1/member/org-units")
+        assert response.status_code == 200
+        organizations = response.json()["data"]
+        assert {item["id"]: item["member_count"] for item in organizations} == expected_counts
+        assert {
+            item["id"]: item["leader_name"] for item in organizations
+        } == {org_id: "负责人-" + org_id for org_id in expected_counts}
 
 
 async def test_roster_filters_by_one_org_within_scope(business_url):

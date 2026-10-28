@@ -202,6 +202,9 @@ class MemberOrgOption(BaseModel):
     name: str
     org_type: str
     parent_id: str | None = None
+    # 组织详情需要直接展示负责人和名册规模；均可为空/为零，不能伪造。
+    leader_name: str | None = None
+    member_count: int = 0
 
 
 class RosterImportRow(BaseModel):

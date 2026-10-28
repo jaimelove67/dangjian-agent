@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { organizationForest, organizationType } from "../src/organization-tree.js";
+import {
+  organizationForest,
+  organizationMemberCount,
+  organizationMatches,
+  organizationType,
+} from "../src/organization-tree.js";
 
 const school = { id: "school", name: "测试大学党委", org_type: "school", parent_id: null };
 const department = { id: "dept", name: "计算机学院党委", org_type: "department", parent_id: "school" };
@@ -28,7 +33,24 @@ test("branch searches retain actual ancestors and parent searches retain their d
   const organizations = [school, department, branch];
   assert.equal(organizationForest(organizations, " 第一党支部 ")[0].children[0].children[0].id, "branch");
   assert.equal(organizationForest(organizations, "学院")[0].children[0].children[0].id, "branch");
+  assert.equal(organizationForest(organizations, "branch")[0].children[0].children[0].id, "branch");
   assert.deepEqual(organizationForest(organizations, "不存在"), []);
+});
+
+test("organization search and detail counts accept ids and remote aggregates", () => {
+  assert.equal(organizationMatches(branch, "branch"), true);
+  assert.equal(organizationMatches(branch, "本科生"), true);
+  assert.equal(organizationMatches(branch, "不存在"), false);
+  assert.equal(organizationMemberCount({ id: "branch", member_count: 7 }, []), 7);
+  assert.equal(
+    organizationMemberCount(
+      { id: "branch" },
+      [{ orgId: "branch" }, { orgId: "other" }],
+    ),
+    1,
+  );
+  assert.equal(organizationMemberCount({ id: "branch" }, [], false), null);
+  assert.equal(organizationMemberCount({}, []), null);
 });
 
 test("malformed self and cyclic parent links terminate without dropping visible organizations", () => {

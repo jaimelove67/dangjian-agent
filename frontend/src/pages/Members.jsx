@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import {
   Plus,
   DownloadSimple,
@@ -22,10 +22,16 @@ import {
   scopedOrganizations,
   hasPermission,
   memberInScope,
+  memberMatchesOrganization,
 } from "../roles";
 import { organizations, DEPARTMENTS, STAGES } from "../data";
 import { normalizeMember, memberPayload } from "../contracts";
-import { organizationForest, organizationType } from "../organization-tree";
+import {
+  organizationForest,
+  organizationType,
+  organizationMatches,
+  organizationMemberCount,
+} from "../organization-tree";
 import { todayIso } from "../league-eligibility";
 import {
   PageHeader,
@@ -55,6 +61,7 @@ export function Organization() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(IS_LIVE);
   const [reload, setReload] = useState(0);
+  const resolvedRouteQuery = useRef("");
   useEffect(() => {
     if (!IS_LIVE) return;
     let active = true;
@@ -69,9 +76,52 @@ export function Organization() {
     return () => { active = false; };
   }, [session.user.id, session.user.tenant_id, reload]);
   const list = IS_LIVE ? liveOrgs : scopedOrganizations(session);
-  const filtered = list.filter((o) => o.name.includes(query.trim()));
+  useEffect(() => {
+    const requested = String(routeParams.organization || "").trim();
+    if (!requested || resolvedRouteQuery.current === requested) return;
+    // Wait for the live organization response before deciding an id has no match.
+    if (IS_LIVE && loading && !list.length) return;
+    const match = list.find(
+      (org) => String(org.id) === requested || org.name === requested,
+    );
+    resolvedRouteQuery.current = requested;
+    if (match && query.trim() === requested) setQuery(match.name);
+  }, [IS_LIVE, list, loading, query, routeParams.organization]);
+  const term = query.trim();
+  const filtered = list.filter((org) => organizationMatches(org, query));
   const forest = useMemo(() => organizationForest(list, query), [list, query]);
   const liveCount = (type) => loading || error ? "—" : list.filter((org) => org.org_type === type).length;
+  const hasOrganizations = list.length > 0;
+  const emptyState = (
+    <Empty
+      title={hasOrganizations ? "未找到匹配组织" : "暂无授权组织"}
+      description={
+        hasOrganizations
+          ? `没有名称或编号与“${term}”匹配的党组织，请调整关键词或清除搜索。`
+          : "当前账号未关联可查看的党组织，请联系学校党委组织部核对组织归属。"
+      }
+      action={
+        hasOrganizations ? (
+          <button className="button secondary" onClick={() => setQuery("")}>
+            清除搜索
+          </button>
+        ) : (
+          <button
+            className="button secondary"
+            onClick={() => navigate("dashboard")}
+          >
+            返回工作台
+          </button>
+        )
+      }
+    />
+  );
+  const selectedLeader = selected
+    ? selected.leader_name || selected.secretary
+    : "";
+  const selectedMemberCount = selected
+    ? organizationMemberCount(selected, data.members, !IS_LIVE)
+    : null;
   return (
     <section className="panel workspace-panel">
       <PageHeader
@@ -102,7 +152,7 @@ export function Organization() {
                 </div>
               </div>
             ) : (
-              <Empty title={query ? "未找到匹配组织" : "暂无授权组织"} />
+              emptyState
             )
           ) : tab === "党组织架构" &&
           !query &&
@@ -193,28 +243,37 @@ export function Organization() {
                     <th>组织名称</th>
                     <th>类型</th>
                     <th>书记</th>
+                    <th>在册人员</th>
                     <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.slice(0, 18).map((o) => (
-                    <tr key={o.id}>
-                      <td>{o.name}</td>
-                      <td>{organizationType(o)}</td>
-                      <td>{o.secretary || "—"}</td>
-                      <td>
-                        <button
-                          className="text-button link"
-                          onClick={() => setSelected(o)}
-                        >
-                          查看
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filtered.slice(0, 18).map((o) => {
+                    const memberCount = organizationMemberCount(
+                      o,
+                      data.members,
+                      !IS_LIVE,
+                    );
+                    return (
+                      <tr key={o.id}>
+                        <td>{o.name}</td>
+                        <td>{organizationType(o)}</td>
+                        <td>{o.leader_name || o.secretary || "未登记"}</td>
+                        <td>{memberCount == null ? "—" : `${memberCount} 人`}</td>
+                        <td>
+                          <button
+                            className="text-button link"
+                            onClick={() => setSelected(o)}
+                          >
+                            查看
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-              {!filtered.length && <Empty />}
+              {!filtered.length && emptyState}
             </div>
           )}
         </div>
@@ -279,24 +338,33 @@ export function Organization() {
             <dt>组织类型</dt>
             <dd>{organizationType(selected)}</dd>
             <dt>支部书记</dt>
-            <dd>{selected.secretary || "待登记"}</dd>
-            <dt>在册党员</dt>
+            <dd>{selectedLeader || "未登记"}</dd>
+            <dt>在册人员</dt>
             <dd>
-              {!IS_LIVE && selected.id
-                ? `${data.members.filter((m) => m.orgId === selected.id).length} 人`
-                : "以授权名册为准"}
+              {selectedMemberCount == null
+                ? "按授权名册统计"
+                : `${selectedMemberCount} 人`}
             </dd>
           </dl>
-          <button
-            className="button primary"
-            onClick={() => {
-              navigate("members", { organization: selected.name });
-              setSelected(null);
-            }}
-          >
-            查看组织党员
-            <ArrowRight size={16} />
-          </button>
+          {selected.id ? (
+            <button
+              className="button primary"
+              onClick={() => {
+                navigate("members", {
+                  organization: selected.name,
+                  orgId: selected.id,
+                });
+                setSelected(null);
+              }}
+            >
+              查看组织党员
+              <ArrowRight size={16} />
+            </button>
+          ) : (
+            <p className="inline-note">
+              请选择具体党支部查看党员名册。
+            </p>
+          )}
         </Modal>
       )}
     </section>
@@ -336,6 +404,9 @@ export function Members({ mode = "members" }) {
   const [query, setQuery] = useState(routeParams.query || "");
   const [org, setOrg] = useState(
     routeParams.organization || routeParams.department || "",
+  );
+  const [orgId, setOrgId] = useState(
+    routeParams.orgId || routeParams.org_id || routeParams.org_unit_id || "",
   );
   const [stage, setStage] = useState(routeParams.stage || "");
   const [page, setPage] = useState(1);
@@ -379,7 +450,12 @@ export function Members({ mode = "members" }) {
   }, []);
   useEffect(() => {
     setPage(1);
-  }, [query, org, stage, size, tab]);
+  }, [query, org, orgId, stage, size, tab]);
+  useEffect(() => {
+    if (!orgId) return;
+    const match = orgOptions.find((o) => String(o.id) === String(orgId));
+    if (match?.name && match.name !== org) setOrg(match.name);
+  }, [orgId, orgOptions, org]);
   function openImportDialog() {
     setImportDialog(true);
     setImportFile(null);
@@ -452,6 +528,31 @@ export function Members({ mode = "members" }) {
       setImportBusy(false);
     }
   }
+  const organizationOptions = useMemo(() => {
+    const values = new Set(orgOptions.map((o) => o.department || o.name));
+    if (org) values.add(org);
+    return [...values];
+  }, [orgOptions, org]);
+  const orgScopeIds = useMemo(() => {
+    if (!orgId) return null;
+    const children = new Map();
+    for (const o of orgOptions) {
+      const parent = String(o.parent_id || "");
+      if (!children.has(parent)) children.set(parent, []);
+      children.get(parent).push(String(o.id));
+    }
+    const ids = new Set([String(orgId)]);
+    const queue = [String(orgId)];
+    while (queue.length) {
+      const current = queue.pop();
+      for (const child of children.get(current) || []) {
+        if (ids.has(child)) continue;
+        ids.add(child);
+        queue.push(child);
+      }
+    }
+    return ids;
+  }, [orgId, orgOptions]);
   const filtered = useMemo(
     () =>
       scopedMembers(data, session, IS_LIVE).filter(
@@ -460,11 +561,11 @@ export function Members({ mode = "members" }) {
             `${m.name} ${m.number} ${m.department}`
               .toLowerCase()
               .includes(query.toLowerCase())) &&
-          (!org || m.organization === org || m.department === org) &&
+          memberMatchesOrganization(m, org, orgScopeIds) &&
           (!stage || m.stage === stage) &&
           (tab !== "党员转正" || m.stage === "预备党员"),
       ),
-    [data.members, query, org, stage, tab, session],
+    [data.members, query, org, orgScopeIds, stage, tab, session],
   );
   const pages = Math.max(1, Math.ceil(filtered.length / size));
   const actualPage = Math.min(page, pages);
@@ -576,14 +677,15 @@ export function Members({ mode = "members" }) {
         <Select
           label="所属组织"
           value={org}
-          onChange={(e) => setOrg(e.target.value)}
+          onChange={(e) => {
+            setOrg(e.target.value);
+            setOrgId("");
+          }}
         >
           <option value="">所属组织</option>
-          {[...new Set(orgOptions.map((o) => o.department || o.name))].map(
-            (o) => (
-              <option key={o}>{o}</option>
-            ),
-          )}
+          {organizationOptions.map((o) => (
+            <option key={o}>{o}</option>
+          ))}
         </Select>
         <Select
           label="党员状态"
@@ -673,7 +775,31 @@ export function Members({ mode = "members" }) {
           </tbody>
         </table>
         {busy && !adding && <Loading />}
-        {!rows.length && !busy && <Empty />}
+        {!rows.length && !busy && (
+          <Empty
+            title={
+              orgId ? "未找到符合条件的人员" : "暂无符合条件的记录"
+            }
+            description={
+              orgId
+                ? `已按“${org || "所选组织"}”筛选；该组织及其下级组织在当前条件下没有可显示的名册记录。`
+                : "试试调整搜索关键词或筛选条件。"
+            }
+            action={
+              orgId ? (
+                <button
+                  className="button secondary"
+                  onClick={() => {
+                    setOrg("");
+                    setOrgId("");
+                  }}
+                >
+                  清除组织筛选
+                </button>
+              ) : undefined
+            }
+          />
+        )}
         {tab === "党员转正" &&
           rows.length > 0 &&
           !rows.some((m) => m.stage === "预备党员") && (

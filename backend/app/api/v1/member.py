@@ -109,6 +109,42 @@ async def member_org_units(
 ) -> APIResponse[list[MemberOrgOption]]:
     organizations = await accessible_org_units(db, user)
     visible_ids = {str(org.id) for org in organizations}
+    parent_by_id = {
+        str(org.id): (
+            str(org.parent_id)
+            if org.parent_id is not None and str(org.parent_id) in visible_ids
+            else None
+        )
+        for org in organizations
+    }
+    # 名册口径与 /member/roster 一致：有效、在册、未转出。统计直接归属，
+    # 再向可见上级累加，使学校/院系详情能显示本级及下级组织的总人数。
+    member_counts = {org_id: 0 for org_id in visible_ids}
+    if visible_ids:
+        rows = (
+            await db.execute(
+                select(MemberProfile.org_unit_id, func.count(MemberProfile.id))
+                .where(
+                    MemberProfile.tenant_id == str(user.tenant_id),
+                    MemberProfile.is_deleted.is_(False),
+                    MemberProfile.is_active.is_(True),
+                    MemberProfile.relation_status != "transferred_out",
+                    MemberProfile.org_unit_id.in_(visible_ids),
+                )
+                .group_by(MemberProfile.org_unit_id)
+            )
+        ).all()
+        for org_id, count in rows:
+            if not org_id or str(org_id) not in member_counts:
+                continue
+            org_id = str(org_id)
+            member_counts[org_id] += count
+            seen = {org_id}
+            parent = parent_by_id.get(org_id)
+            while parent and parent not in seen:
+                member_counts[parent] += count
+                seen.add(parent)
+                parent = parent_by_id.get(parent)
     return APIResponse(
         data=[
             MemberOrgOption(
@@ -116,6 +152,8 @@ async def member_org_units(
                 name=org.name,
                 org_type=org.org_type,
                 parent_id=org.parent_id if org.parent_id in visible_ids else None,
+                leader_name=org.leader_name,
+                member_count=member_counts.get(str(org.id), 0),
             )
             for org in organizations
         ],

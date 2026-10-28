@@ -9,6 +9,7 @@ import {
   scopedMembers,
   scopedOrganizations,
   memberInScope,
+  memberMatchesOrganization,
   scopedMeetings,
   sessionForAccount,
 } from "../src/roles.js";
@@ -104,6 +105,14 @@ test("department and branch scopes select only their own roster and organization
     scopedMembers({ members: seedMembers }, demoSession("student")).length,
     1,
   );
+});
+test("organization drill-down filters by id, including descendant ids, without a false name mismatch", () => {
+  const member = { orgId: "branch", organization: "第一支部", department: "学院" };
+  assert.equal(memberMatchesOrganization(member, "", new Set(["dept", "branch"])), true);
+  assert.equal(memberMatchesOrganization(member, "", new Set(["other"])), false);
+  assert.equal(memberMatchesOrganization(member, "第一支部", null), true);
+  assert.equal(memberMatchesOrganization(member, "学院", null), true);
+  assert.equal(memberMatchesOrganization(member, "其他支部", null), false);
 });
 test("new department accounts use supplied organization scope without upgrading permissions", () => {
   const s = sessionForAccount({
