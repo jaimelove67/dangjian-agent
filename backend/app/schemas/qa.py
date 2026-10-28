@@ -11,7 +11,10 @@ from app.core.decision_boundary import QA_DISCLAIMER
 
 # 统一响应内置文案（标注口径见 app/core/decision_boundary.py，禁止在本模块自拟）
 DEFAULT_DISCLAIMER = QA_DISCLAIMER
-REFUSAL_ANSWER = "知识库中未找到直接依据，建议向上一级党组织确认。"
+REFUSAL_ANSWER = (
+    "本次回答未通过制度依据核验，暂不能给出结论。"
+    "你可以补充文件名称或文号、上传材料后再问，或向组织部门确认具体口径。"
+)
 
 
 class AskRequest(BaseModel):

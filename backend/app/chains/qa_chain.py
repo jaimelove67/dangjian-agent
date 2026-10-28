@@ -4,7 +4,7 @@
 
 1. 预处理   追问改写为独立问题（``rewrite_question``）
 2. 检索     混合召回 + 强制过滤（``Retriever``，由检索链路实现）
-3. 重排判定 重排并判定是否有依据（阈值可配；无依据直接拒答）
+3. 重排判定 重排并判定是否有依据（阈值可配；无依据转办理参考或拒答）
 4. 生成     依据片段生成回答（``Generator``，由模型接入实现）
 5. 引用核验 核验引用编号 / 条款真实性 / 时效（经 WF-03 标准入口，见 T-WF02-13）
 6. 输出     组装统一响应（回答 + 引用 + 风险 + 免责声明）
@@ -29,6 +29,20 @@ from app.schemas.qa import DEFAULT_DISCLAIMER, REFUSAL_ANSWER, Citation, QARespo
 from app.schemas.wf import CitationCheckRequest
 
 logger = logging.getLogger(__name__)
+
+NO_EVIDENCE_ANSWER = (
+    "知识库中未检索到与这个问题直接相关的现行制度原文。"
+    "你可以补充文件名称或文号、上传材料后再问，或向组织部门确认具体口径。"
+)
+ADVISORY_PREFIX = "未检索到可引用的制度依据，以下为办理参考："
+#: 办理参考里一旦出现“具体条款/文号”就说明模型在冒充制度原文；这类句子必须移除，
+#: 不能靠提示词“请勿编造”兜底。保留普通文件名（如“可学习《党章》”）不拦。
+_POLICY_REFERENCE = re.compile(
+    r"(?:根据|依据|按照|参照)\s*《[^》]+》"
+    r"|《[^》]+》\s*第[一二三四五六七八九十百千0-9]+条"
+    r"|第[一二三四五六七八九十百千0-9]+条"
+    r"|[〔\[]\d{4}[〕\]]\s*\d+\s*号"
+)
 
 
 class Retriever(Protocol):
@@ -58,12 +72,17 @@ class QAChain:
         llm_call: Optional[LLMCall] = None,
         no_evidence_threshold: Optional[float] = None,
         supplemental_material: Optional[str] = None,
+        advisory_generator: Optional[Generator] = None,
     ) -> None:
         self.retriever = retriever
         self.generator = generator
         self.verifier = verifier or CitationVerifier()
         self.session = session
         self.llm_call = llm_call
+        # 无依据时不直接拒答，而是用独立的办理参考提示词生成通用思路。
+        # 独立注入而不是复用 generator，确保“可引用回答”和“无依据办理参考”
+        # 不会共用同一套提示词，也不会把无引用内容混进引用核验。
+        self.advisory_generator = advisory_generator
         self.no_evidence_threshold = (
             settings.NO_EVIDENCE_THRESHOLD
             if no_evidence_threshold is None
@@ -120,21 +139,38 @@ class QAChain:
             )
             raise
 
-        # 阶段 3：重排判定（无依据则直接拒答，跳过生成）
+        # 阶段 3：重排判定（无依据转办理参考或拒答，跳过引用核验）
         from app.core.metrics import RETRIEVAL_SCORE
 
-        RETRIEVAL_SCORE.observe(max((c.score or 0 for c in chunks), default=0))
+        top_score = max((c.score or 0 for c in chunks), default=0)
+        RETRIEVAL_SCORE.observe(top_score)
         if self._is_no_evidence(chunks):
+            logger.info(
+                "qa_no_evidence",
+                extra={
+                    "tenant_id": tenant_id,
+                    "top_score": round(top_score, 4),
+                    "threshold": self.no_evidence_threshold,
+                    "chunk_count": len(chunks),
+                    "advisory_enabled": self.advisory_generator is not None,
+                },
+            )
             if self.supplemental_material:
                 return await self._answer_from_material(
                     question=standalone_question,
                     tenant_id=tenant_id,
                     session_id=session_id,
                 )
+            if self.advisory_generator is not None:
+                return await self._answer_advisory(
+                    question=standalone_question,
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                )
             response = QAResponse(
-                answer=REFUSAL_ANSWER,
+                answer=NO_EVIDENCE_ANSWER,
                 citations=[],
-                warnings=["未检索到满足依据的片段，已拒答"],
+                warnings=["未检索到满足依据的片段，已停止生成"],
                 disclaimer=DEFAULT_DISCLAIMER,
                 refused=True,
             )
@@ -205,6 +241,58 @@ class QAChain:
         return response
 
     # ---------------------------------------------------------------
+    async def _answer_advisory(
+        self, *, question: str, tenant_id: str, session_id: Optional[str]
+    ) -> QAResponse:
+        """制度库没有可引片段、需要给通用办理参考时的作答路径。
+
+        与正常作答的边界：
+
+        1. 不产生引用，也不进入引用核验——没有原文就不能宣称“依据某条”；
+        2. 开头固定写明未检索到制度依据，界面据此显示“办理参考”；
+        3. 提示词只允许通用工作思路，不允许编造条款、文号、时限或组织结论。
+        """
+        assert self.advisory_generator is not None
+        try:
+            draft = await self.advisory_generator.generate(question=question, chunks=[])
+        except Exception:
+            logger.exception("qa_advisory_generation_failed", extra={"tenant_id": tenant_id})
+            raise
+        answer = re.sub(r"\s*\[\d+\]", "", draft or "").strip()
+        warnings = [
+            "未检索到可引用的制度依据：以下内容为办理参考，不构成政策依据；"
+            "涉及具体政策口径请以正式文件和组织意见为准。"
+        ]
+        # 提示词之外的第二道边界：模型仍可能写出“根据《…》第X条”或文号。
+        # 按句移除这类内容，保留其余通用思路；整段都被移除时退回固定说明。
+        if _POLICY_REFERENCE.search(answer):
+            parts = re.split(r"(?<=[。；\n])", answer)
+            answer = "".join(
+                part for part in parts if not _POLICY_REFERENCE.search(part)
+            ).strip()
+            warnings.append("办理参考中涉及具体条款或文号的内容已移除，请以正式文件为准。")
+        if not answer:
+            answer = (
+                f"{ADVISORY_PREFIX}\n\n"
+                "暂时无法生成具体内容。请补充文件名称、文号或上传材料，"
+                "也可向组织部门确认具体口径。"
+            )
+        elif not answer.startswith("未检索到可引用的制度依据"):
+            answer = f"{ADVISORY_PREFIX}\n\n{answer}"
+        response = QAResponse(
+            answer=answer,
+            citations=[],
+            warnings=warnings,
+            disclaimer=DEFAULT_DISCLAIMER,
+            refused=False,
+        )
+        logger.info(
+            "qa_advisory_answer",
+            extra={"tenant_id": tenant_id, "answer_length": len(answer)},
+        )
+        await self._persist(tenant_id, session_id, question, response)
+        return response
+
     async def _answer_from_material(
         self, *, question: str, tenant_id: str, session_id: Optional[str]
     ) -> QAResponse:

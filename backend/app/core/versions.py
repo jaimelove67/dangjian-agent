@@ -20,17 +20,26 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.prompts.qa import QA_SYSTEM_PROMPT_VERSION, REWRITE_PROMPT_VERSION
+from app.prompts.qa import (
+    ADVISORY_PROMPT_VERSION,
+    QA_SYSTEM_PROMPT_VERSION,
+    REWRITE_PROMPT_VERSION,
+)
 from app.schemas.wf import WF03_VERSION, WF03_WORKFLOW, WF04_VERSION, WF04_WORKFLOW
 
 #: 提示词种类与出厂默认版本（租户未配置时生效）
 PROMPT_DEFAULTS: dict[str, str] = {
     "qa": QA_SYSTEM_PROMPT_VERSION,
     "rewrite": REWRITE_PROMPT_VERSION,
+    "advisory": ADVISORY_PROMPT_VERSION,
 }
 
 #: 提示词种类的显示名。导出文件与界面共用一套说法，避免同一事实两种叫法。
-PROMPT_LABELS: dict[str, str] = {"qa": "问答提示词", "rewrite": "追问改写"}
+PROMPT_LABELS: dict[str, str] = {
+    "qa": "问答提示词",
+    "rewrite": "追问改写",
+    "advisory": "办理参考",
+}
 
 #: 已登记的工作流与用途。版本号取自契约常量，不在这里重写一遍。
 WORKFLOW_VERSIONS: tuple[dict[str, str], ...] = (

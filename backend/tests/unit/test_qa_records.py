@@ -16,6 +16,7 @@ from app.services.qa_record_io import (
     RECORD_SHEET,
     build_qa_records,
     level_label,
+    result_label,
 )
 from app.core.timeutil import local_time
 from app.services.qa_record_service import (
@@ -187,6 +188,18 @@ class TestLevelLabel:
         assert level_label("unexpected") == "unexpected"
 
 
+class TestResultLabel:
+    def test_grounded_answer_is_distinct_from_advisory(self):
+        assert result_label(record_row()) == "已作答（有依据）"
+        assert (
+            result_label(record_row(has_sufficient_evidence=False, citation_count=0))
+            == "办理参考（无依据）"
+        )
+
+    def test_refusal_keeps_its_own_label(self):
+        assert result_label(record_row(refused=True, has_sufficient_evidence=False)) == "无依据拒答"
+
+
 class TestLocalTime:
     def test_utc_is_rendered_as_beijing_time(self):
         assert local_time(datetime(2026, 1, 1, 0, 30)) == "2026-01-01 08:30"
@@ -214,7 +227,7 @@ class TestExportWorkbook:
         assert values[0] == "2026-01-01 08:30"
         assert values[1] == "张三"
         assert values[3] == "内部"
-        assert values[4] == "已作答"
+        assert values[4] == "已作答（有依据）"
         assert values[5] == "有依据"
         assert values[6] == "正常"
         # 版本留痕（SEC-11）：这条测试数据没有版本指纹 → 明确写"未留痕"，不假装知道

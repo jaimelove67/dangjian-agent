@@ -42,6 +42,15 @@ class FakeGenerator:
         return self.text
 
 
+class FakeAdvisoryGenerator(FakeGenerator):
+    """办理参考生成器；测试里只关心是否被调用、是否清掉引用角标。"""
+
+    async def generate(self, *, question, chunks):
+        self.calls += 1
+        assert chunks == []
+        return self.text
+
+
 def _chunk(index: int = 1, **overrides) -> RetrievedChunk:
     base = {
         "index": index,
@@ -127,7 +136,56 @@ async def test_no_chunks_refuses_and_skips_generation():
     assert generator.calls == 0
 
 
-async def test_low_score_refuses():
+async def test_no_chunks_advisory_answers_without_citations():
+    generator = FakeGenerator("不应被调用")
+    advisory = FakeAdvisoryGenerator("可以按以下步骤准备：\n1. 明确活动主题。")
+    chain = QAChain(
+        retriever=FakeRetriever([]),
+        generator=generator,
+        advisory_generator=advisory,
+    )
+    response = await chain.ask(question="帮我起草一份活动方案", tenant_id="t1")
+
+    assert response.refused is False
+    assert response.citations == []
+    assert generator.calls == 0
+    assert advisory.calls == 1
+    assert response.answer.startswith("未检索到可引用的制度依据，以下为办理参考：")
+    assert any("不构成政策依据" in warning for warning in response.warnings)
+
+
+async def test_advisory_strips_citation_markers():
+    chain = QAChain(
+        retriever=FakeRetriever([]),
+        generator=FakeGenerator("不应被调用"),
+        advisory_generator=FakeAdvisoryGenerator("参考步骤[1][2]。"),
+    )
+    response = await chain.ask(question="起草方案", tenant_id="t1")
+
+    assert "[1]" not in response.answer
+    assert "[2]" not in response.answer
+    assert response.refused is False
+
+
+async def test_advisory_removes_fabricated_clause_references():
+    chain = QAChain(
+        retriever=FakeRetriever([]),
+        generator=FakeGenerator("不应被调用"),
+        advisory_generator=FakeAdvisoryGenerator(
+            "可以先明确活动主题。\n根据《中国共产党章程》第十条，必须提前3天报备。\n"
+            "然后收集党员意见。"
+        ),
+    )
+    response = await chain.ask(question="起草方案", tenant_id="t1")
+
+    assert "第十条" not in response.answer
+    assert "必须提前3天报备" not in response.answer
+    assert "可以先明确活动主题" in response.answer
+    assert "然后收集党员意见" in response.answer
+    assert any("具体条款或文号" in warning for warning in response.warnings)
+
+
+async def test_low_score_refuses_without_advisory():
     chain = QAChain(
         retriever=FakeRetriever([_chunk(1, score=0.1)]),
         generator=FakeGenerator("x[1]"),
@@ -135,6 +193,18 @@ async def test_low_score_refuses():
     )
     response = await chain.ask(question="问", tenant_id="t1")
     assert response.refused is True
+
+
+async def test_low_score_advisory_answers():
+    chain = QAChain(
+        retriever=FakeRetriever([_chunk(1, score=0.1)]),
+        generator=FakeGenerator("不应被调用"),
+        advisory_generator=FakeAdvisoryGenerator("办理思路。"),
+        no_evidence_threshold=0.5,
+    )
+    response = await chain.ask(question="问", tenant_id="t1")
+    assert response.refused is False
+    assert response.citations == []
 
 
 async def test_high_score_proceeds():

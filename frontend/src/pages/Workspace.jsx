@@ -91,8 +91,8 @@ const services = [
     prompt: "帮我起草一份“红色基因·青春力量”主题党日活动方案",
   },
   {
-    title: "数据分析问答",
-    description: "读懂工作数据，发现提升空间",
+    title: "数据分析思路",
+    description: "梳理分析口径与指标框架",
     icon: ChartBar,
     color: "teal",
     prompt: "如何分析本月党支部活动的参与情况？",
@@ -265,6 +265,7 @@ export function Assistant() {
           citations: answer.citations || [],
           disclaimer: answer.disclaimer,
           refused: answer.refused,
+          hasSufficientEvidence: answer.has_sufficient_evidence,
           warnings: answer.warnings || [],
           createdAt: Date.now(),
         },
@@ -346,7 +347,7 @@ export function Assistant() {
             </div>
             <div className="ai-empty-note">
               <ShieldCheck size={15} />
-              以制度为依据，以人工审核为准
+              制度类问题附引用；未检索到制度时提供办理参考
             </div>
           </>
         ) : (
@@ -363,9 +364,14 @@ export function Assistant() {
                 <div className="message-content">
                   <div className="message-label">
                     {m.role === "assistant" ? "党建智能体" : "您"}
-                    {m.role === "assistant" && !IS_LIVE && (
-                      <Badge tone="orange">办理参考</Badge>
+                    {m.role === "assistant" && m.refused && (
+                      <Badge tone="red">未找到依据</Badge>
                     )}
+                    {m.role === "assistant" &&
+                      !m.refused &&
+                      !m.citations?.length && (
+                        <Badge tone="orange">办理参考</Badge>
+                      )}
                   </div>
                   <div className="message-text">{m.content}</div>
                   {m.attachments?.length > 0 && (
@@ -496,7 +502,7 @@ export function Assistant() {
           </button>
           <span>
             {IS_LIVE
-              ? "回答由授权知识库与模型辅助生成，请核对引用。"
+              ? "回答由授权知识库与模型辅助生成，请核对引用；未检索到制度时仅提供办理参考。"
               : "当前提供办理参考，请勿输入与问题无关的个人信息。"}
           </span>
         </div>

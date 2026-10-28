@@ -7,7 +7,10 @@
 说明：
 - 通过真实入库接口 POST /knowledge-docs 上传；显式传入 --embed 才向量化本次演示文件。
 - 内容为公开党内法规与校内制度的**节选要点整理**，非官方全文；正式使用请替换为
-  权威文本。资料标为同租户学校范围、未核验演示和 expired，不能进入正式有效制度统计。
+  权威文本。资料默认标为同租户学校范围、未核验演示和 expired，不能进入正式有效制度统计。
+- 如需演示“中央制度问答”，在导入并向量化后运行
+  ``publish_demo_central_docs.py --tenant-id <租户ID> --yes``，只发布 3 篇中央节选；
+  重新导入会恢复为学校范围/expired，需要再次运行该脚本。
 - 密码交互输入；只允许 development/testing 环境。
 - 幂等：doc_id 已存在时后端返回 409，脚本跳过该文档。
 """
@@ -219,6 +222,17 @@ DOCS: list[dict[str, str]] = [
     },
 ]
 
+# 演示数据的权威来源标签：只影响展示与引用核验口径，不改变“未核验演示”提示。
+AUTHORITY_BY_DOC = {
+    "DOC-PARTY-CONSTITUTION": "party_constitution",
+    "DOC-BRANCH-REGULATION": "party_regulation",
+    "DOC-MEMBER-EDU-REGULATION": "party_regulation",
+    "DOC-DISCIPLINE-REGULATION": "party_regulation",
+    "DOC-SCHOOL-STUDENT-MEMBER": "school_policy",
+    "DOC-SCHOOL-TUIYOU": "school_policy",
+    "DOC-DEPT-TRAINING-RECORD": "school_policy",
+}
+
 
 def _prompt_password() -> str:
     """交互输入密码；非交互环境（如脚本化启动）直接报错，避免静默挂起等待输入。"""
@@ -242,6 +256,8 @@ def _metadata_fields(doc: dict[str, str]) -> dict[str, str]:
         "tags",
         "summary",
         "status",
+        "authority",
+        "validity",
     )
     data = {k: doc.get(k, "") for k in keys}
     data.update(
@@ -252,6 +268,8 @@ def _metadata_fields(doc: dict[str, str]) -> dict[str, str]:
         level="school",
         visibility="school",
         status="expired",
+        authority=AUTHORITY_BY_DOC.get(doc["doc_id"], "reference"),
+        validity="effective",
     )
     if doc.get("expiration_date"):
         data["expiration_date"] = doc["expiration_date"]
@@ -317,6 +335,10 @@ def main() -> None:
                     print(f"[FAIL] {metadata['doc_id']} 向量化 HTTP {resp.status_code}")
 
         print(f"\n汇总：新增 {created}，跳过 {skipped}，失败 {failed}；本次向量化片段 {embedded}")
+        print(
+            "提示：如需启用中央制度问答，请运行 "
+            "publish_demo_central_docs.py --tenant-id <租户ID> --yes"
+        )
 
 
 if __name__ == "__main__":

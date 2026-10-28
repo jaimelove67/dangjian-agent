@@ -4,9 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.chains.qa_chain import NO_EVIDENCE_ANSWER
+from app.core.config import settings
 from app.rag.rag_service import RAGService
 from app.rag.retrieval.base import RetrievalResult
-from app.schemas.qa import REFUSAL_ANSWER
 
 
 @pytest.fixture
@@ -45,8 +46,11 @@ class TestRAGService:
         assert response.has_sufficient_evidence is False
 
     @pytest.mark.asyncio
-    async def test_ask_no_retrieval_results(self, mock_db, mock_retriever):
-        """测试无检索结果"""
+    async def test_ask_no_retrieval_results_refuses_when_advisory_disabled(
+        self, mock_db, mock_retriever, monkeypatch
+    ):
+        """关闭办理参考时，无检索结果仍走明确拒答"""
+        monkeypatch.setattr(settings, "QA_ADVISORY_ENABLED", False)
         mock_retriever.retrieve.return_value = []
 
         service = RAGService(mock_db)
@@ -54,9 +58,48 @@ class TestRAGService:
 
         response = await service.ask("测试问题")
 
-        assert response.answer == REFUSAL_ANSWER
+        assert response.answer == NO_EVIDENCE_ANSWER
         assert response.retrieved_count == 0
         assert response.has_sufficient_evidence is False
+        assert response.refused is True
+
+    @pytest.mark.asyncio
+    async def test_tenant_can_disable_advisory(self, mock_db, mock_retriever):
+        """租户配置可以关闭办理参考，恢复明确拒答"""
+        from app.core.config import tenant_config
+
+        tenant_config._cache["t-off"] = {"qa_advisory_enabled": False}
+        mock_retriever.retrieve.return_value = []
+        try:
+            service = RAGService(mock_db)
+            service.retriever = mock_retriever
+            response = await service.ask("测试问题", filters={"tenant_id": "t-off"})
+        finally:
+            tenant_config._cache.pop("t-off", None)
+
+        assert response.answer == NO_EVIDENCE_ANSWER
+        assert response.refused is True
+
+    @pytest.mark.asyncio
+    async def test_ask_no_retrieval_results_gives_advisory(
+        self, mock_db, mock_retriever, mock_model_service
+    ):
+        """无检索结果时给出无引用、明确标注的办理参考"""
+        mock_retriever.retrieve.return_value = []
+        mock_model_service.generate.return_value = MagicMock(
+            content="可以先明确活动主题，再征集党员意见。"
+        )
+
+        with patch("app.rag.rag_service.get_model_service", return_value=mock_model_service):
+            service = RAGService(mock_db)
+            service.retriever = mock_retriever
+            response = await service.ask("帮我起草活动方案")
+
+        assert response.refused is False
+        assert response.citations == []
+        assert response.has_sufficient_evidence is False
+        assert "办理参考" in response.answer
+        assert any("不构成政策依据" in warning for warning in response.warnings)
 
     @pytest.mark.asyncio
     async def test_ask_with_results(self, mock_db, mock_retriever, mock_model_service):

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chains.qa_chain import QAChain
 from app.chains.session import SessionStore
-from app.core.config import settings
+from app.core.config import settings, tenant_config
 from app.llm.base import DataLevel, TaskType
 from app.llm.service import get_model_service
 from app.rag.privacy import content_level, require_cloud_eligible
@@ -108,6 +108,29 @@ class _RetrieverAdapter:
         return chunks
 
 
+class _AdvisoryGeneratorAdapter:
+    """无制度依据时的办理参考生成器（不接收检索片段，不产生引用）。"""
+
+    def __init__(self, service: "RAGService", temperature: float) -> None:
+        self.service = service
+        self.temperature = temperature
+
+    async def generate(self, *, question: str, chunks: Sequence[RetrievedChunk]) -> str:
+        del chunks  # 办理参考不使用检索片段，避免把低分候选误当成依据
+        prompt = self.service._advisory_prompt(question)
+        level = content_level(question, minimum=self.service.data_level)
+        level = content_level(prompt, minimum=level)
+        require_cloud_eligible(level)
+        response = await self.service._model_service.generate(
+            prompt=prompt,
+            data_level=level,
+            task_type=TaskType.QA,
+            temperature=self.temperature,
+            context=self.service.context,
+        )
+        return cast(str, response.content)
+
+
 class _GeneratorAdapter:
     def __init__(self, service: "RAGService", temperature: float) -> None:
         self.service = service
@@ -180,10 +203,25 @@ class RAGService:
                 "请输入您的问题。", [], 0, 0, False, {"error": "empty_question"}, refused=True
             )
         filters = filters or {}
+        tenant_id = filters.get("tenant_id") or ""
+        advisory_enabled = (
+            bool(
+                tenant_config.get(
+                    tenant_id, "qa_advisory_enabled", settings.QA_ADVISORY_ENABLED
+                )
+            )
+            if tenant_id
+            else settings.QA_ADVISORY_ENABLED
+        )
         retriever = _RetrieverAdapter(self, filters)
         chain = QAChain(
             retriever=retriever,
             generator=_GeneratorAdapter(self, temperature),
+            advisory_generator=(
+                _AdvisoryGeneratorAdapter(self, temperature)
+                if advisory_enabled
+                else None
+            ),
             session=self.session,
             llm_call=self._rewrite,
             no_evidence_threshold=self.no_evidence_threshold,
@@ -191,7 +229,7 @@ class RAGService:
         )
         response = await chain.ask(
             question=question,
-            tenant_id=filters.get("tenant_id") or "",
+            tenant_id=tenant_id,
             session_id=session_id,
             include_expired=filters.get("include_expired", False),
         )
@@ -219,13 +257,22 @@ class RAGService:
             for c in response.citations
         ]
         warnings = list(dict.fromkeys([*response.warnings, *self.retriever.warnings]))
+        # 演示节选不是正式发布文本；即使被引用，也必须让用户看到这条边界。
+        if any((c.title or "").startswith("[未核验演示]") for c in citations):
+            warnings.append("本次引用的制度文件为演示节选，请以学校正式发布的现行文本为准。")
+        if response.refused:
+            answer_kind = "refused"
+        elif citations:
+            answer_kind = "grounded"
+        else:
+            answer_kind = "advisory"
         return RAGResponse(
             answer=response.answer,
             citations=citations,
             retrieved_count=retriever.retrieved_count,
             used_count=len(citations),
             has_sufficient_evidence=not response.refused and bool(citations),
-            metadata={"data_level": self.data_level.value},
+            metadata={"data_level": self.data_level.value, "answer_kind": answer_kind},
             warnings=warnings,
             disclaimer=response.disclaimer,
             refused=response.refused,
@@ -274,6 +321,18 @@ class RAGService:
             + f"<参考资料>\n{sources}\n</参考资料>\n"
             + material_part
             + f"用户问题：{question}\n回答："
+        )
+
+    def _advisory_prompt(self, question: str) -> str:
+        """无依据办理参考提示词：只给通用思路，不冒充制度原文。"""
+        from app.prompts.qa import advisory_prompt
+
+        return (
+            advisory_prompt()
+            + "\n\n<用户问题>\n"
+            + question
+            + "\n</用户问题>\n"
+            + "请直接给出办理参考，不要输出 [n] 引用编号。\n回答："
         )
 
     def _build_prompt(self, question: str, results: list[RetrievalResult]) -> str:

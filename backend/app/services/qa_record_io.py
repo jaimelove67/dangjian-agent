@@ -46,6 +46,19 @@ def level_label(value: str) -> str:
     return _LEVEL_LABELS.get(value, value)
 
 
+def result_label(item: Any) -> str:
+    """问答结果三态：拒答 / 有依据回答 / 无依据办理参考。
+
+    不能再用二元 ``refused`` 判断：办理参考同样不是拒答，但也没有制度依据，
+    复核时要把这两类分开，否则会把“给了通用思路”误记成“有依据回答”。
+    """
+    if item.refused:
+        return "无依据拒答"
+    if item.has_sufficient_evidence:
+        return "已作答（有依据）"
+    return "办理参考（无依据）"
+
+
 def build_qa_records(rows: Iterable[Any], *, scope_note: str = "", exported_by: str = "") -> bytes:
     """导出问答记录：台账页 + 导出说明页"""
     items = list(rows)
@@ -68,7 +81,7 @@ def build_qa_records(rows: Iterable[Any], *, scope_note: str = "", exported_by: 
             item.asker,
             item.username,
             level_label(item.data_level),
-            "无依据拒答" if item.refused else "已作答",
+            result_label(item),
             "有依据" if item.has_sufficient_evidence else "无依据",
             "提问人已删除" if item.is_deleted else "正常",
             versions_text(getattr(item, "versions", None)) or "未留痕",
@@ -93,7 +106,9 @@ def build_qa_records(rows: Iterable[Any], *, scope_note: str = "", exported_by: 
         f"筛选口径：{scope_note or '全部未删除的问答记录'}",
         "记录时间与筛选口径里的时间均按北京时间（UTC+8）显示；系统内部以 UTC 存储。",
         "本表为问答内容的数据副本，不含被引原文文件与原始材料；引用情况以系统内记录为准。",
-        "「结果」为「无依据拒答」表示系统按无依据处理、没有生成实质回答；"
+        "「结果」分三态：「已作答（有依据）」表示通过引用核验并附有制度来源；"
+        "「办理参考（无依据）」表示未检索到可引用的制度原文，仅生成通用工作思路；"
+        "「无依据拒答」表示未生成实质回答。"
         "「依据」表示本次问答是否有足够的可引用依据。",
         "「状态」为「提问人已删除」表示提问人在自己的记录里软删除了这条；"
         "软删除只是不再显示，记录仍保留用于复核。",

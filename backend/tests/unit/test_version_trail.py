@@ -66,7 +66,11 @@ class TestPromptVersions:
 
         tenant_config._cache["t-ver"] = {"prompt_versions": {"qa": "v2", "rewrite": "v2"}}
         try:
-            assert prompt_versions("t-ver") == {"qa": "v2", "rewrite": "v2"}
+            assert prompt_versions("t-ver") == {
+                "qa": "v2",
+                "rewrite": "v2",
+                "advisory": PROMPT_DEFAULTS["advisory"],
+            }
         finally:
             tenant_config._cache.pop("t-ver", None)
 

@@ -107,7 +107,7 @@ class GovernanceValues(StrictInput):
     model_policy: ModelPolicy = Field(default_factory=ModelPolicy)
     model_routes: dict[Literal["llm", "embedding", "reranker"], str] = Field(default_factory=dict)
     scoring_weights: dict[str, float] = Field(default_factory=dict)
-    prompt_versions: dict[Literal["qa", "rewrite"], Literal["v1", "v2"]] = Field(
+    prompt_versions: dict[Literal["qa", "rewrite", "advisory"], Literal["v1", "v2"]] = Field(
         default_factory=dict
     )
     retention: RetentionPolicy = Field(default_factory=RetentionPolicy)

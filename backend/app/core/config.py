@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     NO_EVIDENCE_THRESHOLD: float = Field(
         default=0.5, description="无依据判定阈值（检索片段最高分低于该值视为无依据）"
     )
+    QA_ADVISORY_ENABLED: bool = Field(
+        default=True,
+        description="无制度依据时是否生成办理参考；关闭后恢复为明确拒答",
+    )
 
     # ==================== 日志配置 ====================
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
@@ -310,6 +314,7 @@ class TenantConfig:
             "retrieval_top_k": settings.RETRIEVAL_TOP_K,
             "rerank_top_k": settings.RERANK_TOP_K,
             "no_evidence_threshold": settings.NO_EVIDENCE_THRESHOLD,
+            "qa_advisory_enabled": settings.QA_ADVISORY_ENABLED,
             "exclude_expired_by_default": settings.EXCLUDE_EXPIRED_BY_DEFAULT,
             "activist_training_days": settings.ACTIVIST_TRAINING_DAYS,
             "probationary_period_days": settings.PROBATIONARY_PERIOD_DAYS,
