@@ -936,10 +936,10 @@ function Shell() {
               IS_LIVE ? <LiveEducation eventOnly /> : <Activities />
             ) : route === "learning" ? (
               IS_LIVE ? (
-                hasPermission(session, "study.query") ? (
-                  <LiveLearning />
-                ) : (
+                school || !hasPermission(session, "study.query") ? (
                   <LiveEducation />
+                ) : (
+                  <LiveLearning />
                 )
               ) : (
                 <Learning />

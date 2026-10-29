@@ -445,6 +445,7 @@ export function buildInitialData() {
     knowledge: seedKnowledge,
     enrollments: [],
     learning: {},
+    courseOfferings: [],
     messages: [],
     notificationRead: false,
   };

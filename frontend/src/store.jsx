@@ -20,6 +20,7 @@ function emptyData() {
     knowledge: [],
     enrollments: [],
     learning: {},
+    courseOfferings: [],
     messages: [],
     notificationRead: false,
     personalMaterials: [],

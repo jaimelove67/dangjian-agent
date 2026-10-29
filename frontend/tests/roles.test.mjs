@@ -14,6 +14,7 @@ import {
   sessionForAccount,
 } from "../src/roles.js";
 import { seedMembers, STAGES } from "../src/data.js";
+import { SCHOOL_NAVIGATION } from "../src/school-navigation.js";
 import {
   roleSeed,
   extendRoleData,
@@ -89,6 +90,24 @@ test("learning courses are visible to members and applicants without center-grou
       true,
     );
   }
+});
+test("school learning navigation exposes a direct course and activity entry", () => {
+  const group = SCHOOL_NAVIGATION.find(
+    (item) => item.id === "school-learning",
+  );
+  assert.ok(group);
+  assert.ok(
+    group.items.some(
+      ([id, label]) => id === "learning" && label === "课程与活动",
+    ),
+  );
+  assert.equal(
+    canAccess(demoSession("school"), {
+      id: "learning",
+      permission: "education.query",
+    }),
+    true,
+  );
 });
 test("school identity permissions do not open platform-only account management", () => {
   const route = {

@@ -44,6 +44,7 @@ export const SCHOOL_NAVIGATION = [
     icon: "BookOpen",
     items: [
       ["school-learning", "全校学习计划与任务"],
+      ["learning", "课程与活动"],
       ["school-notices", "通知公告"],
       ["knowledge", "政策制度库与文件审核"],
       ["assistant", "制度问答助手"],

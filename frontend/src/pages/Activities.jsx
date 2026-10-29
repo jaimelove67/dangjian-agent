@@ -35,6 +35,14 @@ import {
 import { roleApi } from "../role-api";
 import { submitDemoMeeting } from "../role-actions";
 import { newAudit } from "../role-data";
+import {
+  canManageCourses,
+  canManageOffering,
+  courseScopeOptions,
+  createDemoCourse,
+  publishDemoCourse,
+  visibleDemoCourses,
+} from "../demo-courses";
 import { courses, DEPARTMENTS, organizations } from "../data";
 import { meetingPayload, meetingParticipants } from "../contracts";
 import {
@@ -1278,12 +1286,16 @@ export function Activities() {
 }
 export function Learning() {
   const { data, update, notify } = useStore();
+  const { session } = useApp();
+  const canManage = canManageCourses(session);
   const [tab, setTab] = useState(IS_LIVE ? "学习计划" : "学习课程");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [course, setCourse] = useState(null);
   const [note, setNote] = useState("");
   const [error, setError] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [formError, setFormError] = useState(null);
   const [plans, setPlans] = useState([]);
   useEffect(() => {
     if (IS_LIVE)
@@ -1291,9 +1303,25 @@ export function Learning() {
         .then((res) => setPlans(res.items || res.plans || []))
         .catch(setError);
   }, []);
-  const filtered = courses.filter(
+  const createdCourses = visibleDemoCourses(
+    data.courseOfferings || [],
+    session,
+    canManage,
+  );
+  const allCourses = [...createdCourses, ...courses];
+  const scopeOptions = canManage ? courseScopeOptions(session) : [];
+  const filtered = allCourses.filter(
     (c) => c.title.includes(query) && (!category || c.category === category),
   );
+  const coursePoints = (id) =>
+    allCourses.find((item) => String(item.id) === String(id))?.points ?? 10;
+  const completedPoints = Object.entries(data.learning)
+    .filter(([, record]) => record.completed)
+    .reduce(
+      (total, [id, record]) =>
+        total + (record.points ?? coursePoints(id)),
+      0,
+    );
   const filteredPlans = plans.filter(p => (p.title || p.topic || "").includes(query));
   function open(c) {
     setCourse(c);
@@ -1306,6 +1334,7 @@ export function Learning() {
         ...prev[course.id],
         note,
         completed: complete || prev[course.id]?.completed,
+        points: course.points ?? 10,
         date: "2026-10-23",
         title: course.title,
       },
@@ -1313,11 +1342,72 @@ export function Learning() {
     notify(complete ? "本次学习已完成，学习记录已更新" : "学习笔记已保存");
     if (complete) setCourse(null);
   }
+  function persistCourse(publish, form) {
+    if (!form?.reportValidity()) return;
+    const values = new FormData(form);
+    try {
+      const created = createDemoCourse(
+        {
+          title: values.get("title"),
+          subtitle: values.get("subtitle"),
+          category: values.get("category"),
+          minutes: values.get("minutes"),
+          points: values.get("points"),
+          cover: values.get("cover"),
+          content: values.get("content"),
+          orgScope: values.get("orgScope"),
+        },
+        session,
+        publish,
+      );
+      update("courseOfferings", (prev) => [created, ...(prev || [])]);
+      setAdding(false);
+      setFormError(null);
+      notify(
+        publish
+          ? "课程已发布，党员和申请人现在可以查看"
+          : "课程草稿已保存，发布后党员和申请人可以查看",
+      );
+    } catch (failure) {
+      setFormError(failure);
+    }
+  }
+  function publishCourse(courseToPublish) {
+    try {
+      const publishedAt = new Date().toISOString();
+      const updated = publishDemoCourse(
+        data.courseOfferings || [],
+        courseToPublish.id,
+        session,
+        publishedAt,
+      );
+      update("courseOfferings", updated);
+      setCourse({ ...courseToPublish, status: "published", publishedAt });
+      notify("课程已发布，党员和申请人现在可以查看");
+    } catch (failure) {
+      notify(failure.message, "error");
+    }
+  }
   return (
     <section className="panel workspace-panel">
       <PageHeader
         title="学习教育"
         subtitle="在常学常新中加强理论修养，在真学真信中坚定理想信念"
+        action={
+          canManage &&
+          tab === "学习课程" && (
+            <button
+              className="button primary"
+              onClick={() => {
+                setFormError(null);
+                setAdding(true);
+              }}
+            >
+              <Plus size={16} />
+              编制课程
+            </button>
+          )
+        }
       />
       <Tabs
         items={IS_LIVE ? ["学习计划"] : ["学习课程", "学习计划", "学习情况", "在线考试", "学习积分"]}
@@ -1343,7 +1433,9 @@ export function Learning() {
         </Select>}
         <span className="toolbar-spacer" />
         <span className="muted small-text">
-          {IS_LIVE ? "中心组学习计划" : "共 8 门精选学习专题"}
+          {IS_LIVE
+            ? "中心组学习计划"
+            : `共 ${allCourses.length} 门学习课程`}
         </span>
       </div>
       {IS_LIVE ? (
@@ -1390,7 +1482,11 @@ export function Learning() {
                   <Clock size={12} />
                   {c.minutes}分钟
                 </span>
-                <span>{c.students}人学习</span>
+                <span>
+                  {c.status === "draft"
+                    ? "草稿待发布"
+                    : `${c.students}人学习`}
+                </span>
               </div>
             </button>
           ))}
@@ -1431,10 +1527,7 @@ export function Learning() {
             </div>
             <div>
               <p>学习积分</p>
-              <strong>
-                {Object.values(data.learning).filter((l) => l.completed)
-                  .length * 10}
-              </strong>
+              <strong>{completedPoints}</strong>
             </div>
           </div>
           {Object.entries(data.learning).map(([id, l]) => (
@@ -1449,7 +1542,7 @@ export function Learning() {
               <Badge>{l.completed ? "已完成" : "进行中"}</Badge>
               <button
                 className="text-button link"
-                onClick={() => open(courses.find((c) => String(c.id) === id))}
+                onClick={() => open(allCourses.find((c) => String(c.id) === id))}
               >
                 继续学习
               </button>
@@ -1482,39 +1575,198 @@ export function Learning() {
               alt={course.title}
             />
             <div>
-              <Badge tone="red">{course.category}</Badge>
+              <div className="badge-row">
+                <Badge tone="red">{course.category}</Badge>
+                {course.status === "draft" && (
+                  <Badge tone="orange">草稿</Badge>
+                )}
+              </div>
               <h2>{course.title}</h2>
               <p>{course.subtitle}</p>
+              {course.orgName && (
+                <p className="muted small-text">
+                  组织范围：{course.orgName}
+                </p>
+              )}
             </div>
           </div>
           <div className="reading-material">
             <h3>学习导读</h3>
             <p>{course.content}</p>
             <div className="inline-note">
-              学习内容以学校发布的课程资源和现行制度为准。
+              学习内容以学校发布的课程资源和现行制度为准。完成学习可获得
+              {course.points ?? 10} 积分。
             </div>
           </div>
-          <Field label="我的学习笔记">
-            <textarea
-              rows={5}
-              maxLength={5000}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="记录学习收获、思考与行动计划…"
-            />
-          </Field>
-          <div className="modal-actions">
-            <button
-              className="button secondary"
-              onClick={() => saveNote(false)}
-            >
-              保存笔记
-            </button>
-            <button className="button primary" onClick={() => saveNote(true)}>
-              <CheckCircle size={17} />
-              完成本次学习
-            </button>
-          </div>
+          {course.status === "draft" ? (
+            <>
+              <div className="inline-note">
+                课程尚未发布。发布后党员和申请人可以查看，草稿仅课程管理人员可见。
+              </div>
+              <div className="modal-actions">
+                <button
+                  className="button secondary"
+                  onClick={() => setCourse(null)}
+                >
+                  关闭
+                </button>
+                {canManageOffering(course, session) && (
+                  <button
+                    className="button primary"
+                    onClick={() => publishCourse(course)}
+                  >
+                    <CheckCircle size={17} />
+                    确认发布
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <Field label="我的学习笔记">
+                <textarea
+                  rows={5}
+                  maxLength={5000}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="记录学习收获、思考与行动计划…"
+                />
+              </Field>
+              <div className="modal-actions">
+                <button
+                  className="button secondary"
+                  onClick={() => saveNote(false)}
+                >
+                  保存笔记
+                </button>
+                <button
+                  className="button primary"
+                  onClick={() => saveNote(true)}
+                >
+                  <CheckCircle size={17} />
+                  完成本次学习
+                </button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+      {adding && (
+        <Modal
+          title="编制课程"
+          wide
+          onClose={() => {
+            setAdding(false);
+            setFormError(null);
+          }}
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              persistCourse(false, event.currentTarget);
+            }}
+          >
+            {formError && <ErrorBox error={formError} />}
+            <div className="form-grid">
+              <Field label="课程名称" required full>
+                <input
+                  name="title"
+                  required
+                  maxLength={120}
+                  placeholder="请输入课程名称"
+                />
+              </Field>
+              <Field label="组织范围" required>
+                <select
+                  name="orgScope"
+                  required
+                  defaultValue={scopeOptions[0]?.value || ""}
+                >
+                  {scopeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="课程类型" required>
+                <select name="category" defaultValue="理论学习">
+                  {["理论学习", "党史学习", "业务培训", "党性教育"].map(
+                    (type) => (
+                      <option key={type}>{type}</option>
+                    ),
+                  )}
+                </select>
+              </Field>
+              <Field label="课程简介" full>
+                <input
+                  name="subtitle"
+                  maxLength={120}
+                  placeholder="简要说明课程主题"
+                />
+              </Field>
+              <Field label="学习时长（分钟）" required>
+                <input
+                  name="minutes"
+                  type="number"
+                  min="1"
+                  max="10000"
+                  defaultValue="30"
+                  required
+                />
+              </Field>
+              <Field label="完成积分" required>
+                <input
+                  name="points"
+                  type="number"
+                  min="0"
+                  max="1000"
+                  defaultValue="10"
+                  required
+                />
+              </Field>
+              <Field label="课程封面">
+                <select name="cover" defaultValue="1">
+                  {Array.from({ length: 8 }, (_, index) => (
+                    <option key={index + 1} value={index + 1}>
+                      封面 {index + 1}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="学习内容" required full>
+                <textarea
+                  name="content"
+                  rows={6}
+                  required
+                  maxLength={5000}
+                  placeholder="填写课程导读、学习材料和思考要求"
+                />
+              </Field>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => {
+                  setAdding(false);
+                  setFormError(null);
+                }}
+              >
+                取消
+              </button>
+              <button className="button secondary">保存草稿</button>
+              <button
+                type="button"
+                className="button primary"
+                onClick={(event) =>
+                  persistCourse(true, event.currentTarget.form)
+                }
+              >
+                保存并发布
+              </button>
+            </div>
+          </form>
         </Modal>
       )}
     </section>

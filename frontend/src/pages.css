@@ -1299,6 +1299,11 @@ button.meeting-image {
   gap: 20px;
   align-items: center;
 }
+.course-study-hero .badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .course-study-hero img {
   width: 160px;
   height: 105px;
