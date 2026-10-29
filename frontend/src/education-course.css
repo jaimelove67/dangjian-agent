@@ -1,0 +1,123 @@
+.modal.wide.education-course-dialog {
+  width: min(1054px, calc(100vw - 40px));
+  height: min(984px, calc(100dvh - 44px));
+  max-height: calc(100dvh - 44px);
+  overflow: hidden;
+}
+.education-course-dialog[open] { display: flex; flex-direction: column; }
+.education-course-dialog > .modal-heading { flex: 0 0 54px; min-height: 54px; padding: 12px 38px; z-index: 2; }
+.education-course-dialog > .modal-heading h2 { font-size: 17px; line-height: 1.5; }
+.education-course-dialog > .modal-body { display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 0; overflow: hidden; }
+.education-course-heading { flex-shrink: 0; padding: 24px 38px 12px; }
+.education-course-dialog .education-course-heading h2 { font-size: 26px; line-height: 1.5; margin: 0; font-weight: 700; color: #263247; overflow-wrap: anywhere; }
+.education-course-heading p { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 9px; color: #65738a; font-size: 15px; line-height: 1.7; }
+.education-course-heading p > span { color: #8791a2; margin: 0 3px; }
+.education-course-dialog .modal-body > .tabs { flex-shrink: 0; height: 55px; gap: 32px; padding: 0 38px; }
+.education-course-dialog .modal-body > .tabs > button { font-size: 17px; }
+.education-notes-tab { display: inline-flex; align-items: center; }
+.education-course-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 38px 0; scrollbar-width: thin; scrollbar-color: #bdc3cd #f7f8fa; }
+.education-course-scroll > .error-box { margin-bottom: 18px; }
+.education-course-pane[hidden], .education-course-dialog [hidden] { display: none !important; }
+.education-material-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: #f7f8fa; padding: 11px 20px; min-height: 54px; }
+.education-material-toolbar > h3 { position: relative; padding-left: 15px; font-size: 17px; font-weight: 650; line-height: 1.5; color: #2b374b; }
+.education-material-toolbar > h3 { display: flex; flex-wrap: wrap; align-items: center; }
+.education-material-toolbar > h3::before { content: ""; position: absolute; width: 3px; top: 2px; bottom: 2px; left: 0; background: var(--red); }
+.education-material-toolbar > div { display: flex; align-items: center; gap: 16px; color: #647288; font-size: 13px; white-space: nowrap; }
+.education-material-toolbar .icon-button { min-width: 28px; min-height: 30px; color: #45536b; }
+.education-reading-article { max-width: 804px; margin: 0 auto; padding: 28px 0 38px; color: #2a374c; }
+.education-course-dialog .education-reading-article > h2 { font-family: "SimSun", "Songti SC", "Noto Serif CJK SC", serif; font-size: 34px; line-height: 1.5; font-weight: 700; text-align: center; padding: 0 8px 20px; border-bottom: 1px solid #d9e0e9; margin-bottom: 26px; }
+.education-reading-body { font-size: 17px; line-height: 2; overflow-wrap: anywhere; }
+.education-reading-body p { margin: 0 0 21px; padding-left: 36px; white-space: pre-wrap; line-height: 2; }
+.education-reading-body h3 { position: relative; font-size: 20px; line-height: 1.7; font-weight: 650; margin: 30px 0 14px; padding-left: 17px; }
+.education-reading-body h3::before { content: ""; position: absolute; width: 3px; left: 0; top: 5px; bottom: 5px; background: var(--red); }
+.education-reading-body h3:first-child { margin-top: 0; }
+.education-reading-questions { list-style: none; display: grid; gap: 12px; padding: 0 0 0 36px; margin: 18px 0 0; }
+.education-reading-questions li { display: flex; align-items: flex-start; gap: 14px; line-height: 1.8; }
+.education-reading-number { display: inline-flex; justify-content: center; align-items: center; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; background: var(--red); color: #fff; font-size: 14px; line-height: 1; }
+.education-video-pane { padding: 24px 0; }
+.education-video-pane .business-video { display: block; width: 100%; max-height: 560px; }
+.education-video-pane .education-help { display: flex; align-items: flex-start; gap: 6px; }
+.education-video-pane .education-help svg { flex-shrink: 0; margin-top: 3px; }
+.education-course-notice { background: #f7f8fa; padding: 15px 18px; border-radius: 4px; color: #56657b; font-size: 14px; line-height: 1.8; margin: 16px 0; }
+.education-assessment-pane, .education-notes-pane { max-width: 804px; margin: 0 auto; padding: 7px 0 30px; }
+.education-assessment-pane .education-exam { padding: 0; margin: 0; border: 0; }
+.education-assessment-pane .education-exam h3, .education-notes-pane > header h3 { font-size: 20px; line-height: 1.5; color: #263247; margin-bottom: 10px; }
+.education-assessment-pane .education-exam > p { font-size: 14px; line-height: 1.8; margin-bottom: 24px; }
+.education-assessment-pane .education-exam .education-question { margin: 0 0 24px; }
+.education-assessment-pane .education-question legend { font-size: 15px; }
+.education-assessment-pane .education-options label { font-size: 15px; min-height: 46px; }
+.education-assessment-pane .education-options input[type="radio"] { margin-top: 4px; }
+.education-notes-pane > header p { color: #65738a; font-size: 14px; line-height: 1.8; }
+.education-notes-pane .field > span { color: #526178; font-size: 14px; }
+.education-notes-pane .field textarea { min-height: 300px; font-size: 15px; padding: 16px 18px; line-height: 1.9; }
+.education-note-count { color: #65738a; font-size: 12px; text-align: right; }
+.education-note-chapters { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+.education-note-chapter { display: inline-flex; align-items: center; flex-wrap: wrap; padding: 8px 12px; border: 1px solid #dfe5ed; border-radius: 4px; color: #536177; font-size: 14px; line-height: 1.7; }
+.education-note-chapter[aria-pressed="true"] { border-color: #bd2939; color: #a62131; background: #fff7f8; }
+.education-note-feedback { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: #617087; font-size: 13px; }
+.education-exam-review { margin: 0 0 30px; }
+.education-exam-review > header h3 { font-size: 20px; line-height: 1.5; color: #263247; margin-bottom: 8px; }
+.education-exam-review > header p { font-size: 14px; color: #526178; }
+.education-review-question { padding: 22px 0; border-bottom: 1px solid #e8edf2; }
+.education-review-question h4 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 16px; line-height: 1.8; margin-bottom: 12px; overflow-wrap: anywhere; }
+.education-review-question > p { font-size: 15px; color: #526178; overflow-wrap: anywhere; margin: 6px 0; }
+.education-answer-state { font-size: 13px; font-weight: 500; white-space: nowrap; }
+.education-answer-state.correct, .education-review-question .education-correct-answer { color: #23704d; }
+.education-answer-state.incorrect { color: #b02535; }
+.education-answer-state.unknown { color: #617087; }
+.education-answer-explanation { margin-top: 14px; padding: 12px 16px; background: #f7f8fa; color: #4e5c72; font-size: 14px; line-height: 1.9; overflow-wrap: anywhere; }
+.education-answer-explanation > strong { display: block; font-weight: 600; margin-bottom: 4px; color: #344258; }
+.education-answer-explanation > p { white-space: pre-wrap; }
+.education-course-footer { flex-shrink: 0; min-height: 82px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 16px; padding: 16px 38px; border-top: 1px solid #e8edf2; background: #fff; }
+.education-course-footer .education-return { display: inline-flex; align-items: center; justify-self: start; gap: 5px; color: #617087; font-size: 13px; }
+.education-material-pager { display: flex; justify-content: center; gap: 12px; }
+.education-course-footer .button { min-height: 42px; padding: 10px 15px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; box-shadow: none; white-space: nowrap; }
+.education-course-primary { display: flex; align-items: center; gap: 10px; grid-column: 3; justify-self: end; }
+.education-course-primary .button.primary { min-width: 144px; }
+.education-course-loading { padding: 32px; }
+.education-course-dialog :focus-visible { outline: 2px solid #b52231; outline-offset: 3px; }
+@media (max-width: 760px) {
+  .modal.wide.education-course-dialog { width: calc(100vw - 24px); height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); }
+  .education-course-dialog > .modal-heading { padding: 12px 20px; }
+  .education-course-heading { padding: 18px 20px 10px; }
+  .education-course-dialog .education-course-heading h2 { font-size: 20px; }
+  .education-course-heading p { font-size: 12px; gap: 5px; }
+  .education-course-dialog .modal-body > .tabs { height: 48px; padding: 0 20px; gap: 26px; }
+  .education-course-dialog .modal-body > .tabs > button { font-size: 14px; }
+  .education-course-scroll { padding: 16px 20px 0; }
+  .education-course-dialog .education-reading-article > h2 { font-size: 25px; padding-bottom: 18px; }
+  .education-reading-body { font-size: 15px; }
+  .education-reading-body p, .education-reading-questions { padding-left: 18px; }
+  .education-reading-body h3 { font-size: 17px; }
+  .education-course-footer { min-height: 78px; padding: 12px 20px; gap: 10px; }
+  .education-course-primary .button.primary { min-width: 110px; }
+}
+@media (max-width: 520px) {
+  .education-course-dialog > .modal-heading { padding: 10px 16px; min-height: 48px; flex-basis: 48px; }
+  .education-course-heading { padding: 16px 16px 8px; }
+  .education-course-dialog .education-course-heading h2 { font-size: 18px; line-height: 1.6; }
+  .education-course-heading p { line-height: 1.6; }
+  .education-course-dialog .modal-body > .tabs { padding: 0 16px; gap: 23px; }
+  .education-course-scroll { padding: 14px 16px 0; }
+  .education-material-toolbar { padding: 9px 11px; gap: 6px; }
+  .education-material-toolbar > h3 { font-size: 14px; padding-left: 10px; }
+  .education-material-toolbar > div { gap: 4px; font-size: 11px; }
+  .education-reading-article { padding-top: 22px; }
+  .education-course-dialog .education-reading-article > h2 { font-size: 22px; }
+  .education-reading-body p { margin-bottom: 18px; }
+  .education-reading-body p, .education-reading-questions { padding-left: 0; }
+  .education-course-footer { grid-template-columns: auto 1fr; gap: 9px; padding: 10px 16px; }
+  .education-material-pager { grid-column: 1 / -1; grid-row: 1; justify-content: center; gap: 10px; }
+  .education-course-footer .education-return { grid-column: 1; grid-row: 2; font-size: 12px; }
+  .education-course-primary { grid-column: 2; grid-row: 2; }
+  .education-course-footer .button { min-height: 38px; padding: 8px 12px; font-size: 12px; }
+  .education-course-primary .button.primary { min-width: 102px; }
+  .education-assessment-pane .education-options label { font-size: 14px; }
+  .education-notes-pane .field textarea { min-height: 200px; }
+  .education-course-dialog .modal-body > .tabs { gap: 16px; }
+  .education-notes-tab .education-note-tag { font-size: 11px; padding: 1px 4px; margin-left: 5px; }
+  .education-material-toolbar h3 .education-note-tag { margin-left: 5px; padding: 1px 4px; font-size: 11px; }
+  .education-course-primary { gap: 7px; }
+  .education-course-primary .button.primary { min-width: 84px; }
+  .education-notes-pane .field textarea { font-size: 16px; }
+}

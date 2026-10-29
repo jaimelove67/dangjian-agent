@@ -5,7 +5,7 @@ import { hasPermission } from "../roles";
 import { request } from "../api";
 import { PageHeader, SearchInput, Select, Modal, Pagination, downloadBlob } from "../components";
 import { get, send, key, rows } from "../business-api";
-import { BusinessForm, BusinessTable, RecordTrace, ResourceState, Status, useResource } from "../components/BusinessForms";
+import { BusinessForm, BusinessTable, BusinessToolbar, RecordTrace, ResourceState, Status, useResource } from "../components/BusinessForms";
 
 export function LiveKnowledge() {
   const { session } = useApp(), { notify } = useStore();
@@ -77,7 +77,7 @@ export function LiveKnowledge() {
     const result = await save("/embeddings/embed", { doc_id: d.doc_id }); notify(`已向量化${result.embedded_count}个片段`);
   }); }
   return <section className="panel workspace-panel"><PageHeader title="党建工作库" subtitle="制度原件、解析片段、人工复核及检索处理状态" action={can("knowledge.manage") && <button className="button primary" onClick={upload}>上传制度文件</button>} />
-    <div className="business-toolbar"><SearchInput value={q} placeholder="搜索文件标题、机关或编号" onChange={e => { setQ(e.target.value); setPage(1); }} />{can("knowledge.manage") && <Select label="发布状态" value={filter} onChange={e => { setFilter(e.target.value); setPage(1); }}><option value="">全部发布状态</option><option value="pending">待审核</option><option value="published">已发布</option><option value="rejected">已退回</option></Select>}<button className="button secondary" onClick={reload}>刷新</button></div>
+    <BusinessToolbar actions={<button className="button secondary" onClick={reload}>刷新</button>}><SearchInput value={q} placeholder="搜索文件标题、机关或编号" onChange={e => { setQ(e.target.value); setPage(1); }} />{can("knowledge.manage") && <Select label="发布状态" value={filter} onChange={e => { setFilter(e.target.value); setPage(1); }}><option value="">全部发布状态</option><option value="pending">待审核</option><option value="published">已发布</option><option value="rejected">已退回</option></Select>}</BusinessToolbar>
     <ResourceState resource={documents} /><BusinessTable items={rows(documents.value)} columns={[["制度文件", r => <strong>{r.title}</strong>], ["发文机关 / 生效日", r => `${r.issuer} · ${r.effective_date || "待确认"}`], ["范围 / 级别", r => `${({ public: "公开", school: "本校", department: "院系", branch: "支部" })[r.visibility]} · ${r.security_level}`], ["发布状态", r => <Status value={r.review_status} />], ["原件版本", r => r.content_revision], ["操作", r => <button className="text-button link" onClick={() => setSelected(r.doc_id)}>原件与处理</button>]]} />
     <Pagination page={page} total={documents.value?.total || 0} pages={Math.max(1, Math.ceil((documents.value?.total || 0) / 20))} onChange={setPage} />
     {selected && <Modal title="制度原件与入库处理" wide flat onClose={() => setSelected(null)}><ResourceState resource={detail} />{d && <><h3>{d.title}</h3><p>{d.doc_number} · {d.issuer}</p><Status value={d.review_status} /><RecordTrace record={d} /><p className="business-content">{d.summary || "未填写摘要"}</p><p>原件版本：{d.content_revision}；效力：{d.status !== "effective" ? ({ expired: "已失效", abolished: "已废止" })[d.status] || d.status : ({ effective: "现行有效", pending: "待生效", superseded: "已被替代", repealed: "已废止" })[d.validity] || d.validity}</p>

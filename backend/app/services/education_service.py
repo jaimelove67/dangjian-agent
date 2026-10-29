@@ -91,10 +91,12 @@ class EducationService:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
-    def progress_view(self, row: Enrollment | None) -> dict[str, Any] | None:
+    def progress_view(
+        self, row: Enrollment | None, offering: Offering | None = None
+    ) -> dict[str, Any] | None:
         if not row:
             return None
-        return {
+        result = {
             "id": row.id,
             "status": row.status,
             "points": row.points,
@@ -110,16 +112,40 @@ class EducationService:
                     "passed",
                     "completed_at",
                     "attended_at",
+                    "note",
+                    "material_notes",
+                    "exam_review",
                 }
             },
         }
+        if offering and result.get("attempts") and not result.get("exam_review"):
+            # Historical attempts did not retain selected answers; do not invent them.
+            result["exam_review"] = self.exam_review(offering)
+        return result
+
+    def exam_review(
+        self, row: Offering, answers: dict[str, int] | None = None
+    ) -> list[dict[str, Any]]:
+        answers = answers or {}
+        return [
+            {
+                "id": q["id"],
+                "text": q["text"],
+                "options": q["options"],
+                "selected_index": answers.get(q["id"]),
+                "correct_index": q["correct_index"],
+                "correct": answers[q["id"]] == q["correct_index"] if q["id"] in answers else None,
+                "explanation": q.get("explanation", ""),
+            }
+            for q in row.content.get("questions", [])
+        ]
 
     async def view(self, row: Offering, enrollment: Enrollment | None = None) -> dict[str, Any]:
         can_manage = row.org_unit_id in await self.managed()
         content = {**row.content}
         if "questions" in content:
             content["questions"] = [
-                {k: v for k, v in q.items() if can_manage or k != "correct_index"}
+                {k: v for k, v in q.items() if can_manage or k in {"id", "text", "options"}}
                 for q in content["questions"]
             ]
         result = {
@@ -132,7 +158,7 @@ class EducationService:
             "created_by": row.created_by,
             "content": content,
             "can_manage": can_manage,
-            "own": self.progress_view(enrollment),
+            "own": self.progress_view(enrollment, row),
         }
         if row.kind == "event":
             result["enrolled_count"] = await self.db.scalar(
@@ -365,8 +391,34 @@ class EducationService:
             "attempts": current.progress.get("attempts", 0) + 1,
             "score": score,
             "passed": score >= row.content["passing_score"],
+            "exam_review": self.exam_review(row, body.answers),
         }
         self.complete(row, current)
+        await self.db.flush()
+        return current
+
+    async def save_note(self, row: Offering, body: schema.StudyNote) -> Enrollment:
+        current = await self.enrollment(row, lock=True)
+        if (
+            row.kind != "course"
+            or row.status != "published"
+            or current is None
+            or current.status == "cancelled"
+        ):
+            raise HTTPException(409, "请先开始已发布课程，再保存本人学习笔记")
+        if (
+            body.material_id == "reading"
+            and not (row.content.get("reading_text") or row.content.get("description"))
+        ) or (body.material_id == "lesson" and not row.content.get("video_url")):
+            raise HTTPException(422, "所选学习资料不存在，请重新进入课程")
+        notes = {
+            "reading": current.progress.get("note", ""),
+            **current.progress.get("material_notes", {}),
+        }
+        notes[body.material_id] = body.note
+        current.progress = {**current.progress, "material_notes": notes}
+        if body.material_id == "reading":
+            current.progress = {**current.progress, "note": body.note}
         await self.db.flush()
         return current
 

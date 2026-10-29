@@ -6,12 +6,12 @@ import { ROLE_INFO, hasPermission } from "../roles";
 import { PageHeader, Tabs, Modal, ErrorBox, downloadBlob } from "../components";
 import { request } from "../api";
 import { get, send, key, rows } from "../business-api";
-import { BusinessForm, BusinessTable, RecordTrace, ResourceState, Status, options, useResource } from "../components/BusinessForms";
+import { BusinessForm, BusinessTable, BusinessToolbar, RecordTrace, ResourceState, Status, options, useResource } from "../components/BusinessForms";
 
 export function LiveSchoolBusiness({ mode = "tasks", tenantId, category }) {
-  const { session } = useApp(), { notify } = useStore();
+  const { session, routeParams } = useApp(), { notify } = useStore();
   const school = session.user.role === "school_admin", platform = session.user.role === "system_admin";
-  const [tab, setTab] = useState("任务办理"), [onlyOverdue, setOnlyOverdue] = useState(false), [selected, setSelected] = useState(null), [form, setForm] = useState(null), [error, setError] = useState(null);
+  const [tab, setTab] = useState("任务办理"), [onlyOverdue, setOnlyOverdue] = useState(false), [selected, setSelected] = useState(routeParams.recordId || null), [form, setForm] = useState(null), [error, setError] = useState(null);
   const kind = mode === "notices" ? "notice" : mode === "permissions" ? "permission" : "task";
   const resource = useResource(() => mode === "rules" ? get("/school/business/rules") : get("/school/business/records", { kind, tenant_id: tenantId }), [mode, kind, tenantId]);
   const notices = useResource(() => mode === "personal" ? get("/school/business/records", { kind: "notice" }) : Promise.resolve(null), [mode]);
@@ -32,7 +32,18 @@ export function LiveSchoolBusiness({ mode = "tasks", tenantId, category }) {
   async function save(path, values, method = "POST") { const result = await send(path, values, method); resource.reload(); detail.reload(); notices.reload(); notify("业务记录已保存"); return result; }
   const note = { name: "reason", label: "办理依据与处理说明", type: "textarea" };
   function create() {
-    if (kind === "notice") open("编制校内通知草稿", [{ name: "org_unit_id", label: "接收组织及其下属", options: options(rows(orgs.value)) }, { name: "title", label: "通知标题", maxLength: 200 }, { name: "content", label: "通知正文", type: "textarea", max: 10000, rows: 8 }, { name: "expires_on", label: "展示截至日期（可留空）", type: "date", required: false }], values => save("/school/business/notices", { ...values, expires_on: values.expires_on || null }));
+    if (kind === "notice") open("编制公示公告草稿", [
+      { name: "category", label: "信息类型", options: [["notice", "通知公告"], ["publicity", "公示事项"]], value: "notice" },
+      { name: "org_unit_id", label: "接收组织及其下属", options: options(rows(orgs.value)) },
+      { name: "title", label: "标题", maxLength: 200 }, { name: "content", label: "正文", type: "textarea", max: 10000, rows: 8 },
+      { name: "starts_on", label: "展示开始日期（公示必填）", type: "date", required: false },
+      { name: "expires_on", label: "展示截止日期（公示必填）", type: "date", required: false },
+      { name: "doc_ids", label: "已发布文件附件", type: "multi", required: false, options: rows(docs.value).filter(doc => doc.review_status === "published").map(doc => [doc.doc_id, doc.title]) },
+    ], values => {
+      if (values.category === "publicity" && (!values.starts_on || !values.expires_on)) throw new Error("请填写公示开始日期和截止日期");
+      if (values.starts_on && values.expires_on && values.starts_on > values.expires_on) throw new Error("截止日期不能早于开始日期");
+      return save("/school/business/notices", { ...values, starts_on: values.starts_on || null, expires_on: values.expires_on || null, doc_ids: values.doc_ids || [] });
+    }, {}, "先保存草稿，再确认发布。公示须填写起止日期；附件须已发布且覆盖接收组织范围。个人材料不作为公示附件。");
     else if (kind === "permission") open("提交本校业务角色申请", [
       { name: "user_id", label: "本校账号", options: rows(users.value).map(u => [u.id, `${u.name} · ${u.username}`]) },
       { name: "role", label: "申请的业务角色", options: Object.entries(ROLE_INFO).filter(([id]) => id !== "system_admin").map(([id, r]) => [id, r.label]) },
@@ -56,12 +67,12 @@ export function LiveSchoolBusiness({ mode = "tasks", tenantId, category }) {
   ], values => save("/school/business/rules", { ...values, expected_revision: current.revision }, "PUT"), current, "参数用于本校任务提醒与办理指引。阶段流转的法定要求和角色权限仍由相应业务规则校验。"); }
   const all = rows(resource.value).filter(r => (!category || r.body.category === category) && (!onlyOverdue || r.overdue));
   const records = mode === "personal" && tab === "通知公告" ? rows(notices.value) : all;
-  return <section className="panel workspace-panel"><PageHeader title={{ tasks: category === "learning" ? "支部学习任务" : "问题与督办", personal: "通知与我的任务", notices: "校内通知公告", permissions: "业务角色申请", rules: "学校业务参数" }[mode]} subtitle="所有记录来自本校服务，保留材料版本、办理人及处理意见" action={school && (mode === "rules" ? <button className="button primary" disabled={!resource.value} onClick={rules}>修订学校参数</button> : <button className="button primary" onClick={create}>{kind === "notice" ? "编制通知" : kind === "permission" ? "提交业务申请" : "布置任务"}</button>)} />
+  return <section className="panel workspace-panel"><PageHeader title={{ tasks: category === "learning" ? "支部学习任务" : "问题与督办", personal: "通知与我的任务", notices: "公示公告管理", permissions: "业务角色申请", rules: "学校业务参数" }[mode]} subtitle="所有记录来自本校服务，保留材料版本、办理人及处理意见" action={<div className="inline-controls"><button className="button secondary" onClick={() => { resource.reload(); notices.reload(); }}>刷新</button>{school && (mode === "rules" ? <button className="button primary" disabled={!resource.value} onClick={rules}>修订学校参数</button> : <button className="button primary" onClick={create}>{kind === "notice" ? "编制公示公告" : kind === "permission" ? "提交业务申请" : "布置任务"}</button>)}</div>} />
     {mode === "personal" && <Tabs items={["任务办理", "通知公告"]} active={tab} onChange={setTab} />}
-    <div className="business-toolbar">{kind === "task" && tab !== "通知公告" && <label><input type="checkbox" checked={onlyOverdue} onChange={e => setOnlyOverdue(e.target.checked)} /> 仅看逾期未完成</label>}<button className="button secondary" onClick={() => { resource.reload(); notices.reload(); }}>刷新</button></div>
+    {["tasks", "personal"].includes(mode) && tab !== "通知公告" && <BusinessToolbar><label><input type="checkbox" checked={onlyOverdue} onChange={e => setOnlyOverdue(e.target.checked)} /> 仅看逾期未完成</label></BusinessToolbar>}
     <ResourceState resource={resource} />
     {mode === "rules" ? resource.value && <><p>当前版本 v{resource.value.revision} · {resource.value.year} 年度</p><dl className="detail-list"><dt>建议审核时限</dt><dd>{resource.value.review_days}天</dd><dt>截止前提醒</dt><dd>{resource.value.reminder_days}天</dd><dt>发展材料要求</dt><dd>{resource.value.development_materials}</dd><dt>归档要求</dt><dd>{resource.value.archive_requirements}</dd><dt>维护人</dt><dd>{resource.value.updated_by || "采用初始办理指引"}</dd></dl></> : <BusinessTable items={records} columns={[["业务事项", r => r.title], ["要求 / 原因", r => r.body.requirements || r.body.reason || r.body.content?.slice(0, 100)], ["期限", r => r.body.due_date || r.body.expires_on || "—"], ["状态", r => <><Status value={r.status} />{r.overdue && <span className="cell-subtext">已逾期</span>}</>], ["操作", r => <button className="text-button link" onClick={() => setSelected(r.id)}>查看与办理</button>]]} />}
-    {selected && <Modal title="业务记录与办理" wide flat onClose={() => setSelected(null)}><ResourceState resource={detail} />{d && <><h3>{d.title}</h3><Status value={d.status} /><RecordTrace record={d} />{error && <ErrorBox error={error} />}<p className="business-content">{d.body.content || d.body.requirements || d.body.reason}</p>{d.body.role && <p>目标角色：{ROLE_INFO[d.body.role]?.label}；组织：{d.body.org_unit_id}；目标账号：{d.body.user_id}</p>}{d.body.report && <p className="business-content">完成情况：{d.body.report}</p>}{d.body.evidence?.map(e => <p key={e.doc_id}>佐证：{e.title}（版本{e.revision}） <button className="text-button link" onClick={() => downloadEvidence(e)}>下载该版本</button></p>)}{d.body.materials?.map(e => <p key={e.id}>本人原件：{e.title}（{e.file_version}） <button className="text-button link" onClick={() => downloadEvidence(e, true)}>下载原件</button></p>)}
+    {selected && <Modal title="业务记录与办理" wide flat onClose={() => setSelected(null)}><ResourceState resource={detail} />{d && <><h3>{d.title}</h3><Status value={d.status} /><RecordTrace record={d} />{error && <ErrorBox error={error} />}<p className="business-content">{d.body.content || d.body.requirements || d.body.reason}</p>{d.kind === "notice" && <p>类型：{d.body.category === "publicity" ? "公示事项" : "通知公告"} · 展示日期：{d.body.starts_on || "发布后"} 至 {d.body.expires_on || "长期展示"}</p>}{d.body.role && <p>目标角色：{ROLE_INFO[d.body.role]?.label}；组织：{d.body.org_unit_id}；目标账号：{d.body.user_id}</p>}{d.body.report && <p className="business-content">完成情况：{d.body.report}</p>}{d.body.evidence?.map(e => <p key={e.doc_id}>佐证：{e.title}（版本{e.revision}） <button className="text-button link" onClick={() => downloadEvidence(e)}>下载该版本</button></p>)}{d.body.materials?.map(e => <p key={e.id}>本人原件：{e.title}（{e.file_version}） <button className="text-button link" onClick={() => downloadEvidence(e, true)}>下载原件</button></p>)}
       <div className="business-actions">{school && d.status === "draft" && <button className="button primary" onClick={() => recordAction("publish")}>{d.kind === "notice" ? "确认发布" : "确认下发"}</button>}{d.kind === "task" && ["assigned", "rejected"].includes(d.status) && d.body.assignee_id === session.user.id && <button className="button primary" onClick={() => recordAction("complete")}>提交完成记录</button>}{d.status === "pending" && d.submitted_by !== session.user.id && (d.kind === "permission" ? platform : ["school_admin", "department_admin"].includes(session.user.role)) && <button className="button primary" onClick={() => recordAction("review")}>人工核验</button>}{school && d.kind === "task" && d.status === "approved" && <button className="button primary" onClick={() => recordAction("archive")}>确认归档</button>}</div>
       <BusinessTable items={d.history || []} columns={[["版本", r => r.revision], ["操作", r => r.action], ["办理人", r => r.actor_id], ["处理说明", r => r.reason], ["时间", r => formatBusinessTime(r.created_at)]]} /></>}</Modal>}
     {form && <BusinessForm key={form.title} {...form} onSubmit={form.submit} onClose={() => setForm(null)} />}

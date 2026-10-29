@@ -115,7 +115,7 @@ import {
 } from "./roles";
 import { Organization, Members } from "./pages/Members";
 import { MemberInfoPage } from "./pages/MemberInfo";
-import { Meetings, Activities, Learning } from "./pages/Activities";
+import { Meetings, Activities } from "./pages/Activities";
 import {
   Assistant,
   Analytics,
@@ -265,6 +265,7 @@ export const NAV = [
     icon: BookOpen,
     section: "学习与发展",
     permission: "education.query",
+    roles: ["school_admin", "department_admin", "branch_secretary", "organizer", "member", "applicant"],
   },
   {
     id: "development",
@@ -334,7 +335,7 @@ export const PLATFORM_NAV = PLATFORM_NAV_SPEC.map((item, i) => ({
   roles: ["system_admin"],
 }));
 function navForUser(user) {
-  return user?.role === "system_admin" ? PLATFORM_NAV : NAV;
+  return user?.role === "system_admin" ? PLATFORM_NAV : isSelfService(user) ? NAV.map(item => item.id === "learning" ? { ...item, label: "我的学习" } : item) : NAV;
 }
 function FileTextIcon(props) {
   return <Books {...props} />;
@@ -870,7 +871,7 @@ function Shell() {
             ) : !IS_LIVE &&
               session.user.role !== "system_admin" &&
               session.user.tenant_id !== "school-1" &&
-              !["profile", "assistant", "school-accounts"].includes(route) ? (
+              !["dashboard", "learning", "profile", "assistant", "school-accounts", "school-notices"].includes(route) ? (
               <section className="panel workspace-panel">
                 <PageHeader
                   title={selected.label}
@@ -944,15 +945,7 @@ function Shell() {
             ) : route === "activities" ? (
               IS_LIVE ? <LiveEducation eventOnly /> : <Activities />
             ) : route === "learning" ? (
-              IS_LIVE ? (
-                school || !hasPermission(session, "study.query") ? (
-                  <LiveEducation />
-                ) : (
-                  <LiveLearning />
-                )
-              ) : (
-                <Learning />
-              )
+              IS_LIVE && !school && hasPermission(session, "study.query") ? <LiveLearning /> : <LiveEducation />
             ) : route === "analytics" ? (
               school ? (
                 <SchoolStatistics />

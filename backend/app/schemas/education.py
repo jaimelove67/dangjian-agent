@@ -15,6 +15,7 @@ class Question(Input):
     text: str = Field(min_length=1, max_length=2000)
     options: list[str] = Field(min_length=2, max_length=8)
     correct_index: int = Field(ge=0, le=7)
+    explanation: str = Field(default="", max_length=5000)
 
     @model_validator(mode="after")
     def valid_answer(self) -> Question:
@@ -79,6 +80,11 @@ class Heartbeat(Input):
 
 class ExamSubmit(Input):
     answers: dict[str, int] = Field(min_length=1, max_length=100)
+
+
+class StudyNote(Input):
+    note: str = Field(max_length=5000)
+    material_id: Literal["reading", "lesson"] = "reading"
 
 
 class Attendance(Input):

@@ -24,6 +24,14 @@ export const statusText = { recorded: "已登记", held: "已开展", draft: "�
 export function Status({ value }) { return <Badge tone={["approved", "archived", "completed", "published", "settled"].includes(value) ? "green" : ["rejected", "returned", "revoked"].includes(value) ? "red" : "orange"}>{statusText[value] || value || "待办理"}</Badge>; }
 export function ResourceState({ resource }) { return resource.loading ? <Loading /> : resource.error ? <ErrorBox error={resource.error} retry={resource.reload} /> : null; }
 
+export function BusinessToolbar({ children, actions }) {
+  if (!children && !actions) return null;
+  return <div className="business-toolbar business-toolbar-grouped">
+    {children && <div className="business-toolbar-context">{children}</div>}
+    {actions && <div className="business-toolbar-actions">{actions}</div>}
+  </div>;
+}
+
 // 「可多选」统一渲染成带筛选的勾选面板：原生 select[multiple] 要按住 Ctrl 点选，
 // 在人员名单、制度依据这种长列表上既看不清也没法核对，勾选 + 关键字筛选才可操作。
 export function MultiSelect({ name, options, value, onChange, filterFrom = 8 }) {

@@ -24,6 +24,9 @@ import { saveDemoFile, getDemoFile } from "../demo-files";
 import { validateMaterialFile } from "../material-validation";
 import { STAGES } from "../data";
 import { OwnReviews } from "../components/OwnReviews";
+import { HomeLearning } from "../components/HomeLearning";
+import { PublicationsPanel } from "../components/PublicationsPanel";
+import { HomeBanner, HomeAssistant, OwnHomeTasks, OwnHomeArchive } from "../components/HomeWorkspace";
 import { MaterialSuggestions, useMaterialDraft } from "../components/MaterialSuggestions";
 import { MemberInfoSelfSection } from "./MemberInfo";
 import {
@@ -58,176 +61,28 @@ export function PersonalHome() {
   const { session, navigate } = useApp();
   const own = useOwnWorkspace();
   const applicant = session.user.role === "applicant";
-  return (
-    <div className="personal-workspace">
-      <section className="role-welcome personal-welcome">
-        <div>
-          <span className="eyebrow">
-            我的党建空间 <span>·</span> {roleLabel(session.user)}
-          </span>
-          <h1>{session.user.name}，您好</h1>
-          <p>
-            {applicant
-              ? "每一步成长，都从认真准备开始。"
-              : "让每一次学习与实践，都留下成长的足迹。"}
-          </p>
-          <div className="welcome-actions">
-            <button
-              className="button primary"
-              onClick={() => navigate("self-materials")}
-            >
-              <UploadSimple size={16} />
-              提交个人材料
-            </button>
-            <button
-              className="button secondary"
-              onClick={() => navigate("assistant")}
-            >
-              <Sparkle size={16} />
-              向智能体提问
-            </button>
-          </div>
-        </div>
-        <img src="/assets/assistant-avatar.png" alt="党建智能助手" />
-      </section>
-      {own.error && <ErrorBox error={own.error} retry={own.reload} />}
-      <div className="role-metrics">
-        <div>
-          <span className="metric-icon red">
-            <IdentificationCard size={24} />
-          </span>
-          <div>
-            <p>当前登记阶段</p>
-            <strong className="text-metric">
-              {own.loading ? "加载中" : own.profile?.stage || "尚未关联档案"}
-            </strong>
-          </div>
-        </div>
-        <div>
-          <span className="metric-icon blue">
-            <FileText size={24} />
-          </span>
-          <div>
-            <p>已提交材料</p>
-            <strong>
-              {own.total}
-              <small>份</small>
-            </strong>
-          </div>
-        </div>
-        <div>
-          <span className="metric-icon green">
-            <ShieldCheck size={24} />
-          </span>
-          <div>
-            <p>资料访问范围</p>
-            <strong className="text-metric">仅限本人</strong>
-          </div>
-        </div>
-      </div>
-      <div className="role-columns">
-        <section className="panel">
-          <PanelTitle
-            title={applicant ? "申请与培养进度" : "我的党员档案"}
-            action="查看档案"
-            onAction={() => navigate("self-archive")}
-          />
-          <div className="personal-archive-summary">
-            {own.profile ? (
-              <>
-                <div className="identity-row">
-                  <span className="identity-monogram">
-                    {own.profile.name[0]}
-                  </span>
-                  <div>
-                    <h3>
-                      {own.profile.name}
-                      <Badge tone="red">{own.profile.stage}</Badge>
-                    </h3>
-                    <p>{own.profile.organization}</p>
-                  </div>
-                </div>
-                <div className="mini-stage-rail">
-                  {STAGES.map((s, i) => (
-                    <div
-                      className={
-                        i <= STAGES.indexOf(own.profile.stage) ? "done" : ""
-                      }
-                      key={s}
-                    >
-                      <CheckCircle
-                        size={17}
-                        weight={
-                          i <= STAGES.indexOf(own.profile.stage)
-                            ? "fill"
-                            : "regular"
-                        }
-                      />
-                      <span>{s}</span>
-                    </div>
-                  ))}
-                </div>
-                <p className="minor-copy">
-                  此处展示组织已登记的阶段。阶段变更由有权限的组织人员人工办理。
-                </p>
-              </>
-            ) : (
-              <Empty
-                title="档案尚未关联"
-                description="请联系所属支部组织员，将当前账号与本人档案明确关联。"
-              />
-            )}
-          </div>
-        </section>
-        <section className="panel">
-          <PanelTitle
-            title="最近提交"
-            action="全部材料"
-            onAction={() => navigate("self-materials")}
-          />
-          <div className="compact-material-list">
-            {own.materials.slice(0, 4).map((m) => (
-              <button key={m.id} onClick={() => navigate("self-materials")}>
-                <span className="file-type-icon">
-                  <FileText size={21} />
-                </span>
-                <div>
-                  <h3>{m.title}</h3>
-                  <p>
-                    {MATERIAL_CATEGORIES[m.category]} ·{" "}
-                    {m.created_at.slice(0, 10)}
-                  </p>
-                </div>
-                <Badge tone="blue">已提交</Badge>
-              </button>
-            ))}
-            {!own.materials.length && (
-              <Empty
-                title="还没有提交记录"
-                description="按组织要求上传思想汇报、学习心得等材料。"
-              />
-            )}
-          </div>
+  const identity = `${session.user.tenant_id}:${session.user.id}`;
+  return <div className="home-workspace personal-home">
+    <HomeBanner title="我的党建空间" personal description={own.profile?.organization || roleLabel(session.user)} stage={own.profile?.stage} />
+    {own.error && <ErrorBox error={own.error} retry={own.reload} />}
+    <div className="home-primary-grid">
+      <div className="home-side-stack home-member-main">
+        <PublicationsPanel key={identity} limit={5} />
+        <section className="panel home-materials">
+          <PanelTitle title="我的材料" action="全部材料" onAction={() => navigate("self-materials")} />
+          <div className="home-material-actions"><span>个人提交记录 · {own.loading || own.error ? "—" : own.total} 份</span><button className="button secondary" onClick={() => navigate("self-materials")}><UploadSimple size={16} />提交个人材料</button></div>
+          {own.loading ? <Loading /> : own.materials.length ? <div className="table-scroll"><table><thead><tr><th>材料名称</th><th>来源</th><th>提交时间</th><th>状态</th></tr></thead><tbody>{own.materials.slice(0, 3).map(material => <tr key={material.id}><td><button className="text-button link" onClick={() => navigate("self-materials")}>{material.title}</button></td><td>个人提交</td><td>{material.created_at?.slice(0, 10) || "—"}</td><td><Badge tone={material.has_file === false ? "orange" : "blue"}>{material.has_file === false ? "原件待提交" : "已提交"}</Badge></td></tr>)}</tbody></table></div> : !own.error && <Empty title="暂无个人提交记录" description="请按所属组织要求提交个人材料。" />}
+          <p className="home-privacy"><ShieldCheck size={15} />本人材料由本人及授权组织人员查阅。</p>
         </section>
       </div>
-      <section className="panel personal-help">
-        <ShieldCheck size={30} weight="duotone" />
-        <div>
-          <h3>您的材料，由您和授权组织人员查阅</h3>
-          <p>
-            个人原件不会自动进入知识库或模型。制度咨询可使用党建智能体，业务办理请联系所属组织。
-          </p>
-        </div>
-        <button
-          className="text-button primary-text"
-          onClick={() => navigate("assistant")}
-        >
-          制度问答
-          <ArrowRight size={15} />
-        </button>
-      </section>
+      <div className="home-side-stack home-member-sidebar">
+        <HomeLearning key={`learning:${identity}`} />
+        <OwnHomeTasks key={identity} materials={own.materials} />
+        <OwnHomeArchive profile={own.profile} loading={own.loading} applicant={applicant} />
+        <HomeAssistant />
+      </div>
     </div>
-  );
+  </div>;
 }
 export function OwnArchive() {
   const { session, navigate } = useApp();
@@ -427,6 +282,7 @@ export function OwnMaterials() {
           ...body,
           id: crypto.randomUUID(),
           owner_id: session.user.id,
+          tenant_id: session.user.tenant_id,
           profile_id: own.profile.id,
           file_name: file.name,
           file_size: file.size,

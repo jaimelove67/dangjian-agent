@@ -87,9 +87,9 @@ export const ROLE_INFO = {
 };
 export const SELF_ROUTES = new Set([
   "dashboard",
+  "learning",
   "self-archive",
   "self-materials",
-  "learning",
   "assistant",
 ]);
 export const PLATFORM_NAV_SPEC = [

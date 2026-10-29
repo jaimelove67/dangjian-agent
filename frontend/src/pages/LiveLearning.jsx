@@ -7,7 +7,7 @@ import { PageHeader, Select, Modal, ErrorBox, downloadBlob } from "../components
 import { request } from "../api";
 import { get, send, key, rows } from "../business-api";
 import { meetingParticipants } from "../contracts";
-import { BusinessForm, BusinessTable, RecordTrace, ResourceState, Status, lines, options, useResource } from "../components/BusinessForms";
+import { BusinessForm, BusinessTable, BusinessToolbar, RecordTrace, ResourceState, Status, lines, options, useResource } from "../components/BusinessForms";
 
 export function LiveLearning() {
   const { session } = useApp(), { notify } = useStore();
@@ -65,7 +65,7 @@ export function LiveLearning() {
     open("登记本期学习活动", [reasonField], async values => { const record = await save(`/study/plans/${key(p.id)}/items/${key(item.id)}/activity`, { ...values, expected_revision: p.revision }); setActivityId(record.id); });
   }
   return <section className="panel workspace-panel"><PageHeader title="全校学习计划与任务" subtitle="年度重点、分期安排、学习记录、独立审核和归档" action={can("study.manage") && <button className="button primary" disabled={!rows(orgs.value).length} onClick={() => planForm()}>编制学习计划</button>} />
-    <div className="business-toolbar"><Select label="学习年度" value={year} onChange={e => setYear(Number(e.target.value))}>{Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i).map(y => <option key={y}>{y}</option>)}</Select><Select label="党委组织" value={org} onChange={e => setOrg(e.target.value)}><option value="">全部授权党委</option>{rows(orgs.value).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</Select><button className="button secondary" onClick={plans.reload}>刷新</button></div>
+    <BusinessToolbar actions={<button className="button secondary" onClick={plans.reload}>刷新</button>}><Select label="学习年度" value={year} onChange={e => setYear(Number(e.target.value))}>{Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i).map(y => <option key={y}>{y}</option>)}</Select><Select label="党委组织" value={org} onChange={e => setOrg(e.target.value)}><option value="">全部授权党委</option>{rows(orgs.value).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</Select></BusinessToolbar>
     <ResourceState resource={orgs} /><ResourceState resource={plans} />{error && <ErrorBox error={error} />}
     {!orgs.loading && !rows(orgs.value).length && <p className="inline-note">中心组年度计划由学校和院系党委办理，支部党员教育请进入“课程与考试”或相关组织生活记录。</p>}
     <BusinessTable items={rows(plans.value)} columns={[["计划", p => p.title], ["组织 / 年度", p => `${rows(orgs.value).find(o => o.id === p.org_unit_id)?.name || "授权党委"} · ${p.year}`], ["负责人", p => p.responsible], ["状态", p => <Status value={p.review_status} />], ["任务", p => `${p.items?.length || 0}期`], ["操作", p => <button className="text-button link" onClick={() => setPlanId(p.id)}>查看与办理</button>]]} />

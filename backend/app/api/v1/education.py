@@ -107,7 +107,7 @@ async def heartbeat(
     own = await s.heartbeat(row, body)
     # Progress updates contain no transcript, answers, credentials or unrelated identities.
     await s.db.commit()
-    return APIResponse(data=s.progress_view(own))
+    return APIResponse(data=s.progress_view(own, row))
 
 
 @router.post("/education/offerings/{offering_id}/exam")
@@ -119,7 +119,7 @@ async def exam(
 ) -> APIResponse:
     row = await s.offering(offering_id)
     own = await s.exam(row, body)
-    return await respond(s, request, s.progress_view(own), "education_exam_submit", row.id)
+    return await respond(s, request, s.progress_view(own, row), "education_exam_submit", row.id)
 
 
 @router.get("/education/offerings/{offering_id}/enrollments")
@@ -158,6 +158,18 @@ async def enrollments(offering_id: str, s: EducationService = Depends(service)) 
     )
 
 
+@router.post("/education/offerings/{offering_id}/notes")
+async def save_note(
+    offering_id: str,
+    body: schema.StudyNote,
+    request: Request,
+    s: EducationService = Depends(service),
+) -> APIResponse:
+    row = await s.offering(offering_id)
+    own = await s.save_note(row, body)
+    return await respond(s, request, s.progress_view(own, row), "education_note_save", row.id)
+
+
 @router.post("/education/offerings/{offering_id}/attendance")
 async def attendance(
     offering_id: str,
@@ -167,7 +179,9 @@ async def attendance(
 ) -> APIResponse:
     row = await s.offering(offering_id, lock=True, manage=True)
     own = await s.attendance(row, body)
-    return await respond(s, request, s.progress_view(own), "education_attendance_confirm", row.id)
+    return await respond(
+        s, request, s.progress_view(own, row), "education_attendance_confirm", row.id
+    )
 
 
 @router.get("/education/credits")

@@ -6,7 +6,7 @@ import { hasPermission } from "../roles";
 import { PageHeader, Tabs, Select, Modal, Pagination, downloadBlob } from "../components";
 import { request } from "../api";
 import { get, send, key, rows } from "../business-api";
-import { BusinessForm, BusinessTable, RecordTrace, ResourceState, Status, options, useResource } from "../components/BusinessForms";
+import { BusinessForm, BusinessTable, BusinessToolbar, RecordTrace, ResourceState, Status, options, useResource } from "../components/BusinessForms";
 
 const stages = [["activist", "入党积极分子"], ["candidate", "发展对象"], ["probationary", "预备党员"], ["member", "正式党员"]];
 // 培养记录类型的中文名与 RoleManagement 的登记表单同一份口径（改一处要改两处）。
@@ -151,14 +151,15 @@ export function LiveMemberBusiness({ initialTab = "选优结论" }) {
   const d = detail.value;
   return <section className="panel workspace-panel"><PageHeader title="组织业务办理" subtitle="选优、民主评议、组织关系与上级报送业务台账" />
     <Tabs items={Object.keys(paths)} active={tab} onChange={value => { setTab(value); setPage(1); setSelected(null); }} />
-    <div className="business-toolbar">{tab === "民主评议" && <><Select label="评议年度" value={year} onChange={e => setYear(Number(e.target.value))}>{Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i).map(y => <option key={y}>{y}</option>)}</Select><Select label="评议支部" value={org} onChange={e => setOrg(e.target.value)}><option value="">全部授权组织</option>{orgOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</Select>{can("meeting.manage") && <button className="button primary" onClick={() => open("发起年度民主评议", [{ name: "org_unit_id", label: "评议支部", options: orgOptions, value: org }, reason], values => save(path + "/launch", { ...values, year }))}>按支部发起</button>}</>}
-      {tab === "选优结论" && can("member.scoring") && <><button className="button primary" onClick={() => selection()}>登记拟推荐名单</button><button className="button secondary" onClick={vote}>登记本人投票</button>{can("member.stage_transition") && <button className="button secondary" onClick={createBatch}>登记发展批次</button>}</>}
+    <BusinessToolbar actions={<>
+      <button className="button secondary" onClick={records.reload}>刷新</button>
+      {tab === "上级报送" && <button className="button secondary" onClick={() => open("导出报送台账", [reason], async () => downloadBlob(await request("/member-full/upper-reports/export", { download: true }), "上级报送台账.xlsx"))}>导出台账</button>}
+      {tab === "选优结论" && can("member.scoring") && <><button className="button secondary" onClick={vote}>登记本人投票</button>{can("member.stage_transition") && <button className="button secondary" onClick={createBatch}>登记发展批次</button>}<button className="button primary" onClick={() => selection()}>登记拟推荐名单</button></>}
+      {tab === "民主评议" && can("meeting.manage") && <button className="button primary" onClick={() => open("发起年度民主评议", [{ name: "org_unit_id", label: "评议支部", options: orgOptions, value: org }, reason], values => save(path + "/launch", { ...values, year }))}>按支部发起</button>}
       {tab === "团组织推优" && can("member.scoring") && <button className="button primary" onClick={recommendation}>登记推优</button>}
       {tab === "组织接转" && can("member.stage_transition") && <button className="button primary" onClick={transfer}>登记接转</button>}
       {tab === "上级报送" && can("member.stage_transition") && <button className="button primary" onClick={report}>登记报送</button>}
-      {tab === "上级报送" && <button className="button secondary" onClick={() => open("导出报送台账", [reason], async () => downloadBlob(await request("/member-full/upper-reports/export", { download: true }), "上级报送台账.xlsx"))}>导出台账</button>}
-      <button className="button secondary" onClick={records.reload}>刷新</button>
-    </div><ResourceState resource={records} /><ResourceState resource={people} /><ResourceState resource={orgs} />
+    </>}>{tab === "民主评议" && <><Select label="评议年度" value={year} onChange={e => setYear(Number(e.target.value))}>{Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i).map(y => <option key={y}>{y}</option>)}</Select><Select label="评议支部" value={org} onChange={e => setOrg(e.target.value)}><option value="">全部授权组织</option>{orgOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</Select></>}</BusinessToolbar><ResourceState resource={records} /><ResourceState resource={people} /><ResourceState resource={orgs} />
     <BusinessTable items={list} columns={[["业务对象", r => r.member_name || (r.candidates || []).map(c => c.name || c.member_name).join("、") || r.profile_id], ["组织 / 批次", r => [r.org_name, r.batch_no].filter(Boolean).join(" · ") || "—"], ["办理事项", r => r.item_label || r.target_stage_label || r.grade_label || (tab === "民主评议" ? "评议等次待定" : r.direction === "in" ? "转入" : r.direction === "out" ? "转出" : "团组织推优")], ...(tab === "团组织推优" ? [["资格核验", r => r.eligibility_note || "历史记录未留核验说明"]] : []), ["状态", r => <Status value={tab === "团组织推优" ? r.active ? "recorded" : "revoked" : r.review_status || r.status || "planned"} />], ["操作", r => tab === "团组织推优" ? can("member.scoring") && r.active !== false && <button className="text-button link" onClick={() => revoke(r)}>作废</button> : r.review_id || tab !== "民主评议" ? <button className="text-button link" onClick={() => setSelected({ path, id: r.review_id || r.id })}>查看与办理</button> : can("meeting.manage") && <button className="text-button link" onClick={() => editReview({ profile_id: r.profile_id })}>建立评议记录</button>]]} />
     {tab !== "民主评议" && <Pagination page={page} pages={Math.max(1, Math.ceil((records.value?.total || 0) / 20))} total={records.value?.total || 0} onChange={setPage} />}
     {tab === "民主评议" && records.value && <p className="inline-note">应评议{records.value.target_total}人；优秀比例{records.value.outstanding_ratio}%。{records.value.notices?.outstanding_notice}</p>}

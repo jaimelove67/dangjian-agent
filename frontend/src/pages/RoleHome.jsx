@@ -20,7 +20,9 @@ import { IS_LIVE, backend } from "../api";
 import { roleApi } from "../role-api";
 import { useManagedWorkspace } from "../role-hooks";
 import { ROLE_INFO, scopeLabel, roleLabel, memberInScope } from "../roles";
-import { PanelTitle, Badge, ErrorBox } from "../components";
+import { PanelTitle, Badge, ErrorBox, Empty } from "../components";
+import { PublicationsPanel } from "../components/PublicationsPanel";
+import { HomeBanner, HomeAssistant } from "../components/HomeWorkspace";
 export function RoleHome() {
   const { session, navigate, can } = useApp();
   const { data } = useStore();
@@ -99,7 +101,7 @@ export function RoleHome() {
     : [
         {
           label: department ? "本院在册党员" : "支部在册党员",
-          value: w.members.length,
+          value: w.members.filter(m => ["正式党员", "预备党员"].includes(m.stage)).length,
           unit: "人",
           icon: UsersThree,
           color: "red",
@@ -119,8 +121,8 @@ export function RoleHome() {
           color: "blue",
         },
         {
-          label: "培养发展对象",
-          value: w.members.filter((m) => m.stage !== "正式党员").length,
+          label: "申请与培养人员",
+          value: w.members.filter(m => ["入党申请人", "入党积极分子", "发展对象"].includes(m.stage)).length,
           unit: "人",
           icon: IdentificationCard,
           color: "green",
@@ -196,251 +198,21 @@ export function RoleHome() {
         : {}),
     }),
   );
-  return (
-    <div className="role-workspace">
-      <section className="role-welcome">
-        <div>
-          <span className="eyebrow">
-            {roleLabel(session.user)}工作台 <span>·</span>{" "}
-            {scopeLabel(session.user)}
-          </span>
-          <h1>
-            {platform
-              ? "让管理有序，让责任可追溯"
-              : department
-                ? "掌握院系进度，推动支部落实"
-                : secretary
-                  ? "抓好支部工作，办好每一件实事"
-                  : "材料有序接收，党务规范办理"}
-          </h1>
-          <p>{ROLE_INFO[session.user.role].subtitle}</p>
-        </div>
-        <span className="welcome-seal">
-          <ShieldCheck size={34} weight="duotone" />
-          <span>按组织范围授权</span>
-        </span>
+  return <div className="home-workspace role-home">
+    <HomeBanner title={`${roleLabel(session.user)}工作台`} description={scopeLabel(session.user)} />
+    {(error || w.error) && <ErrorBox error={error || w.error} retry={w.reload} />}
+    <div className="home-primary-grid">
+      <PublicationsPanel key={`${session.user.tenant_id}:${session.user.id}`} limit={5} />
+      <section className="panel">
+        <PanelTitle title={department ? "支部工作概览" : secretary ? "待办与审核" : "材料接收动态"} action="查看全部" onAction={() => navigate(department ? "organization" : secretary ? "reviews" : "inbox")} />
+        {department ? <>{w.orgs.slice(0, 4).map(org => <button className="home-action-row" key={org.id} onClick={() => navigate("members", { organization: org.name })}><span className="home-row-icon"><Buildings size={22} /></span><span><strong>{org.name}</strong><small>{w.members.filter(m => m.orgId === org.id && ["正式党员", "预备党员"].includes(m.stage)).length} 名在册党员 · {w.meetings.filter(m => m.orgId === org.id && m.status === "待审核").length} 项会议待审核</small></span><ArrowRight size={16} /></button>)}{!w.orgs.length && <Empty title="暂无授权支部记录" />}</> : secretary ? <>{pending.slice(0, 4).map(meeting => <button className="home-action-row" key={meeting.id} onClick={() => navigate("reviews")}><span className="home-row-icon"><ClipboardText size={22} /></span><span><strong>{meeting.title}</strong><small>{meeting.date} · 待人工审核</small></span><Badge tone="orange">待审核</Badge></button>)}{!pending.length && <Empty title="暂无待审核会议" description="已提交且需要审核的组织生活记录会显示在这里。" />}<button className="home-action-row" onClick={() => navigate("development")}><span className="home-row-icon"><IdentificationCard size={22} /></span><span><strong>查看培养发展进程</strong><small>核对材料、培养记录与办理依据</small></span><ArrowRight size={16} /></button></> : <>{materials.slice(0, 4).map(material => <button className="home-action-row" key={material.id} onClick={() => navigate("inbox", { profileId: material.profile_id })}><span className="home-row-icon"><FileText size={22} /></span><span><strong>{material.title}</strong><small>{w.members.find(m => m.id === material.profile_id)?.name} · 个人提交</small></span><Badge tone="blue">已提交</Badge></button>)}{!materials.length && <Empty title="暂无接收材料" description={IS_LIVE ? "请进入材料接收查看授权人员的提交记录。" : "当前组织尚无个人提交材料。"} />}</>}
       </section>
-      {(error || w.error) && (
-        <ErrorBox error={error || w.error} retry={w.reload} />
-      )}
-      <div className="role-metrics four">
-        {metrics.map((m) => (
-          <div key={m.label}>
-            <span className={`metric-icon ${m.color}`}>
-              <m.icon size={25} weight="duotone" />
-            </span>
-            <div>
-              <p>{m.label}</p>
-              <strong
-                className={
-                  typeof m.value === "string" && m.value.length > 3
-                    ? "text-metric"
-                    : ""
-                }
-              >
-                {m.value}
-                <small>{m.unit}</small>
-              </strong>
-            </div>
-          </div>
-        ))}
-      </div>
-      <section className="panel role-shortcuts">
-        <PanelTitle title="常用办理" />
-        <div className="role-shortcut-grid">
-          {shortcuts.map(([id, title, desc, Icon]) => (
-            <button key={id} onClick={() => navigate(id)}>
-              <span className="shortcut-icon">
-                <Icon size={25} weight="duotone" />
-              </span>
-              <h3>{title}</h3>
-              <p>{desc}</p>
-              <ArrowRight size={16} />
-            </button>
-          ))}
-        </div>
-      </section>
-      <div className="role-columns">
-        <section className="panel">
-          <PanelTitle
-            title={
-              platform
-                ? "系统管理事项"
-                : department
-                  ? "支部工作概览"
-                  : secretary
-                    ? "待办与审核"
-                    : "材料接收动态"
-            }
-            action="查看全部"
-            onAction={() =>
-              navigate(
-                platform
-                  ? "audit"
-                  : department
-                    ? "organization"
-                    : secretary
-                      ? "reviews"
-                      : "inbox",
-              )
-            }
-          />
-          {platform ? (
-            <div className="role-admin-tasks">
-              <button onClick={() => navigate("accounts")}>
-                <UsersThree size={22} />
-                <div>
-                  <h3>账号与人员归属核对</h3>
-                  <p>管理权限与教师／学生身份分别维护</p>
-                </div>
-                <ArrowRight size={16} />
-              </button>
-              <button onClick={() => navigate("tenants")}>
-                <Buildings size={22} />
-                <div>
-                  <h3>租户与学校信息</h3>
-                  <p>新增租户仅登记组织信息，不自动分配权限</p>
-                </div>
-                <ArrowRight size={16} />
-              </button>
-              <button onClick={() => navigate("audit")}>
-                <ShieldCheck size={22} />
-                <div>
-                  <h3>操作审计与追踪</h3>
-                  <p>按动作和结果回看操作留痕</p>
-                </div>
-                <ArrowRight size={16} />
-              </button>
-            </div>
-          ) : department ? (
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>党支部</th>
-                    <th>在册党员</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {w.orgs.map((org) => (
-                    <tr key={org.id}>
-                      <td>{org.name}</td>
-                      <td>
-                        {w.members.filter((m) => m.orgId === org.id).length} 人
-                      </td>
-                      <td>
-                        <button
-                          className="text-button link"
-                          onClick={() =>
-                            navigate("members", { organization: org.name })
-                          }
-                        >
-                          查看名册
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : secretary ? (
-            <div className="role-admin-tasks">
-              {pending.map((m) => (
-                <button key={m.id} onClick={() => navigate("reviews")}>
-                  <ClipboardText size={23} />
-                  <div>
-                    <h3>{m.title}</h3>
-                    <p>{m.date} · 会议纪要待独立人工审核</p>
-                  </div>
-                  <Badge tone="orange">待审核</Badge>
-                </button>
-              ))}
-              {!pending.length && (
-                <div className="subtle-empty">
-                  当前暂无待审核的组织生活记录。
-                </div>
-              )}
-              <button onClick={() => navigate("development")}>
-                <IdentificationCard size={23} />
-                <div>
-                  <h3>核对培养发展进程</h3>
-                  <p>查看材料、培养记录与人工流转依据</p>
-                </div>
-                <ArrowRight size={16} />
-              </button>
-            </div>
-          ) : (
-            <div className="compact-material-list">
-              {materials.slice(0, 4).map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => navigate("inbox", { profileId: m.profile_id })}
-                >
-                  <FileText size={22} />
-                  <div>
-                    <h3>{m.title}</h3>
-                    <p>
-                      {w.members.find((p) => p.id === m.profile_id)?.name} ·{" "}
-                      {m.created_at.slice(0, 10)}
-                    </p>
-                  </div>
-                  <Badge tone="blue">已提交</Badge>
-                </button>
-              ))}
-              {!materials.length && (
-                <div className="subtle-empty">
-                  材料会按当前账号的组织授权范围接收。
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-        <section className="panel">
-          <PanelTitle title={platform ? "运行与管理边界" : "近期工作提示"} />
-          <div className="work-guidance">
-            {(platform
-              ? [
-                  [
-                    "账号开户",
-                    "仅平台管理员可进入开户页，按组织类型分配角色。",
-                  ],
-                  ["权限范围", "可办理事项以当前账号的角色、所属学校和组织授权为准。"],
-                  ["审计留痕", "查看与导出仅限授权范围，不提供物理清理操作。"],
-                ]
-              : [
-                  [
-                    "组织生活",
-                    "纪要提交人与审核人应分开，审核后按学校政策归档。",
-                  ],
-                  ["个人材料", "接收表示可查阅，不等同于审核通过或阶段变更。"],
-                  ["人工办理", "党员发展和考核结论均须由有权限人员核验。"],
-                ]
-            ).map(([title, desc], i) => (
-              <div key={title}>
-                <span>0{i + 1}</span>
-                <div>
-                  <h3>{title}</h3>
-                  <p>{desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <button
-            className="work-guidance-link"
-            onClick={() => navigate("assistant")}
-          >
-            <Sparkle size={17} />
-            需要制度依据？向党建智能体提问
-            <ArrowRight size={14} />
-          </button>
-        </section>
-      </div>
-      {IS_LIVE && (
-        <p className="page-note">
-          工作概览按当前已加载的授权记录统计；正式业务统计以服务端工作台为准。
-        </p>
-      )}
     </div>
-  );
+    <div className="role-metrics four">{metrics.map(metric => <div key={metric.label}><span className={`metric-icon ${metric.color}`}><metric.icon size={24} /></span><div><p>{metric.label}</p><strong>{w.loading || w.error ? "—" : metric.value}<small>{metric.unit}</small></strong></div></div>)}</div>
+    <div className="home-secondary-grid">
+      <section className="panel role-shortcuts"><PanelTitle title="常用办理" /><div className="role-shortcut-grid">{shortcuts.map(([id, title, desc, Icon]) => <button key={id} onClick={() => navigate(id)}><span className="shortcut-icon"><Icon size={24} /></span><h3>{title}</h3><p>{desc}</p><ArrowRight size={16} /></button>)}</div></section>
+      <HomeAssistant />
+    </div>
+    {IS_LIVE && <p className="page-note">工作概览按当前已加载的授权记录统计。</p>}
+  </div>;
 }

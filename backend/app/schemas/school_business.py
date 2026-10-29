@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.user import UserRole
 
@@ -16,7 +16,18 @@ class NoticeCreate(Input):
     org_unit_id: str = Field(min_length=1, max_length=36)
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=10000)
+    category: Literal["notice", "publicity"] = "notice"
+    starts_on: date | None = None
     expires_on: date | None = None
+    doc_ids: list[str] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def publication_dates(self) -> "NoticeCreate":
+        if self.category == "publicity" and (self.starts_on is None or self.expires_on is None):
+            raise ValueError("公示须填写开始和截止日期")
+        if self.starts_on and self.expires_on and self.starts_on > self.expires_on:
+            raise ValueError("开始日期不能晚于截止日期")
+        return self
 
 
 class TaskCreate(Input):

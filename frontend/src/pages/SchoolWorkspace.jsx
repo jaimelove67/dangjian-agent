@@ -20,6 +20,11 @@ import {
 import { useApp } from "../app-context";
 import { useStore } from "../store";
 import { IS_LIVE } from "../api";
+import { get, rows } from "../business-api";
+import { useResource } from "../components/BusinessForms";
+import { PublicationsPanel } from "../components/PublicationsPanel";
+import { DemoPublicationManager } from "../components/DemoPublicationManager";
+import { HomeBanner, HomeAssistant } from "../components/HomeWorkspace";
 import { branchOrganizations } from "../contracts";
 import { useManagedWorkspace } from "../role-hooks";
 import { hasPermission, roleLabel } from "../roles";
@@ -756,253 +761,58 @@ export function SchoolDashboard() {
   const w = useSchoolWorkspace();
   const [filters, setFilters] = useSchoolFilters();
   const [detail, setDetail] = useState(null);
-  const [notice, setNotice] = useState(null);
-  const records = filterSchoolRecords(w.records, filters);
-  const pending = records.filter((r) => r.status === "待审核");
-  const overdue = records.filter((r) => isSchoolOverdue(r));
-  const missing = records.filter((r) =>
-    ["待补充", "已退回"].includes(r.status),
-  );
-  const orgs = w.orgs.filter(
-    (o) =>
-      (!filters.department || o.department === filters.department) &&
-      (!filters.orgId || o.id === filters.orgId),
-  );
-  const members = w.members.filter(
-    (m) =>
-      ["正式党员", "预备党员"].includes(m.stage) &&
-      (!filters.department || m.department === filters.department) &&
-      (!filters.orgId || m.orgId === filters.orgId),
-  );
+  const [taskTab, setTaskTab] = useState("待审核");
+  const [listKind, setListKind] = useState(null);
+  const tasks = useResource(() => IS_LIVE ? get("/school/business/records", { kind: "task" }) : Promise.resolve(null), [session.user.id, session.user.tenant_id]);
+  const taskRecords = rows(tasks.value).map(record => ({
+    id: record.id, liveTask: true, title: record.title,
+    status: ({ pending: "待审核", rejected: "已退回", approved: "已通过", archived: "已归档", assigned: "待办理", draft: "草稿" })[record.status] || record.status,
+    orgId: record.org_unit_id, organization: w.orgs.find(org => org.id === record.org_unit_id)?.name || "所属组织",
+    department: w.orgs.find(org => org.id === record.org_unit_id)?.department || "", year: Number(record.body?.due_date?.slice(0, 4)) || filters.year,
+    dueDate: record.body?.due_date || "", business: ({ learning: "学习教育", development: "党员发展", life: "组织生活", assessment: "年度考核" })[record.body?.category] || "其他业务",
+    archived: record.status === "archived",
+  })).filter(record => record.status !== "草稿");
+  const records = filterSchoolRecords([...w.records, ...taskRecords], filters);
+  const pending = records.filter(r => r.status === "待审核");
+  const overdue = records.filter(r => isSchoolOverdue(r));
+  const missing = records.filter(r => ["待补充", "已退回"].includes(r.status));
+  const taskRows = taskTab === "逾期" ? overdue : taskTab === "待补" ? missing : pending;
+  const members = w.members.filter(m => ["正式党员", "预备党员"].includes(m.stage) && (!filters.department || m.department === filters.department) && (!filters.orgId || m.orgId === filters.orgId));
+  const openRecord = record => { setListKind(null); record.liveTask ? navigate("school-supervision", { recordId: record.id }) : setDetail(record); };
+  const allRows = listKind === "待审核" ? pending : listKind === "逾期" ? overdue : listKind === "待补" ? missing : records;
   const metrics = [
-    [
-      "在册党员",
-      members.length.toLocaleString(),
-      "人",
-      UsersThree,
-      "members",
-      "",
-      "名册与组织归属",
-    ],
-    [
-      "基层党支部",
-      branchOrganizations(orgs).length,
-      "个",
-      TreeStructure,
-      "organization",
-      "",
-      "组织与负责人",
-    ],
-    [
-      "待学校审核",
-      pending.length,
-      "项",
-      ClipboardText,
-      "reviews",
-      "待审核",
-      "集中核对与处理",
-    ],
-    [
-      "逾期未办",
-      overdue.length,
-      "项",
-      Clock,
-      "school-supervision",
-      "逾期",
-      "定位组织与责任人",
-    ],
-    [
-      "材料待补",
-      missing.length,
-      "项",
-      FileText,
-      "school-supervision",
-      "待补充",
-      "跟进补充与重提",
-    ],
+    ["待学校审核", pending.length, "项", ClipboardText, "reviews", "待审核"],
+    ["逾期未办", overdue.length, "项", Clock, "school-supervision", "逾期"],
+    ["材料待补", missing.length, "项", FileText, "school-supervision", "待补充"],
+    ["在册党员", members.length.toLocaleString(), "人", UsersThree, "members", ""],
   ];
-  return (
-    <div className="school-workspace">
-      <div className="school-heading">
-        <div>
-          <h1>学校工作台</h1>
-          <p>{session.user.name}，欢迎回来。统筹全校工作，跟进每一项待办。</p>
-        </div>
-        <span className="school-scope">
-          <ShieldCheck size={16} />
-          全校业务范围<span>{IS_LIVE ? "业务环境" : "业务记录"}</span>
-        </span>
-      </div>
-      <SchoolFilters
-        filters={filters}
-        setFilters={setFilters}
-        orgs={w.orgs}
-        status={false}
-      />
-      <WorkspaceState w={w} />
-      <div className="school-metrics">
-        {metrics.map(([label, value, unit, Icon, route, status, desc]) => (
-          <button
-            key={label}
-            onClick={() =>
-              navigate(route, {
-                year: filters.year,
-                department: filters.department,
-                orgId: filters.orgId,
-                ...(["members", "organization"].includes(route)
-                  ? {
-                      organization: filters.orgId
-                        ? orgs[0]?.name
-                        : filters.department,
-                    }
-                  : {}),
-                ...(status ? { status } : {}),
-              })
-            }
-          >
-            <div>
-              <span>{label}</span>
-              <Icon size={19} />
-            </div>
-            <strong>
-              {value}
-              <small>{unit}</small>
-            </strong>
-            <p>
-              {desc}
-              <ArrowUpRight size={13} />
-            </p>
-          </button>
-        ))}
-      </div>
-      <div className="school-main-grid">
-        <section className="panel school-review-panel">
-          <PanelTitle
-            title="待学校审核"
-            action="进入审核工作台"
-            onAction={() => navigate("reviews", filters)}
-          >
-            <span className="school-count">{pending.length}</span>
-          </PanelTitle>
-          <p className="school-panel-description">
-            院系核验后提交，按学校制度逐项审核并保留意见。
-          </p>
-          <RecordsTable records={pending} open={setDetail} compact />
-        </section>
-        <section className="panel school-attention">
-          <PanelTitle title="需要关注" />
-          <div className="school-attention-summary">
-            <WarningCircle size={19} />
-            <span>
-              {overdue.length} 项逾期，{missing.length} 项材料待补
-            </span>
-          </div>
-          {[
-            ...overdue,
-            ...missing.filter((r) => !overdue.some((o) => o.id === r.id)),
-          ]
-            .slice(0, 3)
-            .map((r) => (
-              <button
-                className="school-issue"
-                key={r.id}
-                onClick={() => setDetail(r)}
-              >
-                <div>
-                  <Badge tone={isSchoolOverdue(r) ? "red" : "orange"}>
-                    {isSchoolOverdue(r) ? "逾期未办" : "材料待补"}
-                  </Badge>
-                  <span>{r.dueDate.slice(5)}</span>
-                </div>
-                <h3>{r.title}</h3>
-                <p>{r.organization}</p>
-              </button>
-            ))}
-          {!overdue.length && !missing.length && (
-            <Empty
-              title="当前无异常提醒"
-              description="继续按计划跟进各项工作。"
-            />
-          )}
-          <button
-            className="school-panel-link"
-            onClick={() => navigate("school-supervision", filters)}
-          >
-            查看全部问题与督办
-            <ArrowRight size={15} />
-          </button>
-        </section>
-      </div>
-      <div className="school-bottom-grid">
-        <section className="panel">
-          <PanelTitle
-            title="院系与支部工作进度"
-            action="全校统计"
-            onAction={() => navigate("analytics", filters)}
-          />
-          <p className="school-panel-description">
-            按登记事项统计；选择院系后，可继续查看所属支部。
-          </p>
-          <ProgressTable
-            records={records}
-            orgs={w.orgs}
-            department={filters.department}
-            orgId={filters.orgId}
-            onDetail={(row) =>
-              navigate("school-supervision", { ...filters, ...row, status: "" })
-            }
-          />
-        </section>
-        <section className="panel school-notices">
-          <PanelTitle
-            title="重要通知"
-            action="全部通知"
-            onAction={() => navigate("school-notices")}
-          />
-          {!IS_LIVE ? (
-            notices.slice(0, 4).map((n) => (
-              <button
-                className="school-notice"
-                key={n.id}
-                onClick={() => setNotice(n)}
-              >
-                <span>{n.date}</span>
-                <div>
-                  <h3>{n.title}</h3>
-                  <small>{n.type}</small>
-                </div>
-              </button>
-            ))
-          ) : (
-            <Empty
-              title="暂无已加载通知"
-              description="请以学校正式通知为准。"
-            />
-          )}
-          <div className="school-duty-note">
-            <ShieldCheck size={18} />
-            <p>
-              支部登记 · 院系核验督办
-              <br />
-              <strong>学校统筹、审核与确认</strong>
-            </p>
-          </div>
-        </section>
-      </div>
-      {detail && (
-        <RecordModal record={detail} onClose={() => setDetail(null)} />
-      )}
-      {notice && (
-        <Modal title="学校通知" onClose={() => setNotice(null)}>
-          <h2>{notice.title}</h2>
-          <p className="body-copy">{notice.body}</p>
-          <p className="school-muted-note">
-            {notice.type} · {notice.date}
-          </p>
-        </Modal>
-      )}
+  return <div className="home-workspace school-home">
+    <HomeBanner title="学校工作台" description="查阅公示信息，统筹全校党务工作。" />
+    {w.error && <ErrorBox error={w.error} retry={w.reload} />}
+    <div className="home-primary-grid">
+      <PublicationsPanel key={`${session.user.tenant_id}:${session.user.id}`} limit={6} />
+      <section className="panel home-school-tasks">
+        <PanelTitle title="我的待办" action="查看全部" onAction={() => setListKind(taskTab)} />
+        <div className="home-task-summary">{[["待审核", pending.length], ["逾期", overdue.length], ["待补", missing.length]].map(([label, count]) => <button key={label} aria-pressed={taskTab === label} onClick={() => setTaskTab(label)}><strong>{w.loading || w.error || (IS_LIVE && (tasks.loading || tasks.error)) ? "—" : count}</strong><small>{label}</small></button>)}</div>
+        {(w.loading || (IS_LIVE && tasks.loading)) && <Loading />}
+        {IS_LIVE && tasks.error && <ErrorBox error={tasks.error} retry={tasks.reload} />}
+        {taskRows.slice(0, 4).map(record => <button className="home-action-row" key={record.id} onClick={() => openRecord(record)}><span className="home-row-icon"><ClipboardText size={21} /></span><span><strong>{record.title}</strong><small>{record.organization} · {record.dueDate || "未设期限"}</small></span><Badge tone={isSchoolOverdue(record) ? "red" : "orange"}>{isSchoolOverdue(record) ? "逾期" : record.status}</Badge></button>)}
+        {!taskRows.length && !w.loading && !w.error && (!IS_LIVE || (!tasks.loading && !tasks.error)) && <Empty title={`当前暂无${taskTab}事项`} description="可切换分类查看其他办理事项。" />}
+      </section>
     </div>
-  );
+    <div className="school-metrics">{metrics.map(([label, value, unit, Icon, route, status]) => <button key={label} onClick={() => route === "members" ? navigate("members", { organization: filters.orgId ? w.orgs.find(org => org.id === filters.orgId)?.name : filters.department }) : setListKind(status === "待审核" ? "待审核" : status === "逾期" ? "逾期" : "待补")}><div><span>{label}</span><Icon size={19} /></div><strong>{w.loading || w.error || (IS_LIVE && label !== "在册党员" && (tasks.loading || tasks.error)) ? "—" : value}<small>{unit}</small></strong></button>)}</div>
+    <div className="home-secondary-grid">
+      <section className="panel home-school-progress">
+        <PanelTitle title="院系与支部工作进度" action="全校统计" onAction={() => navigate("analytics", filters)} />
+        <div className="home-school-filter"><SchoolFilters filters={filters} setFilters={setFilters} orgs={w.orgs} status={false} /></div>
+        <ProgressTable records={records} orgs={w.orgs} department={filters.department} orgId={filters.orgId} onDetail={row => { setFilters(prev => ({ ...prev, department: row.department || "", orgId: row.orgId || "" })); setListKind("全部"); }} />
+        {IS_LIVE && <p className="school-muted-note">按当前已加载的授权业务记录统计。</p>}
+      </section>
+      <HomeAssistant />
+    </div>
+    {listKind && <Modal title={`${listKind}事项`} wide flat onClose={() => setListKind(null)}><p className="body-copy">当前组织与年度范围内的会议和业务任务，共 {allRows.length} 项。</p><div className="home-record-list">{allRows.map(record => <button className="home-action-row" key={record.id} onClick={() => openRecord(record)}><span><strong>{record.title}</strong><small>{record.organization} · {record.business} · {record.dueDate || "未设期限"}</small></span><Badge>{record.status}</Badge><ArrowRight size={16} /></button>)}{!allRows.length && <Empty title="暂无符合条件的事项" />}</div></Modal>}
+    {detail && <RecordModal record={detail} onClose={() => setDetail(null)} />}
+  </div>;
 }
 
 export function SchoolRecordsPage({ mode = "supervision" }) {
@@ -1754,45 +1564,7 @@ export function SchoolStatistics() {
 }
 
 export function SchoolNotices() {
-  const [query, setQuery] = useState("");
-  const [detail, setDetail] = useState(null);
-  const rows = IS_LIVE ? [] : notices.filter((n) => n.title.includes(query));
-  return (
-    <section className="panel workspace-panel">
-      <PageHeader
-        title="学校通知公告"
-        subtitle="查阅学校工作安排、组织部通知与业务材料要求"
-      />
-      <div className="table-toolbar">
-        <SearchInput
-          placeholder="搜索通知标题"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      </div>
-      {rows.map((n) => (
-        <button
-          className="school-notice"
-          key={n.id}
-          onClick={() => setDetail(n)}
-        >
-          <span>{n.date}</span>
-          <div>
-            <h3>{n.title}</h3>
-            <small>{n.type}</small>
-          </div>
-          <ArrowRight size={16} />
-        </button>
-      ))}
-      {!rows.length && <Empty title="暂无匹配通知" />}
-      {detail && (
-        <Modal title="学校通知" onClose={() => setDetail(null)}>
-          <h2>{detail.title}</h2>
-          <p className="body-copy">{detail.body}</p>
-        </Modal>
-      )}
-    </section>
-  );
+  return <DemoPublicationManager />;
 }
 
 export function SchoolManagement({ mode }) {

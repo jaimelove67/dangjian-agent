@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "../app-context";
 import { hasPermission } from "../roles";
 import { Tabs } from "../components";
@@ -14,6 +14,8 @@ export function LiveLearningWorkspace() {
 }
 
 export function LivePersonalWorkspace({ children }) {
-  const [tab, setTab] = useState("个人工作台");
+  const { routeParams } = useApp();
+  const [tab, setTab] = useState(routeParams.workspace === "tasks" ? "通知与任务" : "个人工作台");
+  useEffect(() => { setTab(routeParams.workspace === "tasks" ? "通知与任务" : "个人工作台"); }, [routeParams.workspace, routeParams.recordId]);
   return <><Tabs items={["个人工作台", "学习与主题活动", "通知与任务"]} active={tab} onChange={setTab} />{tab === "个人工作台" ? children : tab === "学习与主题活动" ? <LiveEducation /> : <LiveSchoolBusiness mode="personal" />}</>;
 }

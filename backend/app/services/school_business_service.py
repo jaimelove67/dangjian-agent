@@ -29,6 +29,11 @@ def now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def notice_today() -> date:
+    """公示展示期限与前端统一按北京时间判定，不依赖宿主时区。"""
+    return (now() + timedelta(hours=8)).date()
+
+
 def view(row: Record) -> dict[str, Any]:
     data = row.dict()
     data.pop("is_deleted", None)
@@ -65,8 +70,14 @@ class SchoolBusinessService:
                 self.db, self.user
             )
         if row.kind == "notice":
-            if row.status != "published" and self.user.role != UserRole.SCHOOL_ADMIN:
-                return False
+            if self.user.role != UserRole.SCHOOL_ADMIN:
+                today = notice_today().isoformat()
+                if (
+                    row.status != "published"
+                    or (row.body.get("starts_on") and row.body["starts_on"] > today)
+                    or (row.body.get("expires_on") and row.body["expires_on"] < today)
+                ):
+                    return False
             # Notices addressed to an ancestor are visible to members of that subtree.
             if self._tree is None:
                 self._tree = await load_org_tree(self.db, str(self.user.tenant_id))
@@ -115,13 +126,6 @@ class SchoolBusinessService:
         result = []
         for row in records:
             if await self.readable(row):
-                if (
-                    kind == "notice"
-                    and row.body.get("expires_on")
-                    and row.body["expires_on"] < date.today().isoformat()
-                    and self.user.role != UserRole.SCHOOL_ADMIN
-                ):
-                    continue
                 result.append(view(row))
         if kind == "task":
             _, rules = await self.rules()
@@ -165,6 +169,16 @@ class SchoolBusinessService:
         if body.org_unit_id not in await self.org_ids():
             raise HTTPException(403, "组织不在本校管理范围")
         values = body.model_dump(mode="json")
+        if isinstance(body, schema.NoticeCreate):
+            if self._tree is None:
+                self._tree = await load_org_tree(self.db, str(self.user.tenant_id))
+            organization = self._tree.get(body.org_unit_id)
+            publisher = self._tree.get(self.user.org_unit_id or "")
+            values["organization_name"] = organization.name if organization else ""
+            values["issuer"] = publisher.name if publisher else ""
+            values["evidence"] = await self.documents(
+                values.pop("doc_ids"), notice_org_id=body.org_unit_id
+            )
         if isinstance(body, schema.TaskCreate):
             _, rules = await self.rules()
             values["rules_snapshot"] = {
@@ -228,11 +242,22 @@ class SchoolBusinessService:
         self.revision(row, body.expected_revision)
         if row.kind not in {"notice", "task"} or row.status != "draft":
             raise HTTPException(409, "当前记录不能发布")
+        if row.kind == "notice":
+            saved = row.body.get("evidence", [])
+            current = await self.documents(
+                [e["doc_id"] for e in saved], notice_org_id=row.org_unit_id
+            )
+            if sorted(saved, key=lambda d: d["doc_id"]) != sorted(
+                current, key=lambda d: d["doc_id"]
+            ):
+                raise HTTPException(409, "公示附件已更新，请重新编制通知并核对原件版本")
         row.status = "published" if row.kind == "notice" else "assigned"
         row.submitted_by = self.user.id
         await self.append(row, "publish", body.reason)
 
-    async def documents(self, doc_ids: list[str]) -> list[dict[str, Any]]:
+    async def documents(
+        self, doc_ids: list[str], *, notice_org_id: str | None = None
+    ) -> list[dict[str, Any]]:
         if not doc_ids:
             return []
         filters = knowledge_filters(self.user, include_unpublished=False)
@@ -243,6 +268,27 @@ class SchoolBusinessService:
             docs = list((await self.db.execute(statement)).scalars())
         if len(docs) != len(set(doc_ids)):
             raise HTTPException(403, "部分佐证文件不可访问或未发布")
+        if notice_org_id is not None:
+            if self._tree is None:
+                self._tree = await load_org_tree(self.db, str(self.user.tenant_id))
+            audience_ancestors: set[str] = set()
+            cursor: str | None = notice_org_id
+            while cursor and cursor not in audience_ancestors:
+                audience_ancestors.add(cursor)
+                organization = self._tree.get(cursor)
+                cursor = organization.parent_id if organization else None
+            for doc in docs:
+                metadata = doc.doc_metadata or {}
+                if doc.review_status != "published":
+                    raise HTTPException(403, "公示附件尚未发布或已撤回")
+                if doc.security_level not in {"public", "internal"} or (
+                    doc.visibility in {"department", "branch"}
+                    and metadata.get("org_unit_id") not in audience_ancestors
+                ):
+                    raise HTTPException(403, "附件的可见范围或资料级别不适用于本次公示范围")
+                original = metadata.get("original_file")
+                if not original or original.get("revision") != metadata.get("content_revision", 1):
+                    raise HTTPException(422, "公示附件须留存与当前版本一致的原始文件")
         return [
             {
                 "doc_id": d.doc_id,

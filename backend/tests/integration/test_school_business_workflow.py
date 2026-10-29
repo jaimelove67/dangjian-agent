@@ -12,6 +12,7 @@ from app.models.org import OrgUnit
 from app.models.school_business import SchoolBusinessRecord
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
+from app.services.school_business_service import notice_today
 from tests.integration.test_admin_accounts import workspace as account_workspace
 
 workspace = account_workspace
@@ -201,6 +202,112 @@ def test_notice_draft_hidden_and_published_ancestor_visible(case):
         case.client.get(BASE + "/records?kind=notice", headers=auth(case.actors["foreign"]))
     )["items"]
     assert step(case, row, "publish").status_code == 409
+
+
+def test_legacy_notice_creation_retains_defaults_and_real_organization_names(case):
+    row = data(
+        post(
+            case,
+            "/notices",
+            {"org_unit_id": "branch-a", "title": "兼容通知", "content": "保留原有创建方式"},
+        )
+    )
+    assert row["body"]["category"] == "notice"
+    assert row["body"]["starts_on"] is None
+    assert row["body"]["evidence"] == []
+    assert row["body"]["organization_name"] == case.session.get(OrgUnit, "branch-a").name
+    assert row["body"]["issuer"] == case.session.get(OrgUnit, "school-a").name
+
+
+@pytest.mark.parametrize("offset", [-2, 2])
+def test_notice_dates_gate_both_list_and_direct_detail_but_preserve_management(case, offset):
+    day = (notice_today() + timedelta(days=offset)).isoformat()
+    row = data(
+        post(
+            case,
+            "/notices",
+            {
+                "org_unit_id": "school-a",
+                "title": "限定期限公示",
+                "content": "未开始及结束后不可通过直达地址查看",
+                "category": "publicity",
+                "starts_on": day,
+                "expires_on": day,
+            },
+        )
+    )
+    row = data(step(case, row, "publish"))
+    student = auth(case.actors["student"])
+    assert not data(case.client.get(BASE + "/records?kind=notice", headers=student))["items"]
+    assert case.client.get(BASE + f"/records/{row['id']}", headers=student).status_code == 404
+    assert data(case.client.get(BASE + "/records?kind=notice", headers=auth(case.actor)))["items"]
+    assert (
+        data(case.client.get(BASE + f"/records/{row['id']}", headers=auth(case.actor)))["id"]
+        == row["id"]
+    )
+
+
+def test_publicity_dates_are_inclusive_and_organization_scope_is_preserved(case):
+    day = notice_today().isoformat()
+    row = data(
+        post(
+            case,
+            "/notices",
+            {
+                "org_unit_id": "branch-a",
+                "title": "当日支部公示",
+                "content": "仅授权支部当日查看",
+                "category": "publicity",
+                "starts_on": day,
+                "expires_on": day,
+            },
+        )
+    )
+    assert (
+        case.client.get(
+            BASE + f"/records/{row['id']}", headers=auth(case.actors["student"])
+        ).status_code
+        == 404
+    )
+    row = data(step(case, row, "publish"))
+    assert (
+        len(
+            data(
+                case.client.get(BASE + "/records?kind=notice", headers=auth(case.actors["student"]))
+            )["items"]
+        )
+        == 1
+    )
+    for actor in ["outsider", "foreign"]:
+        assert not data(
+            case.client.get(BASE + "/records?kind=notice", headers=auth(case.actors[actor]))
+        )["items"]
+        assert (
+            case.client.get(
+                BASE + f"/records/{row['id']}", headers=auth(case.actors[actor])
+            ).status_code
+            == 404
+        )
+    assert case.client.get(BASE + f"/records/{row['id']}").status_code == 401
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"category": "publicity"},
+        {"category": "publicity", "starts_on": "2026-10-28"},
+        {"category": "publicity", "expires_on": "2026-10-30"},
+        {"starts_on": "2026-10-30", "expires_on": "2026-10-28"},
+        {"category": "forged-category"},
+    ],
+)
+def test_notice_rejects_missing_or_reversed_publication_periods(case, fields):
+    response = post(
+        case,
+        "/notices",
+        {"org_unit_id": "school-a", "title": "期限校验", "content": "不得接受错误期限", **fields},
+    )
+    assert response.status_code == 422
 
 
 def test_required_material_and_private_material_ownership(case):

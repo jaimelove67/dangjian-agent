@@ -27,5 +27,19 @@
 .business-list > article { border:1px solid var(--border,#e6e6e6); padding:16px; border-radius:4px; }
 .business-meta { display:flex; gap:12px; flex-wrap:wrap; color:#707070; font-size:13px; margin:10px 0; }
 .business-toolbar { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:16px 0; }
+.business-toolbar-grouped { margin:16px 23px; }
+.business-toolbar-context { display:flex; align-items:center; flex-wrap:wrap; gap:12px; flex:1 1 240px; min-width:0; }
+.business-toolbar-context > .search-input { width:270px; max-width:100%; }
+.business-toolbar-context > p { margin:0; }
+.business-toolbar-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px; margin-left:auto; max-width:100%; }
+.business-toolbar-actions .button { flex-shrink:0; }
+.workspace-panel > .page-header > .inline-controls { flex-wrap:wrap; justify-content:flex-end; }
 .business-video { width:100%; max-height:420px; background:#151515; }
+@media(max-width:1020px) { .business-toolbar-grouped { margin-inline:19px; } }
+@media(max-width:760px) {
+  .business-toolbar-grouped { margin-inline:16px; }
+  .business-toolbar-context { flex-basis:100%; gap:8px; }
+  .workspace-panel > .page-header:has(> .inline-controls) { flex-wrap:wrap; }
+  .workspace-panel > .page-header > .inline-controls { max-width:100%; margin-left:auto; }
+}
 @media(max-width:640px) { .business-section > header { align-items:flex-start; flex-direction:column; } }

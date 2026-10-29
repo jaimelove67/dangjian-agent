@@ -1,0 +1,64 @@
+.home-workspace { display: grid; gap: 18px; min-width: 0; }
+.home-banner { min-height: 120px; position: relative; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 32px 30px; background: #fff4e9 url('/assets/home-campus-banner.png') center 86% / cover no-repeat; border-radius: 7px; overflow: hidden; }
+.home-banner > div { position: relative; z-index: 1; min-width: 0; }
+.home-banner h1 { font-size: 30px; line-height: 1.4; color: #a71420; margin: 0 0 7px; font-weight: 750; }
+.home-banner p { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; color: #33282a; margin: 0; font-size: 14px; line-height: 1.7; }
+.home-banner-motto { align-self: flex-start; margin-top: 6px; white-space: nowrap; color: #aa1d28; font-size: 18px; font-family: 'KaiTi', 'STKaiti', serif; font-weight: 700; }
+.home-primary-grid, .home-secondary-grid { display: grid; grid-template-columns: minmax(0, 2.05fr) minmax(290px, 1fr); gap: 18px; align-items: start; min-width: 0; }
+.home-member-main { grid-template-columns: minmax(0, 1fr); }
+.school-home .school-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.home-primary-grid > *, .home-secondary-grid > * { min-width: 0; }
+.home-side-stack { display: grid; gap: 18px; min-width: 0; }
+.home-workspace .panel { border-radius: 7px; box-shadow: none; }
+.home-workspace .panel-title { padding: 20px 22px 15px; }
+.home-workspace .panel-title h2 { font-size: 18px; }
+.home-workspace .panel-title h2 i { height: 19px; }
+.home-task-count { margin-left: 7px; color: #a72230; font-size: 13px; font-weight: 500; }
+.home-action-row { display: flex; align-items: center; gap: 12px; width: calc(100% - 40px); margin: 0 20px; padding: 20px 0; text-align: left; border-bottom: 1px solid #edf0f3; color: #333b49; }
+.home-action-row:last-child { border-bottom: 0; }
+.home-action-row > span:nth-child(2) { flex: 1; min-width: 0; }
+.home-action-row strong, .home-identity strong { display: block; font-size: 14px; line-height: 1.6; font-weight: 600; overflow-wrap: anywhere; }
+.home-action-row small, .home-identity small { display: block; color: #657186; font-size: 12px; line-height: 1.7; margin-top: 4px; }
+.home-action-row > svg { flex-shrink: 0; color: #768297; }
+.home-action-row:hover strong { color: #b21f2b; }
+.home-row-icon { display: grid; place-items: center; width: 38px; height: 42px; color: #d42b37; background: #fff3f3; border-radius: 5px; flex-shrink: 0; }
+.home-row-link { color: #b4212d; white-space: nowrap; font-size: 13px; }
+.home-identity { display: flex; align-items: center; gap: 14px; width: calc(100% - 40px); margin: 0 20px 20px; padding: 20px 16px; background: #fff4f4; border-radius: 6px; text-align: left; color: #b42230; }
+.home-identity > span { flex: 1; min-width: 0; }
+.home-identity strong { color: #283245; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.home-assistant { min-height: 170px; }
+.home-assistant > p { padding: 0 22px; color: #657186; font-size: 13px; margin: 0 0 26px; }
+.home-assistant > button { margin: 0 22px 22px; max-width: calc(100% - 44px); color: #ac1e2d; }
+.home-materials { padding-bottom: 14px; }
+.home-materials .home-material-actions { display: flex; align-items: center; gap: 14px; padding: 0 22px 15px; }
+.home-materials .home-material-actions > span { margin-right: auto; color: #687588; font-size: 12px; }
+.home-materials .table-scroll { margin: 0 22px; }
+.home-materials table { min-width: 500px; }
+.home-materials .home-privacy { display: flex; align-items: center; gap: 7px; margin: 12px 22px 0; color: #647186; font-size: 12px; }
+.home-workspace .school-metrics { padding: 16px 0; }
+.home-workspace .school-metrics strong { font-size: 26px; }
+.home-workspace .school-metrics p { display: none; }
+.home-workspace .school-metrics > button { padding: 0 20px; }
+.home-task-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 0 20px 8px; }
+.home-task-summary button { padding: 12px 5px; border-radius: 5px; color: #b3202e; background: #fff1f2; }
+.home-task-summary button:nth-child(2) { background: #fff7eb; color: #a96116; }
+.home-task-summary button:nth-child(3) { background: #edf4ff; color: #2c64bb; }
+.home-task-summary button[aria-pressed="true"] { outline: 1px solid currentColor; outline-offset: -1px; }
+.home-task-summary strong { display: block; font-size: 25px; font-weight: 650; }
+.home-task-summary small { display: block; font-size: 12px; color: #596475; margin-top: 4px; }
+.home-school-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 0 22px 12px; }
+.home-school-filter > span { font-size: 12px; color: #687588; }
+.home-school-filter .school-filters { flex: 1; }
+.home-school-filter .select-wrap { min-width: 100px; }
+.home-school-progress .school-table { padding: 0 22px 15px; }
+.home-workspace :focus-visible { outline: 2px solid #a9212d; outline-offset: 3px; }
+.home-workspace .publication-row { min-height: 72px; padding: 13px 0; }
+.home-workspace .publication-summary { gap: 5px; }
+.home-workspace .publications-panel .publication-toolbar .tabs button { height: 44px; min-height: 44px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 12px 3px; background: transparent; font-size: 14px; color: #596479; }
+.home-workspace .publications-panel .publication-toolbar .tabs button.active { color: #bd2030; border-bottom-color: #dc2434; }
+.home-workspace .home-action-row { padding: 17px 0; }
+@media (max-width: 1150px) { .home-primary-grid, .home-secondary-grid { grid-template-columns: minmax(0, 1.7fr) minmax(270px, 1fr); } .home-banner-motto { display: none; } .home-banner { padding: 22px 26px 32px; } }
+@media (max-width: 900px) { .home-primary-grid, .home-secondary-grid { grid-template-columns: minmax(0, 1fr); } .home-side-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } .home-workspace .school-metrics { grid-template-columns: repeat(3,minmax(0,1fr)); row-gap: 18px; } }
+@media (max-width: 600px) { .home-workspace { gap: 12px; } .home-banner { min-height: 130px; padding: 20px 18px 32px; background-position: 40% 60%; } .home-banner h1 { font-size: 25px; } .home-banner p { font-size: 12px; } .home-banner p > span:not(.badge) { width: 100%; } .home-primary-grid, .home-secondary-grid, .home-side-stack { grid-template-columns: minmax(0,1fr); gap: 12px; } .home-workspace .panel-title { padding: 17px 16px 12px; } .home-workspace .panel-title h2 { font-size: 17px; } .home-action-row { width: calc(100% - 32px); margin: 0 16px; } .home-materials .home-material-actions { padding: 0 16px 12px; flex-wrap: wrap; } .home-materials .table-scroll { margin: 0 16px; } .home-identity { margin: 0 16px 16px; width: calc(100% - 32px); } .home-workspace .school-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .home-workspace .school-metrics > button { padding: 0 16px; } .home-school-filter { padding: 0 16px 12px; } }
+
+@media (max-width: 900px) { .home-member-main { grid-template-columns: minmax(0, 1fr); } .home-workspace .role-shortcut-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }

@@ -49,12 +49,14 @@ def course(case, video=False, **override):
                             "text": "合成题目一",
                             "options": ["选项一", "选项二"],
                             "correct_index": 0,
+                            "explanation": "合成解析一：应选择选项一。",
                         },
                         {
                             "id": "Q2",
                             "text": "合成题目二",
                             "options": ["选项一", "选项二"],
                             "correct_index": 1,
+                            "explanation": "合成解析二：应选择选项二。",
                         },
                     ]
                 ),
@@ -83,14 +85,25 @@ def test_real_server_grading_attempts_and_idempotent_own_credits(case):
     path = f"/offerings/{row['id']}"
     visible = data(case.client.get(BASE + path, headers=auth(student)))
     assert all("correct_index" not in question for question in visible["content"]["questions"])
+    assert all("explanation" not in question for question in visible["content"]["questions"])
     assert post(case, path + "/exam", {"answers": {"Q1": 0, "Q2": 1}}, student).status_code == 409
     enrolled = data(post(case, path + "/enroll", actor=student))
     assert enrolled["own"]["points"] == 0
     assert post(case, path + "/exam", {"answers": {"Q1": 0}}, student).status_code == 422
     failed = data(post(case, path + "/exam", {"answers": {"Q1": 1, "Q2": 1}}, student))
     assert failed["score"] == 50 and failed["attempts"] == 1 and failed["points"] == 0
+    assert failed["exam_review"][0]["selected_index"] == 1
+    assert failed["exam_review"][0]["correct_index"] == 0
+    assert failed["exam_review"][0]["correct"] is False
+    assert failed["exam_review"][0]["explanation"] == "合成解析一：应选择选项一。"
+    assert (
+        data(case.client.get(BASE + path, headers=auth(student)))["own"]["exam_review"]
+        == failed["exam_review"]
+    )
     passed = data(post(case, path + "/exam", {"answers": {"Q1": 0, "Q2": 1}}, student))
     assert passed["status"] == "completed" and passed["score"] == 100 and passed["points"] == 5
+    assert passed["exam_review"][0]["selected_index"] == 0
+    assert passed["exam_review"][0]["correct"] is True
     repeated = data(post(case, path + "/exam", {"answers": {"Q1": 0, "Q2": 1}}, student))
     assert repeated == passed
     credits = data(case.client.get(BASE + "/credits", headers=auth(student)))
@@ -277,3 +290,96 @@ def test_invalid_teaching_content_never_publishes(case, invalid):
         },
     )
     assert response.status_code == 422
+
+
+def test_own_notes_require_enrollment_and_never_complete_or_award_points(case):
+    student = case.actors["student"]
+    row = publish(case, course(case))
+    path = f"/offerings/{row['id']}"
+    assert post(case, path + "/notes", {"note": "尚未开始"}, student).status_code == 409
+    data(post(case, path + "/enroll", actor=student))
+    saved = data(post(case, path + "/notes", {"note": "本人课程笔记"}, student))
+    assert saved["note"] == "本人课程笔记"
+    assert saved["status"] == "enrolled" and saved["points"] == 0
+    assert saved.get("attempts") == 0 and saved.get("score") is None
+    own = data(case.client.get(BASE + path, headers=auth(student)))["own"]
+    assert own["note"] == "本人课程笔记"
+    assert data(case.client.get(BASE + "/credits", headers=auth(student)))["total_points"] == 0
+    assert data(post(case, path + "/notes", {"note": ""}, student))["note"] == ""
+
+
+def test_notes_cannot_target_other_accounts_or_leak_through_management_roster(case):
+    student, outsider = case.actors["student"], case.actors["outsider"]
+    row = publish(case, course(case, org_unit_id="school-a"))
+    path = f"/offerings/{row['id']}"
+    data(post(case, path + "/enroll", actor=student))
+    data(post(case, path + "/notes", {"note": "不向其他学员展示的个人体会"}, student))
+    assert data(case.client.get(BASE + path, headers=auth(outsider)))["own"] is None
+    roster = data(case.client.get(BASE + path + "/enrollments", headers=auth(case.actor)))
+    assert "note" not in roster["items"][0]
+    assert (
+        post(case, path + "/notes", {"note": "冒名", "user_id": student.id}, outsider).status_code
+        == 422
+    )
+    assert post(case, path + "/notes", {"note": "冒名", "points": 999}, student).status_code == 422
+    assert post(case, path + "/notes", {"note": "长" * 5001}, student).status_code == 422
+    assert post(case, path + "/notes", {"note": "跨校"}, case.actors["foreign"]).status_code == 404
+
+
+def test_chapter_notes_preserve_other_materials_and_validate_the_material(case):
+    student = case.actors["student"]
+    row = publish(case, course(case, video=True))
+    path = f"/offerings/{row['id']}"
+    data(post(case, path + "/enroll", actor=student))
+    data(post(case, path + "/notes", {"material_id": "reading", "note": "导读体会"}, student))
+    saved = data(
+        post(case, path + "/notes", {"material_id": "lesson", "note": "视频体会"}, student)
+    )
+    assert saved["material_notes"] == {"reading": "导读体会", "lesson": "视频体会"}
+    assert saved["note"] == "导读体会"
+    assert saved["points"] == 0 and saved["status"] == "enrolled"
+    saved = data(post(case, path + "/notes", {"material_id": "reading", "note": ""}, student))
+    assert saved["material_notes"] == {"reading": "", "lesson": "视频体会"}
+    assert saved["note"] == ""
+    assert (
+        post(
+            case, path + "/notes", {"material_id": "missing", "note": "无效资料"}, student
+        ).status_code
+        == 422
+    )
+    text_course = publish(case, course(case))
+    text_path = f"/offerings/{text_course['id']}"
+    data(post(case, text_path + "/enroll", actor=student))
+    assert (
+        post(
+            case, text_path + "/notes", {"material_id": "lesson", "note": "不存在的视频"}, student
+        ).status_code
+        == 422
+    )
+
+
+def test_exam_reviews_are_private_and_legacy_attempts_never_invent_selected_answers(case):
+    student, outsider = case.actors["student"], case.actors["outsider"]
+    row = publish(case, course(case, org_unit_id="school-a"))
+    path = f"/offerings/{row['id']}"
+    data(post(case, path + "/enroll", actor=student))
+    result = data(post(case, path + "/exam", {"answers": {"Q1": 0, "Q2": 1}}, student))
+    assert len(result["exam_review"]) == 2
+    other = data(case.client.get(BASE + path, headers=auth(outsider)))
+    assert other["own"] is None
+    assert all(
+        "correct_index" not in q and "explanation" not in q for q in other["content"]["questions"]
+    )
+    roster = data(case.client.get(BASE + path + "/enrollments", headers=auth(case.actor)))
+    assert all(
+        "exam_review" not in enrollment and "material_notes" not in enrollment
+        for enrollment in roster["items"]
+    )
+    enrollment = case.session.get(EducationEnrollment, result["id"])
+    enrollment.progress = {k: v for k, v in enrollment.progress.items() if k != "exam_review"}
+    case.session.commit()
+    historical = data(case.client.get(BASE + path, headers=auth(student)))["own"]["exam_review"]
+    assert all(q["selected_index"] is None and q["correct"] is None for q in historical)
+    assert historical[0]["correct_index"] == 0
+    saved = data(post(case, path + "/notes", {"note": "补充学习体会"}, student))
+    assert saved["exam_review"] == historical

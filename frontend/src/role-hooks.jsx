@@ -109,10 +109,13 @@ export function useOwnWorkspace() {
   }, [session.user.id, page, tick]);
   const own = IS_LIVE
     ? profile
-    : data.members.find((m) => m.id === session.user.profile_id) || null;
+    : scopedMembers(data, session).find((m) => m.id === session.user.profile_id) || null;
   const items = IS_LIVE
     ? materials
-    : data.personalMaterials.filter((m) => m.owner_id === session.user.id);
+    : data.personalMaterials.filter((m) =>
+        m.owner_id === session.user.id &&
+        (m.tenant_id || data.members.find((p) => p.id === m.profile_id)?.tenant_id || "school-1") === session.user.tenant_id,
+      );
   return {
     profile: own,
     materials: items,
