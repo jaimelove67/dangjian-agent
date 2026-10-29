@@ -139,6 +139,98 @@ function demoAnswer(q) {
       "办理参考 · 请以现行制度和组织审核意见为准。",
   };
 }
+// 真机模式会话指针：记住各账号最近一次会话，登录后自动恢复。
+// 会话记录本体保存在服务端（qa_sessions），浏览器只保存指向它的会话编号。
+const QA_POINTER_PREFIX = "dangjian.qa.session.";
+function qaPointerKey(userId) {
+  return QA_POINTER_PREFIX + (userId || "anonymous");
+}
+function loadQaPointer(userId) {
+  try {
+    return localStorage.getItem(qaPointerKey(userId)) || null;
+  } catch {
+    return null;
+  }
+}
+function saveQaPointer(userId, sessionId) {
+  try {
+    if (userId && sessionId)
+      localStorage.setItem(qaPointerKey(userId), sessionId);
+  } catch {
+    /* 存储不可用时仅影响自动恢复，不影响会话本体 */
+  }
+}
+function clearQaPointer(userId) {
+  try {
+    localStorage.removeItem(qaPointerKey(userId));
+  } catch {
+    /* 同上 */
+  }
+}
+// 服务端问答记录 → 一段会话（按 session_id 分组，时间正序展开为一问一答）。
+function conversationFromRecords(conversationKey, records) {
+  if (!records?.length) return null;
+  const sorted = [...records].sort((a, b) =>
+    a.created_at < b.created_at ? -1 : 1,
+  );
+  const messages = [];
+  for (const r of sorted) {
+    messages.push({
+      id: `q-${r.id}`,
+      role: "user",
+      conversationId: conversationKey,
+      content: r.question || "请结合我上传的材料作答。",
+      attachments: (r.attachments || []).map((a) => a.file_name),
+      createdAt: new Date(r.created_at).getTime() || Date.now(),
+    });
+    messages.push({
+      id: `a-${r.id}`,
+      role: "assistant",
+      conversationId: conversationKey,
+      sessionId: r.session_id,
+      content: r.answer,
+      citations: r.citations || [],
+      disclaimer: r.disclaimer,
+      refused: r.refused,
+      hasSufficientEvidence: r.has_sufficient_evidence,
+      warnings: r.warnings || [],
+      createdAt: new Date(r.created_at).getTime() || Date.now(),
+    });
+  }
+  return {
+    key: conversationKey,
+    sessionId: sorted[0].session_id || null,
+    title: sorted[0].question || "（附件提问）",
+    turns: sorted.length,
+    lastAt: sorted.at(-1).created_at,
+    messages,
+  };
+}
+function groupConversations(items) {
+  const map = new Map();
+  for (const r of items || []) {
+    const key = r.session_id || `record:${r.id}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        sessionId: r.session_id || null,
+        first: r,
+        records: [],
+        lastAt: r.created_at,
+      });
+    }
+    const entry = map.get(key);
+    entry.records.push(r);
+    if (r.created_at > entry.lastAt) entry.lastAt = r.created_at;
+  }
+  return [...map.values()]
+    .map((entry) => ({
+      ...conversationFromRecords(entry.key, entry.records),
+      title: entry.first.question || "（附件提问）",
+      turns: entry.records.length,
+    }))
+    .sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
+}
 export function Assistant() {
   const { routeParams, session } = useApp();
   const { data, update, notify } = useStore();
@@ -152,12 +244,90 @@ export function Assistant() {
   const [attachments, setAttachments] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [pendingOcr, setPendingOcr] = useState(null);
+  // 真机模式：会话消息保存在服务端（qa_sessions），此处仅缓存当前账号的展示副本。
+  const [liveMessages, setLiveMessages] = useState([]);
+  const [historyItems, setHistoryItems] = useState([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(null);
+  const [restoring, setRestoring] = useState(false);
   const [conversationId, setConversationId] = useState(() =>
     crypto.randomUUID(),
   );
   const inputRef = useRef(null);
   const endRef = useRef(null);
   const fileRef = useRef(null);
+
+  function appendMessage(msg) {
+    if (IS_LIVE) setLiveMessages((prev) => [...prev, msg]);
+    else update("messages", (prev) => [...prev, msg]);
+  }
+
+  function loadHistory() {
+    if (!IS_LIVE) return;
+    let active = true;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    backend
+      .qaSessions(1, 100)
+      .then((res) => {
+        if (!active) return;
+        const items = res?.items || [];
+        setHistoryItems(items);
+        setHistoryTotal(res?.total || items.length);
+      })
+      .catch((e) => {
+        if (active) setHistoryError(e);
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }
+
+  function restoreConversation(entry) {
+    const key = entry.key;
+    const messages = entry.messages;
+    if (!messages.length) return;
+    setLiveMessages((prev) => [
+      ...prev.filter((m) => m.conversationId !== key),
+      ...messages,
+    ]);
+    setConversationId(key);
+    setSessionId(entry.sessionId || null);
+    setStarted(true);
+    if (entry.sessionId)
+      saveQaPointer(session.user.id, entry.sessionId);
+  }
+
+  // 真机模式：登录后自动回到该账号最近一次会话（会话本体在服务端，退出登录不丢失）。
+  useEffect(() => {
+    if (!IS_LIVE) return;
+    const pointer = loadQaPointer(session.user.id);
+    if (!pointer) return;
+    let active = true;
+    setRestoring(true);
+    backend
+      .qaSessions(1, 100)
+      .then((res) => {
+        if (!active) return;
+        const records = (res?.items || []).filter(
+          (r) => r.session_id === pointer,
+        );
+        const entry = conversationFromRecords(pointer, records);
+        if (entry) restoreConversation(entry);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setRestoring(false);
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.user.id, IS_LIVE]);
 
   async function uploadAttachment(file, cloudOcr = false) {
     setUploading(true);
@@ -197,10 +367,12 @@ export function Assistant() {
   function removeAttachment(id) {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   }
+  const source = IS_LIVE ? liveMessages : data.messages;
   const messages = started
-    ? data.messages.filter(
+    ? source.filter(
         (m) =>
-          m.conversationId === conversationId && m.owner_id === session.user.id,
+          m.conversationId === conversationId &&
+          (IS_LIVE || m.owner_id === session.user.id),
       )
     : [];
   useEffect(() => {
@@ -227,18 +399,15 @@ export function Assistant() {
     setStarted(true);
     const id = crypto.randomUUID();
     const names = attachments.map((a) => a.file_name);
-    update("messages", (prev) => [
-      ...prev,
-      {
-        id,
-        role: "user",
-        owner_id: session.user.id,
-        conversationId,
-        content: q || "请结合我上传的材料作答。",
-        attachments: names,
-        createdAt: Date.now(),
-      },
-    ]);
+    appendMessage({
+      id,
+      role: "user",
+      owner_id: session.user.id,
+      conversationId,
+      content: q || "请结合我上传的材料作答。",
+      attachments: names,
+      createdAt: Date.now(),
+    });
     setInput("");
     try {
       const answer = IS_LIVE
@@ -251,25 +420,25 @@ export function Assistant() {
           })
         : demoAnswer(q || "请结合我上传的材料作答。");
       setSessionId(answer.session_id || sessionId);
+      // 真机模式记住本账号最近会话，供下次登录自动恢复。
+      if (IS_LIVE && answer.session_id)
+        saveQaPointer(session.user.id, answer.session_id);
       // 附件只服务本次提问，回答生成后即摘除，不再随后续追问带出
       setAttachments([]);
-      update("messages", (prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          owner_id: session.user.id,
-          conversationId,
-          sessionId: answer.session_id,
-          content: answer.answer,
-          citations: answer.citations || [],
-          disclaimer: answer.disclaimer,
-          refused: answer.refused,
-          hasSufficientEvidence: answer.has_sufficient_evidence,
-          warnings: answer.warnings || [],
-          createdAt: Date.now(),
-        },
-      ]);
+      appendMessage({
+        id: crypto.randomUUID(),
+        role: "assistant",
+        owner_id: session.user.id,
+        conversationId,
+        sessionId: answer.session_id,
+        content: answer.answer,
+        citations: answer.citations || [],
+        disclaimer: answer.disclaimer,
+        refused: answer.refused,
+        hasSufficientEvidence: answer.has_sufficient_evidence,
+        warnings: answer.warnings || [],
+        createdAt: Date.now(),
+      });
     } catch (err) {
       setError(err);
       setInput(q);
@@ -288,6 +457,7 @@ export function Assistant() {
     setInput("");
     setAttachments([]);
     setError(null);
+    if (IS_LIVE) clearQaPointer(session.user.id);
     notify("已新建会话");
   }
   return (
@@ -300,7 +470,13 @@ export function Assistant() {
             让党务工作更智能、更高效
           </span>
         </div>
-        <button className="button secondary" onClick={() => setHistory(true)}>
+        <button
+          className="button secondary"
+          onClick={() => {
+            setHistory(true);
+            loadHistory();
+          }}
+        >
           <ClockCounterClockwise size={17} />
           历史记录
         </button>
@@ -509,41 +685,89 @@ export function Assistant() {
       </div>
       {history && (
         <Modal title="会话记录" wide flat onClose={() => setHistory(false)}>
-          {data.messages
-            .filter((m) => m.role === "user" && m.owner_id === session.user.id)
-            .map((m) => (
-              <button
-                className="history-item"
-                key={m.id}
-                onClick={() => {
-                  setConversationId(m.conversationId);
-                  setSessionId(
-                    data.messages
-                      .filter(
-                        (x) =>
-                          x.conversationId === m.conversationId && x.sessionId,
-                      )
-                      .at(-1)?.sessionId || null,
-                  );
-                  setStarted(true);
-                  setHistory(false);
-                }}
-              >
-                <Chats size={19} />
-                <span>
-                  {m.content}
-                  <small>{new Date(m.createdAt).toLocaleString("zh-CN")}</small>
-                </span>
-                <ArrowRight size={15} />
-              </button>
-            ))}
-          {!data.messages.some(
-            (m) => m.owner_id === session.user.id && m.role === "user",
-          ) && (
-            <Empty
-              title="还没有会话记录"
-              description="发送问题后，可在此查阅问答记录。"
-            />
+          {IS_LIVE ? (
+            <>
+              {(historyLoading || restoring) && <Loading />}
+              {historyError && (
+                <ErrorBox error={historyError} retry={loadHistory} />
+              )}
+              {!historyLoading &&
+                !historyError &&
+                groupConversations(historyItems).map((c) => (
+                  <button
+                    className="history-item"
+                    key={c.key}
+                    onClick={() => {
+                      restoreConversation(c);
+                      setHistory(false);
+                    }}
+                  >
+                    <Chats size={19} />
+                    <span>
+                      {c.title}
+                      <small>
+                        {c.turns} 轮问答 ·{" "}
+                        {new Date(c.lastAt).toLocaleString("zh-CN")}
+                      </small>
+                    </span>
+                    <ArrowRight size={15} />
+                  </button>
+                ))}
+              {!historyLoading && !historyError && !historyItems.length && (
+                <Empty
+                  title="还没有会话记录"
+                  description="发送问题后会话记录保存在服务端，重新登录后仍可在此查阅。"
+                />
+              )}
+              {!historyLoading &&
+                !historyError &&
+                historyTotal > historyItems.length && (
+                  <div className="inline-note">
+                    会话记录较多，当前展示最近 100 条问答。
+                  </div>
+                )}
+            </>
+          ) : (
+            <>
+              {data.messages
+                .filter(
+                  (m) => m.role === "user" && m.owner_id === session.user.id,
+                )
+                .map((m) => (
+                  <button
+                    className="history-item"
+                    key={m.id}
+                    onClick={() => {
+                      setConversationId(m.conversationId);
+                      setSessionId(
+                        data.messages
+                          .filter(
+                            (x) =>
+                              x.conversationId === m.conversationId && x.sessionId,
+                          )
+                          .at(-1)?.sessionId || null,
+                      );
+                      setStarted(true);
+                      setHistory(false);
+                    }}
+                  >
+                    <Chats size={19} />
+                    <span>
+                      {m.content}
+                      <small>{new Date(m.createdAt).toLocaleString("zh-CN")}</small>
+                    </span>
+                    <ArrowRight size={15} />
+                  </button>
+                ))}
+              {!data.messages.some(
+                (m) => m.owner_id === session.user.id && m.role === "user",
+              ) && (
+                <Empty
+                  title="还没有会话记录"
+                  description="发送问题后，可在此查阅问答记录。"
+                />
+              )}
+            </>
           )}
         </Modal>
       )}

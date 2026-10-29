@@ -210,6 +210,8 @@ export const backend = {
         question: questionText(payload.question),
       }),
     }),
+  qaSessions: (page = 1, pageSize = 100) =>
+    request(`/qa/sessions?page=${page}&page_size=${pageSize}`),
   knowledge: () => request("/knowledge-docs?page=1&page_size=100"),
   uploadKnowledge: (file) => {
     const body = new FormData();
