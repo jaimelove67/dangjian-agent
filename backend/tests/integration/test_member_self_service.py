@@ -164,6 +164,7 @@ def test_member_permissions_and_qa_history_remain_available(workspace):
     assert set(codes) == {
         "qa.ask",
         "knowledge.query",
+        "education.query",
         "member.self_query",
         "member.material_submit",
     }
@@ -239,7 +240,13 @@ def test_applicant_has_the_same_self_service_boundary_as_member(workspace):
     workspace.user = actor("applicant-1", UserRole.APPLICANT)
 
     codes = set(workspace.client.get("/api/v1/auth/codes").json()["data"])
-    assert codes == {"qa.ask", "knowledge.query", "member.self_query", "member.material_submit"}
+    assert codes == {
+        "qa.ask",
+        "knowledge.query",
+        "education.query",
+        "member.self_query",
+        "member.material_submit",
+    }
     archive = workspace.client.get("/api/v1/member/self/archive")
     assert archive.status_code == 200
     assert archive.json()["data"]["profile"]["id"] == "applicant-profile"

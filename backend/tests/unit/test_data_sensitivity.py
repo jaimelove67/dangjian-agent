@@ -194,9 +194,17 @@ def test_placeholder_is_not_content():
 
 
 def test_no_request_schema_collects_third_party_identity():
-    """入口不采集第三人身份字段（T-MEM-14 / T-MEM-11 的边界）；加了就要先改这里。"""
+    """入口不采集第三人身份字段（T-MEM-14 / T-MEM-11 的边界）；加了就要先改这里。
+
+    例外只有平台租户台账的联系人：``TenantCreate`` / ``TenantUpdate`` 登记的是本校
+    开户与联络用的自有管理信息，不是发展材料里"别人写某人"的第三人身份。新增任何
+    例外都必须在这里写明依据，不得用整体放宽字段集合的方式绕过。
+    """
+    tenant_record_schemas = {"TenantCreate", "TenantUpdate"}
     properties: set[str] = set()
-    for schema in app.openapi().get("components", {}).get("schemas", {}).values():
+    for name, schema in app.openapi().get("components", {}).get("schemas", {}).items():
+        if name in tenant_record_schemas:
+            continue
         properties.update((schema.get("properties") or {}).keys())
     assert properties, "OpenAPI 里没有读到任何请求字段"
     assert ds.IDENTITY_FIELDS & properties == set()

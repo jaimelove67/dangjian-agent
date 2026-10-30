@@ -370,7 +370,10 @@ async def test_incoming_transfer_creates_a_profile_and_lists_the_archive(transfe
         # 转入要核对档案：清单按阶段沿既有材料要求累加，缺项一次说清
         archive = incoming["archive"]
         assert archive["check_id"]
-        assert len(archive["required"]) == 12
+        # 支会前清单已移除"上级审批意见"（该材料由批复回填，作为前置会与
+        # "上级审批报送要求人员已是预备党员"循环），故按阶段去重后为 11 项。
+        assert len(archive["required"]) == 11
+        assert "上级审批意见" not in archive["required"]
         assert "入党申请书" in archive["required"]
         assert "转正申请书" in archive["required"]
         assert archive["missing"] == archive["required"]
