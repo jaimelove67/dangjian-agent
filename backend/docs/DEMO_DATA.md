@@ -14,17 +14,17 @@
 
 | 用户名 | 密码 | 姓名 | 角色 | 所属组织 |
 | --- | --- | --- | --- | --- |
-| `admin` | `&IqOyZyM3cQ7GQXx`（2026-10-25 起，已更换） | 平台管理员 | 系统管理员 | 平台（跨租户治理） |
-| `school_admin` | `Demo@2026hnky` | 李国华 | 学校管理员 | 湖南科技职业技术学院党委 |
-| `school_admin2` | `Demo@2026hnky` | 周敏 | 学校管理员 | 湖南科技职业技术学院党委 |
-| `dept_admin` | `Demo@2026hnky` | 王志远 | 院系管理员 | 信息工程学院党总支 |
-| `branch_sec` | `Demo@2026hnky` | 陈晓明 | 支部书记 | 信息工程学院教工第一党支部 |
-| `organizer` | `Demo@2026hnky` | 刘芳 | 组织员 | 信息工程学院教工第一党支部 |
-| `member01` | `Demo@2026hnky` | 赵强 | 党员 | 信息工程学院教工第一党支部 |
-| `applicant01` | `Demo@2026hnky` | 孙悦 | 申请人 | 信息工程学院教工第一党支部 |
+| `admin` | 见线下密钥记录（2026-10-25 起已更换） | 平台管理员 | 系统管理员 | 平台（跨租户治理） |
+| `school_admin` | 见线下密钥记录 | 李国华 | 学校管理员 | 湖南科技职业技术学院党委 |
+| `school_admin2` | 见线下密钥记录 | 周敏 | 学校管理员 | 湖南科技职业技术学院党委 |
+| `dept_admin` | 见线下密钥记录 | 王志远 | 院系管理员 | 信息工程学院党总支 |
+| `branch_sec` | 见线下密钥记录 | 陈晓明 | 支部书记 | 信息工程学院教工第一党支部 |
+| `organizer` | 见线下密钥记录 | 刘芳 | 组织员 | 信息工程学院教工第一党支部 |
+| `member01` | 见线下密钥记录 | 赵强 | 党员 | 信息工程学院教工第一党支部 |
+| `applicant01` | 见线下密钥记录 | 孙悦 | 申请人 | 信息工程学院教工第一党支部 |
 
 > `school_admin2` 是为了满足「创建人不能自审」而建的第二个管理员，演示审核流时用它登录审核 `school_admin` 提交的内容。
-> 演示结束后**必须修改这些密码**（都是明文记录在本文档里的弱密码）。
+> 口令不在仓库中记录。演示账号一律视为弱口令，演示结束后**必须修改这些密码**；本文档历史版本曾以明文记录口令，请勿回填。
 
 ---
 
@@ -81,7 +81,7 @@ docker cp scripts/seed_knowledge_docs.py party-agent-app:/app/seed_knowledge_doc
 docker compose ... exec -T app python /app/seed_member_profiles.py \
   --tenant <学校租户ID> --org-unit-id <支部ID>
 docker compose ... exec -T app python /app/seed_knowledge_docs.py \
-  --username school_admin --password 'Demo@2026hnky' --embed
+  --username school_admin --password '<学校管理员口令>' --embed
 
 # 3. 学习计划/活动 + 考核指标/任务/归集
 docker cp scripts/seed_demo_business.py party-agent-app:/app/seed_demo_business.py
@@ -109,4 +109,4 @@ docker compose -f docker-compose.server.yml down -v   # 删除数据卷
 - 纪要三栏目（学习要点 / 讨论共识 / 工作要求）必须走 `generate-minutes` 从原文抽取，手填 `transcript` 不算。
 - 考核指标口径：`formula=sum` 只能配 `source=manual` 且 `source_options.measure=sum`，否则 422。
 - 归集确认前，任务必须**逐条审核通过**，否则归集结果记「来源记录含未审核内容」，归集审核会被 409 拦住。
-- `POST /api/v1/admin/users` 密码最少 8 位（schema 约束），演示统一用 `Demo@2026hnky`。
+- `POST /api/v1/admin/users` 密码最少 8 位（schema 约束），演示账号口令由部署方线下设定，不写入仓库。

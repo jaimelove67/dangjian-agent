@@ -2,7 +2,7 @@
 
 核对日期：2026-10-24。参考版本：[jaimelove67/dangjian-agent，b190fcb](https://github.com/jaimelove67/dangjian-agent/commit/b190fcb9464c2fb2a9116b469b5a0a4d2a4cd274)。本地启动修复和真实接口验证见 [后端基线记录](backend-baseline.md)。
 
-当前真实页面、接口和业务闭环结果见 [前后端联调报告](integration-check-2026-10-24.md)。本地源码已在参考版本上增加账号安全、校级业务、课程活动和受控运维接口，当前迁移头为 `031_backup_jobs`；不能再把参考提交的能力边界当作当前本地版本的能力边界。
+当前真实页面、接口和业务闭环结果见 [前后端联调报告](integration-check-2026-10-24.md)。本地源码已在参考版本上增加账号安全、校级业务、课程活动、受控运维接口，以及党员发展流程与党员基本信息采集，当前迁移头为 `036_member_procedures`；不能再把参考提交的能力边界当作当前本地版本的能力边界。
 
 本项目保留独立 React 前端，参考项目正式前端使用 Vue 3 + TypeScript。`backend/` 为固定版本的本地源码副本，已修复启动和测试问题；没有修改或推送远端工程、正式数据库或线上配置。后端沿用原项目的 FastAPI API、权限码、租户和组织授权、人工审核及资料分级。
 
@@ -52,6 +52,8 @@
 | 选优及推优 | `/member-full/batches`、`/votes`、`/selections`、`/league-recommendations` | 批次、本人投票、拟推荐名单修订/送审/独立审核及推优登记/作废 |
 | 民主评议 | `/meeting/member-reviews`、其工作台/发起/办理接口及 `/member/self/reviews` | 程序、汇总票数、拟定等次与独立审核；本人档案只读取本人已生效结果 |
 | 接转及报送 | `/member-full/transfers`、`/member-full/upper-reports` 及回执/批复/作废接口 | 转入转出、介绍信、回执和批复事实；报送 Excel 导出使用 **GET** |
+| 党员信息采集 | `/member/info-collection/self`、`/member/info-collection/self/submit`、`/member/info-collections`、`/member/info-collections/{id}` | 本人填报、支部初核、院系复核、学校备案；按状态与版本办事，退回后修订重新提交 |
+| 发展闸门与台账 | `/member-full/profiles/{id}/political-reviews`、`/trainings`、`/procedures`、`/scoring` | 政审、集中培训与程序事实只增不改；缺项提示补录，阶段流转不默认通过 |
 | 备份恢复 | `GET/POST /admin/backups`、`GET /admin/backups/{id}/file` | 默认关闭；真实加密备份、持久结果及只写新目标的隔离恢复，见 [运维契约](backup-operations.md) |
 
 上述路径均附加 `/api/v1` 前缀，表中的分组路径不是穷尽的 OpenAPI 清单。年度考核当前还包括指标版本、责任任务、真实文件佐证、独立审核、年度计划、提醒办理和单独归档。页面可打开、接口存在与完整业务闭环分别验收，执行结果及限制见联调报告。

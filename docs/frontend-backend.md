@@ -59,7 +59,24 @@ python -m venv .venv
 
 测试环境安装 `requirements-dev.lock`。数据库结构、原件存储和权限逻辑沿用原后端；开发入口不创建账号、不执行迁移、不清理数据。新环境的迁移与已有数据库接管按 [迁移说明](../backend/migrations/README.md) 执行。`/api/v1/health/live` 只表示进程存活；`/api/v1/health/ready` 返回真实依赖状态，可能因模型未配置等返回 503。
 
-2026-10-24 新增账号安全、校级业务、课程活动和维护任务，唯一迁移头为 `031_backup_jobs`。`028`–`031` 为增量建表，不重建或清空原有业务表，不回填虚构业务记录。现有数据库升级仍须确认目标及备份后执行，开发启动不会自动代办。受控备份默认关闭，配置与隔离恢复边界见 [备份与恢复](backup-operations.md)。
+2026-10-24 新增账号安全、校级业务、课程活动和维护任务；2026-10-30 新增党员发展流程与党员基本信息采集，唯一迁移头为 `036_member_procedures`。`028`–`036` 为增量建表，不重建或清空原有业务表，不回填虚构业务记录。现有数据库升级仍须确认目标及备份后执行，开发启动不会自动代办。受控备份默认关闭，配置与隔离恢复边界见 [备份与恢复](backup-operations.md)。
+
+## 本地开发库
+
+开发库由 `backend/docker-compose.dev.yml` 的 PostgreSQL 提供（映射 `127.0.0.1:55432`，库 `party_agent_dev` / 用户 `party_user`），`backend/.env` 的 `DATABASE_URL` 默认指向它。Redis 可用容器，也可用本机 6379 服务。
+
+首次或空库初始化顺序（均在 `backend/` 目录执行）：
+
+```powershell
+docker compose -f docker-compose.dev.yml up -d postgres
+python -m alembic upgrade head          # 开发启动不会代办迁移
+python scripts/dev_bootstrap.py --password <本地口令> --with-sample-roles
+python scripts/seed_member_profiles.py --tenant TEST_TENANT --org-unit-id TEST_BRANCH
+```
+
+`dev_bootstrap.py` 幂等创建平台租户、学校租户、三级组织与账号；`seed_member_profiles.py` 向指定支部导入合成培养对象。两者只用于 development / testing 环境，不替组织认定党员身份。之后在仓库根目录 `npm run dev:all`。
+
+两个容易踩的坑：后端 pytest 必须在 `backend/` 目录运行（`business_rules.yaml` 走相对路径，在仓库根目录运行会得到空的评分权重）；`dev:all` 会自动切到真实接口模式，库不可用时后端 `/health/live` 仍返回 200、`/health/ready` 返回 503，表现为前端能打开但登录失败。
 
 ## 接口和跨域
 
