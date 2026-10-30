@@ -25,6 +25,7 @@ import { validateMaterialFile } from "../material-validation";
 import { STAGES } from "../data";
 import { OwnReviews } from "../components/OwnReviews";
 import { MaterialSuggestions, useMaterialDraft } from "../components/MaterialSuggestions";
+import { MemberInfoSelfSection } from "./MemberInfo";
 import {
   PageHeader,
   PanelTitle,
@@ -270,6 +271,7 @@ export function OwnArchive() {
             <dt>组织关系状态</dt>
             <dd>{own.profile.relation || "在册"}</dd>
           </dl>
+          <MemberInfoSelfSection profile={own.profile} />
           <PanelTitle title="发展阶段" />
           <div className="stage-stepper">
             {STAGES.map((s, i) => (

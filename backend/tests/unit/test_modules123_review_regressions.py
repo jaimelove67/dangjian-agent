@@ -13,10 +13,27 @@ from sqlalchemy.orm import Session
 from app.api.v1 import knowledge
 from app.core.tenant import tenant_context
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask
-from app.models.member import MemberCultivation, MemberMaterial, MemberProfile, MemberVote
+from app.models.member import (
+    MemberCultivation,
+    MemberMaterial,
+    MemberPoliticalReview,
+    MemberProcedure,
+    MemberProfile,
+    MemberStageHistory,
+    MemberTraining,
+    MemberVote,
+)
 from app.models.user import User, UserRole
 from app.schemas.meeting import ActivityCreate, ActivityUpdate
-from app.schemas.member_ext import MaterialCreate, MaterialReview, ScoringRequest, TransitionRequest
+from app.schemas.member_ext import (
+    MaterialCreate,
+    MaterialReview,
+    PoliticalReviewCreate,
+    ProcedureCreate,
+    ScoringRequest,
+    TrainingCreate,
+    TransitionRequest,
+)
 from app.services import activity_service
 from app.services.file_store import read_original, save_original
 from app.services.member_service import MemberDevelopment
@@ -44,7 +61,17 @@ class LocalSession:
 @pytest.fixture
 def member_data():
     engine = create_engine("sqlite:///:memory:")
-    for model in (MemberProfile, MemberVote, MemberCultivation, MemberMaterial, ContentRevision):
+    for model in (
+        MemberProfile,
+        MemberVote,
+        MemberCultivation,
+        MemberMaterial,
+        MemberPoliticalReview,
+        MemberProcedure,
+        MemberStageHistory,
+        MemberTraining,
+        ContentRevision,
+    ):
         model.__table__.create(engine)
     with Session(engine, expire_on_commit=False) as db, tenant_context("review-a"):
         manager = User(id="reviewer-a", tenant_id="review-a", role=UserRole.BRANCH_SECRETARY)
@@ -60,10 +87,25 @@ def member_data():
                     name=identifier,
                     current_stage="activist",
                     stage_joined_on=date.today(),
+                    birth_date=date(1990, 1, 1),
                     year=2026,
                     batch_no="B1",
                 )
             )
+        db.add(
+            MemberProfile(
+                id="senior",
+                tenant_id="review-a",
+                org_unit_id="branch-a",
+                org_name="branch-a",
+                name="正式党员联系人",
+                current_stage="member",
+                stage_joined_on=date.today(),
+                birth_date=date(1985, 1, 1),
+                year=None,
+                batch_no=None,
+            )
+        )
         db.commit()
         yield service, db
     engine.dispose()
@@ -98,6 +140,54 @@ async def test_vote_summary_and_stats_stay_within_branch(member_data):
     service.org_ids = []
     assert (await service.vote_summary("B1", 1))["tally"] == {}
     assert (await service.roster_stats(year=None, batch_no=None))["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_material_review_can_backfill_document_date(member_data):
+    """历史材料没有落款日期时，核验可补录并重新校验 18 周岁。"""
+    service, _ = member_data
+    material = await service.add_material(
+        "own",
+        MaterialCreate(
+            material_type="入党申请书",
+            document_date=date(2020, 1, 1),
+            reason="登记历史材料",
+        ),
+    )
+    material.document_date = None
+    await service.db.flush()
+    reviewed = await service.review_material(
+        str(material.id),
+        MaterialReview(
+            review_status="approved",
+            note="按原件补录落款日期",
+            document_date=date(2020, 1, 1),
+            reason="补录并核验",
+        ),
+    )
+    assert reviewed.document_date == date(2020, 1, 1)
+
+    # 缺落款日期的入党申请书可以退回补正，不能因为无法核验通过就卡住退回。
+    rejected_material = await service.add_material(
+        "own",
+        MaterialCreate(
+            material_type="入党申请书",
+            document_date=date(2020, 1, 1),
+            reason="登记历史材料",
+        ),
+    )
+    rejected_material.document_date = None
+    await service.db.flush()
+    rejected = await service.review_material(
+        str(rejected_material.id),
+        MaterialReview(
+            review_status="rejected",
+            note="缺少落款日期，退回补正",
+            reason="材料不完整",
+        ),
+    )
+    assert rejected.review_status == "rejected"
+    assert rejected.document_date is None
 
 
 @pytest.mark.asyncio
@@ -138,7 +228,12 @@ async def test_material_level_is_snapshotted_and_third_party_text_is_hidden(memb
     assert items["群众评议材料"]["redacted_fields"] == []
     # 未登记过的材料类型按内部处理
     plain = await service.add_material(
-        "own", MaterialCreate(material_type="入党申请书", reason="登记入党申请书")
+        "own",
+        MaterialCreate(
+            material_type="入党申请书",
+            document_date=date(2020, 1, 1),
+            reason="登记入党申请书",
+        ),
     )
     plain_item = next(
         item for item in await service.list_materials("own") if item.get("id") == str(plain.id)
@@ -163,7 +258,12 @@ async def test_personal_material_is_not_a_development_material(member_data):
         file_name="thought-report.txt",
     )
     development = await service.add_material(
-        "own", MaterialCreate(material_type="入党申请书", reason="登记入党申请书")
+        "own",
+        MaterialCreate(
+            material_type="入党申请书",
+            document_date=date(2020, 1, 1),
+            reason="登记入党申请书",
+        ),
     )
     db.add(personal)
     db.commit()
@@ -182,6 +282,325 @@ async def test_personal_material_is_not_a_development_material(member_data):
         )
     assert error.value.status_code == 422
     assert personal.review_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_personal_application_cannot_satisfy_development_gate(member_data):
+    """即使个人材料被误标为已核验，也不能满足发展材料要求或成为 6 个月锚点。"""
+    service, db = member_data
+    profile = await service.profile("own")
+    profile.current_stage = "applicant"
+    profile.stage_joined_on = date(2020, 1, 1)
+    db.add(
+        MemberMaterial(
+            tenant_id="review-a",
+            profile_id="own",
+            org_unit_id="branch-a",
+            stage="applicant",
+            user_id="member-own",
+            submission_key="submission-personal-application",
+            material_type="入党申请书",
+            document_date=date(2020, 1, 1),
+            review_status="approved",
+        )
+    )
+    db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        await service.transition(
+            "own",
+            TransitionRequest(
+                target_stage="activist",
+                decision_date=date.today(),
+                basis="支部研究确定",
+                opinion="同意列为入党积极分子",
+            ),
+        )
+    assert "入党申请书" in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_receiving_probationary_requires_political_review_and_training(member_data):
+    """政审合格结论与集中培训是接收预备党员的事实前置，缺一不可。"""
+    service, db = member_data
+    profile = MemberProfile(
+        id="gate",
+        tenant_id="review-a",
+        org_unit_id="branch-a",
+        org_name="branch-a",
+        name="gate",
+        current_stage="candidate",
+        stage_joined_on=date.today() - timedelta(days=100),
+        birth_date=date(1990, 1, 1),
+        year=2026,
+        batch_no="B1",
+    )
+    db.add(profile)
+    for material_type in ("政治审查材料", "公示情况报告", "支部大会决议"):
+        db.add(
+            MemberMaterial(
+                tenant_id="review-a",
+                profile_id="gate",
+                org_unit_id="branch-a",
+                stage="candidate",
+                material_type=material_type,
+                review_status="approved",
+            )
+        )
+    db.commit()
+
+    body = TransitionRequest(
+        target_stage="probationary",
+        decision_date=date.today(),
+        basis="支部大会讨论通过",
+    )
+    with pytest.raises(HTTPException) as error:
+        await service.transition("gate", body)
+    assert "政治审查结论未登记" in error.value.detail
+
+    review = await service.add_political_review(
+        "gate",
+        PoliticalReviewCreate(
+            status="passed",
+            reviewed_on=date.today(),
+            scope="本人及直系亲属",
+            conclusion="政治审查合格",
+            reason="登记政审结论",
+        ),
+    )
+    assert review.reason == "登记政审结论"
+    with pytest.raises(HTTPException) as error:
+        await service.transition("gate", body)
+    assert "集中培训未登记" in error.value.detail
+
+    training = await service.add_training(
+        "gate",
+        TrainingCreate(
+            start_on=date.today() - timedelta(days=2),
+            end_on=date.today(),
+            days=3,
+            hours=24,
+            issuer="学校党校",
+            reason="登记集中培训",
+        ),
+    )
+    assert training.reason == "登记集中培训"
+
+    with pytest.raises(HTTPException) as error:
+        await service.transition("gate", body)
+    assert "培养联系人未登记" in error.value.detail
+
+    contact = await service.add_procedure(
+        "gate",
+        ProcedureCreate(
+            kind="contact",
+            occurred_on=date.today(),
+            reason="指定培养联系人",
+            details={"linked_profile_id": "senior"},
+        ),
+    )
+    assert contact.details["linked_name"] == "正式党员联系人"
+
+    with pytest.raises(HTTPException) as error:
+        await service.transition("gate", body)
+    assert "入党介绍人未登记" in error.value.detail
+
+    introducer = await service.add_procedure(
+        "gate",
+        ProcedureCreate(
+            kind="introducer",
+            occurred_on=date.today(),
+            reason="确定入党介绍人",
+            details={"linked_profile_id": "senior"},
+        ),
+    )
+    assert introducer.details["linked_name"] == "正式党员联系人"
+
+    with pytest.raises(HTTPException) as error:
+        await service.transition("gate", body)
+    assert "支委会审查未通过或未登记" in error.value.detail
+
+    branch_review = await service.add_procedure(
+        "gate",
+        ProcedureCreate(
+            kind="branch_committee_review",
+            occurred_on=date.today(),
+            status="passed",
+            summary="支委会审查通过",
+            reason="支委会审查",
+        ),
+    )
+    assert branch_review.status == "passed"
+
+    with pytest.raises(HTTPException) as error:
+        await service.transition("gate", body)
+    assert "上级党委预审未通过或未登记" in error.value.detail
+
+    pre_review = await service.add_procedure(
+        "gate",
+        ProcedureCreate(
+            kind="upper_pre_review",
+            occurred_on=date.today(),
+            status="passed",
+            summary="上级党委预审通过",
+            reason="上级党委预审",
+            details={"upper_org": "校党委"},
+        ),
+    )
+    assert pre_review.status == "passed"
+
+    with pytest.raises(HTTPException) as error:
+        await service.transition("gate", body)
+    assert "入党志愿书未提交或未登记" in error.value.detail
+
+    form = await service.add_procedure(
+        "gate",
+        ProcedureCreate(
+            kind="application_form",
+            occurred_on=date.today(),
+            status="submitted",
+            reason="填写入党志愿书",
+            details={"form_no": "2026-001"},
+        ),
+    )
+    assert form.status == "submitted"
+
+    updated = await service.transition("gate", body)
+    assert updated.current_stage == "probationary"
+    state = await service.political_reviews("gate")
+    assert state["satisfied"] is True
+    trainings = await service.trainings("gate")
+    assert trainings["satisfied"] is True
+
+
+@pytest.mark.asyncio
+async def test_contact_and_procedure_records_gate_candidate_stage(member_data):
+    """培养联系人、介绍人、支委会审查、上级预审和志愿书按程序校验；只登记事实。"""
+    service, db = member_data
+    own = await service.profile("own")
+    own.stage_joined_on = date.today() - timedelta(days=400)
+    for material_type in ("思想汇报", "培养考察记录", "群众评议材料", "党课培训证明"):
+        db.add(
+            MemberMaterial(
+                tenant_id="review-a",
+                profile_id="own",
+                org_unit_id="branch-a",
+                stage="activist",
+                material_type=material_type,
+                review_status="approved",
+            )
+        )
+    db.commit()
+
+    body = TransitionRequest(
+        target_stage="candidate",
+        decision_date=date.today(),
+        basis="培养期满，支委会研究确定",
+    )
+    with pytest.raises(HTTPException) as error:
+        await service.transition("own", body)
+    assert "培养联系人未登记" in error.value.detail
+
+    contact = await service.add_procedure(
+        "own",
+        ProcedureCreate(
+            kind="contact",
+            occurred_on=date.today() - timedelta(days=200),
+            reason="指定培养联系人",
+            details={"linked_profile_id": "senior"},
+        ),
+    )
+    assert contact.details["linked_name"] == "正式党员联系人"
+    assert contact.status == "assigned"
+    updated = await service.transition("own", body)
+    assert updated.current_stage == "candidate"
+
+
+@pytest.mark.asyncio
+async def test_external_contact_requires_manual_verification(member_data):
+    """外部正式党员只能人工核验登记；不得把非正式党员或本人关联进来。"""
+    service, _ = member_data
+    with pytest.raises(HTTPException) as error:
+        await service.add_procedure(
+            "own",
+            ProcedureCreate(
+                kind="contact",
+                occurred_on=date.today(),
+                reason="指定外部培养联系人",
+                details={
+                    "external_name": "外部党员",
+                    "external_org": "外单位党支部",
+                    "verified_on": date.today().isoformat(),
+                },
+            ),
+        )
+    assert "核验依据" in error.value.detail
+
+    with pytest.raises(HTTPException) as error:
+        await service.add_procedure(
+            "own",
+            ProcedureCreate(
+                kind="contact",
+                occurred_on=date.today(),
+                reason="关联非正式党员",
+                details={"linked_profile_id": "other"},
+            ),
+        )
+    assert "正式党员" in error.value.detail
+
+    record = await service.add_procedure(
+        "own",
+        ProcedureCreate(
+            kind="contact",
+            occurred_on=date.today(),
+            reason="指定外部培养联系人",
+            note="已核对党员身份证明和所在党组织证明",
+            details={
+                "external_name": "外部党员",
+                "external_org": "外单位党支部",
+                "verified_on": date.today().isoformat(),
+            },
+        ),
+    )
+    assert record.details["external"] is True
+    state = await service.procedures("own")
+    assert state["contacts"]["satisfied"] is True
+    assert state["contacts"]["current"]["details"]["external_name"] == "外部党员"
+
+
+@pytest.mark.asyncio
+async def test_procedure_summary_includes_upper_talk_after_probationary(member_data):
+    """上级谈话在预备党员阶段登记，作为上级审批前的提示事实。"""
+    service, db = member_data
+    profile = MemberProfile(
+        id="talk-target",
+        tenant_id="review-a",
+        org_unit_id="branch-a",
+        org_name="branch-a",
+        name="谈话对象",
+        current_stage="probationary",
+        stage_joined_on=date.today() - timedelta(days=30),
+        birth_date=date(1990, 1, 1),
+        year=2026,
+        batch_no="B1",
+    )
+    db.add(profile)
+    db.commit()
+    state = await service.procedures("talk-target")
+    assert state["upper_talk"]["satisfied"] is False
+    record = await service.add_procedure(
+        "talk-target",
+        ProcedureCreate(
+            kind="upper_talk",
+            occurred_on=date.today(),
+            summary="谈话情况良好",
+            reason="上级党委派人谈话",
+            details={"talker": "校党委组织员"},
+        ),
+    )
+    assert record.status == "completed"
+    state = await service.procedures("talk-target")
+    assert state["upper_talk"]["satisfied"] is True
 
 
 @pytest.mark.asyncio

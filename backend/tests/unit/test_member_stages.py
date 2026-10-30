@@ -5,7 +5,10 @@ from app.chains.member_flow import MemberFlow
 from app.rules.member_stages import (
     MemberStage,
     StageRules,
+    add_months,
     load_stage_rules,
+    political_review_blocker,
+    training_blocker,
 )
 
 _FULL_ACTIVIST_TO_CANDIDATE = [
@@ -27,7 +30,27 @@ class TestRules:
         rules = load_stage_rules()
         rule = rules.get_rule(MemberStage.CANDIDATE, MemberStage.PROBATIONARY)
         assert "政治审查材料" in rule.required_materials
-        assert rule.min_days == 90  # candidate_training_days
+        assert "上级审批意见" not in rule.required_materials
+        # 发展对象到预备党员没有固定 90 天间隔；培训按 3 天 / 24 学时事实校验。
+        assert rule.min_days == 0 and rule.min_months == 0
+        applicant = rules.get_rule(MemberStage.APPLICANT, MemberStage.ACTIVIST)
+        assert applicant.min_months == 6
+
+    def test_add_months_handles_month_end(self):
+        from datetime import date
+
+        assert add_months(date(2026, 1, 31), 1) == date(2026, 2, 28)
+        assert add_months(date(2024, 1, 31), 1) == date(2024, 2, 29)
+        assert add_months(date(2026, 8, 31), 6) == date(2027, 2, 28)
+
+    def test_political_review_and_training_gates(self):
+        assert political_review_blocker("passed") is None
+        assert "未登记" in political_review_blocker(None)
+        assert "不合格" in political_review_blocker("failed")
+        assert training_blocker(3, 0) is None
+        assert training_blocker(0, 24) is None
+        assert "未达" in training_blocker(2, 16)
+        assert "未登记" in training_blocker(None, None)
 
     def test_next_targets_include_rejected(self):
         targets = StageRules.default().next_targets(MemberStage.ACTIVIST)
@@ -70,6 +93,17 @@ class TestQualification:
         assert outcome.eligible is False
         assert any("最短时限" in b for b in outcome.blockers)
 
+    def test_applicant_six_month_block(self):
+        outcome = self.flow.check_qualification(
+            current_stage="applicant",
+            target_stage="activist",
+            materials=["入党申请书", "党组织谈话记录"],
+            months_in_stage=5,
+        )
+        assert outcome.eligible is False
+        assert outcome.min_months == 6
+        assert any("6 个月" in b for b in outcome.blockers)
+
     def test_disallowed_transition(self):
         outcome = self.flow.check_qualification(
             current_stage="applicant", target_stage="member", days_in_stage=0
@@ -87,6 +121,7 @@ class TestSuggestionAndTodo:
             current_stage="applicant",
             target_stage="activist",
             materials=["入党申请书", "党组织谈话记录"],
+            months_in_stage=6,
         )
         assert outcome.eligible is True
         assert outcome.suggested_target == "activist"

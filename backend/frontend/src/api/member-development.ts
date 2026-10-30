@@ -31,6 +31,7 @@ export interface MemberMaterial {
   material_type: string
   file_version?: string
   stage?: MemberStage
+  document_date?: string | null
   submit_date?: string | null
   review_status: 'pending' | 'approved' | 'rejected'
   note: string
@@ -336,6 +337,7 @@ export const memberDevelopmentApi = {
     body: {
       material_type: string
       file_version: string
+      document_date?: string | null
       submit_date: string | null
       reason: string
     },
@@ -345,11 +347,19 @@ export const memberDevelopmentApi = {
   /** 扫描件归档：影像进文件卷，可选云端识别。cloud_ocr 未确认时服务端不会发送材料 */
   scanMaterial(
     id: string,
-    form: { material_type: string; reason: string; note?: string; cloud_ocr: boolean; file: File },
+    form: {
+      material_type: string
+      document_date?: string | null
+      reason: string
+      note?: string
+      cloud_ocr: boolean
+      file: File
+    },
   ): Promise<MemberMaterial & { scan_notes?: string[] }> {
     const data = new FormData()
     data.append('file', form.file)
     data.append('material_type', form.material_type)
+    if (form.document_date) data.append('document_date', form.document_date)
     data.append('reason', form.reason)
     data.append('note', form.note ?? '')
     data.append('cloud_ocr', String(form.cloud_ocr))
@@ -370,7 +380,12 @@ export const memberDevelopmentApi = {
   },
   reviewMaterial(
     id: string,
-    body: { review_status: 'approved' | 'rejected'; note: string; reason: string },
+    body: {
+      review_status: 'approved' | 'rejected'
+      note: string
+      document_date?: string | null
+      reason: string
+    },
   ): Promise<MemberMaterial> {
     return http.post(`/member-full/materials/${encodeURIComponent(id)}/review`, body)
   },

@@ -2,7 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
 
 import httpx
 import pytest
@@ -126,7 +126,15 @@ async def ok(client, method, path, body=None, params=None):
     return response.json()["data"]
 
 
-async def new_profile(client, name, org="branch-a", stage="applicant", year=None):
+async def new_profile(
+    client,
+    name,
+    org="branch-a",
+    stage="applicant",
+    year=None,
+    birth_date="1990-01-01",
+    stage_joined_on=None,
+):
     return await ok(
         client,
         "POST",
@@ -135,6 +143,8 @@ async def new_profile(client, name, org="branch-a", stage="applicant", year=None
             "name": name,
             "org_unit_id": org,
             "current_stage": stage,
+            "stage_joined_on": stage_joined_on,
+            "birth_date": birth_date,
             "materials": [],
             "pending": 0,
         },
@@ -240,13 +250,17 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
             {"batch_no": "B1", "year": 2026, "reason": "归入年度批次"},
         )
         assert profile["batch_no"] == "B1"
-        # 材料记录上传与审核
+        # 材料记录上传与审核；入党申请书须有落款日期，且申请满 6 个月才能转积极分子。
+        application_date = (date.today() - timedelta(days=200)).isoformat()
         for material_type in ("入党申请书", "党组织谈话记录"):
+            body = {"material_type": material_type, "submit_date": today, "reason": "登记材料"}
+            if material_type == "入党申请书":
+                body["document_date"] = application_date
             await ok(
                 client,
                 "POST",
                 f"/member-full/profiles/{profile['id']}/materials",
-                {"material_type": material_type, "submit_date": today, "reason": "登记材料"},
+                body,
             )
         listed = await ok(client, "GET", f"/member-full/profiles/{profile['id']}/materials")
         assert listed["items"] and all(
@@ -334,6 +348,334 @@ async def test_batch_roster_material_and_transition_lifecycle(member_url):
         assert stats["total"] == 1
         batches = await ok(client, "GET", "/member-full/batches?year=2026")
         assert batches["items"][0]["member_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_application_age_and_six_month_gate(member_url):
+    today = date.today()
+    async with client_for(member_url, actor()) as (client, _):
+        underage = await new_profile(
+            client,
+            "未满十八周岁申请人",
+            birth_date=(today - timedelta(days=365 * 17)).isoformat(),
+        )
+        rejected = await client.post(
+            f"/api/v1/member-full/profiles/{underage['id']}/materials",
+            json={
+                "material_type": "入党申请书",
+                "document_date": today.isoformat(),
+                "reason": "登记材料",
+            },
+        )
+        assert rejected.status_code == 422
+        assert "未满18周岁" in rejected.text
+
+        missing_date = await client.post(
+            f"/api/v1/member-full/profiles/{underage['id']}/materials",
+            json={"material_type": "入党申请书", "reason": "登记材料"},
+        )
+        assert missing_date.status_code == 422
+        assert "落款日期" in missing_date.text
+
+        profile = await new_profile(client, "未满六个月申请人")
+        item = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/materials",
+            {
+                "material_type": "入党申请书",
+                "document_date": (today - timedelta(days=150)).isoformat(),
+                "submit_date": today.isoformat(),
+                "reason": "登记材料",
+            },
+        )
+        await ok(
+            client,
+            "POST",
+            f"/member-full/materials/{item['id']}/review",
+            {"review_status": "approved", "note": "核验通过", "reason": "人工核验"},
+        )
+        talk = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/materials",
+            {"material_type": "党组织谈话记录", "submit_date": today.isoformat(), "reason": "登记材料"},
+        )
+        await ok(
+            client,
+            "POST",
+            f"/member-full/materials/{talk['id']}/review",
+            {"review_status": "approved", "note": "核验通过", "reason": "人工核验"},
+        )
+        blocked = await client.post(
+            f"/api/v1/member-full/profiles/{profile['id']}/transition",
+            json={
+                "target_stage": "activist",
+                "decision_date": today.isoformat(),
+                "basis": "支委会研究确定",
+                "opinion": "同意列为入党积极分子",
+            },
+        )
+        assert blocked.status_code == 422
+        assert "6 个月" in blocked.text
+
+        # 历史材料可能在上线前已核验通过；流转时仍要按落款日期复核 18 周岁，不能靠旧数据绕过。
+        historical = await new_profile(client, "历史未成年申请")
+        application = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{historical['id']}/materials",
+            {
+                "material_type": "入党申请书",
+                "document_date": (today - timedelta(days=200)).isoformat(),
+                "submit_date": today.isoformat(),
+                "reason": "登记材料",
+            },
+        )
+        await ok(
+            client,
+            "POST",
+            f"/member-full/materials/{application['id']}/review",
+            {"review_status": "approved", "note": "核验通过", "reason": "人工核验"},
+        )
+        historical_talk = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{historical['id']}/materials",
+            {"material_type": "党组织谈话记录", "submit_date": today.isoformat(), "reason": "登记材料"},
+        )
+        await ok(
+            client,
+            "POST",
+            f"/member-full/materials/{historical_talk['id']}/review",
+            {"review_status": "approved", "note": "核验通过", "reason": "人工核验"},
+        )
+        await ok(
+            client,
+            "PATCH",
+            f"/member-full/profiles/{historical['id']}",
+            {
+                "birth_date": (today - timedelta(days=365 * 17)).isoformat(),
+                "reason": "更正出生年月",
+            },
+        )
+        blocked_age = await client.post(
+            f"/api/v1/member-full/profiles/{historical['id']}/transition",
+            json={
+                "target_stage": "activist",
+                "decision_date": today.isoformat(),
+                "basis": "支委会研究确定",
+                "opinion": "同意列为入党积极分子",
+            },
+        )
+        assert blocked_age.status_code == 422
+        assert "未满18周岁" in blocked_age.text
+
+
+@pytest.mark.asyncio
+async def test_political_review_and_training_are_hard_gates(member_url):
+    today = date.today()
+    async with client_for(member_url, actor()) as (client, _):
+        senior = await new_profile(client, "正式党员联系人", stage="member")
+        profile = await new_profile(
+            client,
+            "政审培训对象",
+            stage="candidate",
+            stage_joined_on=(today - timedelta(days=100)).isoformat(),
+        )
+        for material_type in ("政治审查材料", "公示情况报告", "支部大会决议"):
+            item = await ok(
+                client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/materials",
+                {"material_type": material_type, "submit_date": today.isoformat(), "reason": "登记材料"},
+            )
+            await ok(
+                client,
+                "POST",
+                f"/member-full/materials/{item['id']}/review",
+                {"review_status": "approved", "note": "核验通过", "reason": "人工核验"},
+            )
+
+        body = {
+            "target_stage": "probationary",
+            "decision_date": today.isoformat(),
+            "basis": "支部大会讨论通过",
+            "opinion": "同意接收为预备党员",
+        }
+        blocked = await client.post(
+            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+        )
+        assert blocked.status_code == 422
+        assert "政治审查结论未登记" in blocked.text
+
+        review = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/political-reviews",
+            {
+                "status": "passed",
+                "reviewed_on": today.isoformat(),
+                "scope": "本人及直系亲属",
+                "conclusion": "政治审查合格",
+                "note": "支委会审查形成结论",
+                "reason": "登记政审结论",
+            },
+        )
+        assert review["status"] == "passed"
+
+        blocked = await client.post(
+            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+        )
+        assert blocked.status_code == 422
+        assert "集中培训未登记" in blocked.text
+
+        training = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/trainings",
+            {
+                "start_on": (today - timedelta(days=2)).isoformat(),
+                "end_on": today.isoformat(),
+                "days": 3,
+                "hours": 24,
+                "issuer": "学校党校",
+                "reason": "登记集中培训",
+            },
+        )
+        assert training["days"] == 3
+
+        blocked = await client.post(
+            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+        )
+        assert blocked.status_code == 422
+        assert "培养联系人未登记" in blocked.text
+
+        contact = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/procedures",
+            {
+                "kind": "contact",
+                "occurred_on": (today - timedelta(days=80)).isoformat(),
+                "reason": "指定培养联系人",
+                "details": {"linked_profile_id": senior["id"]},
+            },
+        )
+        assert contact["details"]["linked_name"] == senior["name"]
+        assert contact["status"] == "assigned"
+
+        blocked = await client.post(
+            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+        )
+        assert blocked.status_code == 422
+        assert "入党介绍人未登记" in blocked.text
+
+        introducer = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/procedures",
+            {
+                "kind": "introducer",
+                "occurred_on": today.isoformat(),
+                "reason": "确定入党介绍人",
+                "details": {"linked_profile_id": senior["id"]},
+            },
+        )
+        assert introducer["details"]["linked_name"] == senior["name"]
+
+        blocked = await client.post(
+            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+        )
+        assert blocked.status_code == 422
+        assert "支委会审查未通过或未登记" in blocked.text
+
+        branch_review = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/procedures",
+            {
+                "kind": "branch_committee_review",
+                "occurred_on": today.isoformat(),
+                "status": "passed",
+                "summary": "支委会审查通过",
+                "reason": "支委会审查",
+            },
+        )
+        assert branch_review["status"] == "passed"
+
+        blocked = await client.post(
+            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+        )
+        assert blocked.status_code == 422
+        assert "上级党委预审未通过或未登记" in blocked.text
+
+        pre_review = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/procedures",
+            {
+                "kind": "upper_pre_review",
+                "occurred_on": today.isoformat(),
+                "status": "passed",
+                "summary": "上级党委预审通过",
+                "reason": "上级党委预审",
+                "details": {"upper_org": "校党委"},
+            },
+        )
+        assert pre_review["status"] == "passed"
+
+        blocked = await client.post(
+            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+        )
+        assert blocked.status_code == 422
+        assert "入党志愿书未提交或未登记" in blocked.text
+
+        application_form = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/procedures",
+            {
+                "kind": "application_form",
+                "occurred_on": today.isoformat(),
+                "status": "submitted",
+                "reason": "填写入党志愿书",
+                "details": {"form_no": "2026-001"},
+            },
+        )
+        assert application_form["status"] == "submitted"
+
+        profile = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/transition",
+            body,
+        )
+        assert profile["current_stage"] == "probationary"
+
+        talk = await ok(
+            client,
+            "POST",
+            f"/member-full/profiles/{profile['id']}/procedures",
+            {
+                "kind": "upper_talk",
+                "occurred_on": today.isoformat(),
+                "summary": "谈话情况良好",
+                "reason": "上级党委派人谈话",
+                "details": {"talker": "校党委组织员"},
+            },
+        )
+        assert talk["status"] == "completed"
+
+        detail = await ok(client, "GET", f"/member-full/profiles/{profile['id']}")
+        assert detail["political_reviews"]["satisfied"] is True
+        assert detail["trainings"]["satisfied"] is True
+        assert detail["procedures"]["contacts"]["satisfied"] is True
+        assert detail["procedures"]["introducers"]["count"] == 1
+        assert detail["procedures"]["branch_committee_review"]["satisfied"] is True
+        assert detail["procedures"]["upper_pre_review"]["satisfied"] is True
+        assert detail["procedures"]["application_form"]["satisfied"] is True
+        assert detail["procedures"]["upper_talk"]["satisfied"] is True
 
 
 @pytest.mark.asyncio
@@ -458,7 +800,12 @@ async def test_reminders_sync_deduplicate_and_resolve(member_url):
             client,
             "POST",
             f"/member-full/profiles/{profile['id']}/materials",
-            {"material_type": "入党申请书", "submit_date": today, "reason": "登记材料"},
+            {
+                "material_type": "入党申请书",
+                "document_date": (date.today() - timedelta(days=200)).isoformat(),
+                "submit_date": today,
+                "reason": "登记材料",
+            },
         )
         await ok(
             client,

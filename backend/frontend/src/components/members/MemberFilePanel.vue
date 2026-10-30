@@ -62,6 +62,7 @@ const identityValid = computed(() => ID_CARD_PATTERN.test(identity.id_card_no.tr
 const material = reactive({
   material_type: '',
   file_version: '',
+  document_date: '',
   submit_date: todayISO(),
   reason: '',
 })
@@ -69,6 +70,7 @@ const material = reactive({
 // 云端识别是"材料出网"，默认关闭，必须由人主动勾选；敏感级材料服务端也会拒绝识别。
 const scan = reactive({
   material_type: ARCHIVE_MATERIAL_TYPES[0] as string,
+  document_date: '',
   reason: '',
   note: '',
   cloud_ocr: false,
@@ -78,7 +80,11 @@ const scan = reactive({
   notes: [] as string[],
 })
 const scanReady = computed(
-  () => Boolean(scan.file) && scan.reason.trim().length >= 4 && !scan.busy,
+  () =>
+    Boolean(scan.file) &&
+    scan.reason.trim().length >= 4 &&
+    (scan.material_type !== '入党申请书' || Boolean(scan.document_date)) &&
+    !scan.busy,
 )
 // 识别文本按材料缓存：同一份材料反复展开不重复请求
 const texts = reactive<Record<string, MaterialText | 'loading'>>({})
@@ -103,6 +109,7 @@ const reviewing = ref<MemberMaterial | null>(null)
 const review = reactive({
   review_status: 'approved' as 'approved' | 'rejected',
   note: '',
+  document_date: '',
   reason: '',
 })
 const cultivation = reactive({
@@ -233,6 +240,7 @@ async function submitScan(): Promise<void> {
   try {
     const created = await api.scanMaterial(props.profileId, {
       material_type: scan.material_type,
+      document_date: scan.document_date || null,
       reason: scan.reason.trim(),
       note: scan.note.trim(),
       cloud_ocr: scan.cloud_ocr,
@@ -240,6 +248,7 @@ async function submitScan(): Promise<void> {
     })
     scan.notes = created.scan_notes ?? []
     scan.file = null
+    scan.document_date = ''
     scan.reason = ''
     scan.note = ''
     scan.cloud_ocr = false
@@ -301,10 +310,16 @@ async function addMaterial(): Promise<void> {
     await api.addMaterial(props.profileId, {
       material_type: material.material_type.trim(),
       file_version: material.file_version.trim(),
+      document_date: material.document_date || null,
       submit_date: material.submit_date || null,
       reason: material.reason.trim(),
     })
-    Object.assign(material, { material_type: '', file_version: '', reason: '' })
+    Object.assign(material, {
+      material_type: '',
+      file_version: '',
+      document_date: '',
+      reason: '',
+    })
   }, '材料已登记为待核验。')
 }
 async function reviewMaterial(): Promise<void> {
@@ -314,6 +329,7 @@ async function reviewMaterial(): Promise<void> {
     await api.reviewMaterial(id, {
       review_status: review.review_status,
       note: review.note.trim(),
+      document_date: review.document_date || null,
       reason: review.reason.trim(),
     })
     reviewing.value = null
@@ -322,7 +338,12 @@ async function reviewMaterial(): Promise<void> {
 function startMaterialReview(item: MemberMaterial): void {
   reviewing.value = item
   error.value = null
-  Object.assign(review, { review_status: 'approved', note: '', reason: '' })
+  Object.assign(review, {
+    review_status: 'approved',
+    note: '',
+    document_date: item.document_date || '',
+    reason: '',
+  })
 }
 async function addCultivation(): Promise<void> {
   await action(async () => {
@@ -508,6 +529,16 @@ async function archiveCheck(): Promise<void> {
                   </select></label
                 >
                 <label class="wb-field"
+                  ><span>材料落款日期</span
+                  ><input
+                    v-model="scan.document_date"
+                    class="input"
+                    type="date"
+                    :max="todayISO()"
+                    :disabled="scan.busy"
+                  /><small>入党申请书必填，按落款日期核验年满18周岁和申请满6个月。</small></label
+                >
+                <label class="wb-field"
                   ><span>扫描件（PDF / PNG / JPG）</span
                   ><input
                     class="input"
@@ -574,7 +605,9 @@ async function archiveCheck(): Promise<void> {
                 {{
                   item.legacy_material
                     ? '历史名称记录，原件待核验'
-                    : `版本 ${item.file_version || '未标注'} / 提交 ${item.submit_date || '未记录'}`
+                    : `版本 ${item.file_version || '未标注'} / ${
+                        item.document_date ? `落款 ${item.document_date}` : `收到 ${item.submit_date || '未记录'}`
+                      }`
                 }}
               </p>
               <p v-if="materialLevelNote(item)" class="u-meta">{{ materialLevelNote(item) }}</p>
@@ -661,7 +694,15 @@ async function archiveCheck(): Promise<void> {
                   ><input v-model="material.file_version" class="input" maxlength="100"
                 /></label>
                 <label class="wb-field"
-                  ><span>提交日期</span
+                  ><span>材料落款日期</span
+                  ><input
+                    v-model="material.document_date"
+                    class="input"
+                    type="date"
+                    :max="todayISO()"
+                /><small>入党申请书必填。</small></label>
+                <label class="wb-field"
+                  ><span>组织收到日期</span
                   ><input
                     v-model="material.submit_date"
                     class="input"
@@ -974,6 +1015,14 @@ async function archiveCheck(): Promise<void> {
             <option value="approved">人工核验通过</option>
             <option value="rejected">退回补正</option>
           </select></label
+        ><label class="wb-field"
+          ><span>材料落款日期</span
+          ><input
+            v-model="review.document_date"
+            class="input"
+            type="date"
+            :max="todayISO()"
+          /><small>历史材料可在此按原件补录；入党申请书核验前必须有落款日期。</small></label
         ><label class="wb-field"
           ><span>审核意见</span
           ><textarea

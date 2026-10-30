@@ -8,9 +8,11 @@
 
 from __future__ import annotations
 
+import calendar
 import importlib
 import logging
 from dataclasses import dataclass
+from datetime import date, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -48,6 +50,49 @@ STAGE_LABELS: dict[MemberStage, str] = {
 }
 
 
+#: 接收预备党员前的硬前置：政审须有明确结论，集中培训不少于 3 天或 24 学时。
+#: 这两个阈值只描述"事实是否具备"，不替组织判断政审是否合格、培训是否有效。
+MIN_POLITICAL_REVIEW_STATUS = "passed"
+MIN_TRAINING_DAYS = 3
+MIN_TRAINING_HOURS = 24
+
+
+def add_months(value: date, months: int) -> date:
+    """按自然月计算到期日；月末按目标月份最后一天处理（1月31日 + 1个月 = 2月28/29日）。"""
+    month = value.month - 1 + months
+    year = value.year + month // 12
+    month = month % 12 + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def political_review_blocker(status: str | None) -> str | None:
+    """政审结论是否满足接收预备党员的前置条件；只返回阻断说明，不替组织下结论。"""
+    if status is None:
+        return "政治审查结论未登记：请先登记组织形成的政审结论"
+    if status == "in_progress":
+        return "政治审查尚未形成结论：请待组织完成审查并登记结论"
+    if status == "failed":
+        return "政治审查结论为不合格：不能办理接收预备党员，请按组织程序处理"
+    if status != MIN_POLITICAL_REVIEW_STATUS:
+        return "政治审查结论状态无效：请核对档案"
+    return None
+
+
+def training_blocker(days: int | None, hours: int | None) -> str | None:
+    """集中培训是否达到 3 天或 24 学时；两个口径满足其一即可。"""
+    attended_days = max(0, int(days or 0))
+    attended_hours = max(0, int(hours or 0))
+    if attended_days >= MIN_TRAINING_DAYS or attended_hours >= MIN_TRAINING_HOURS:
+        return None
+    if attended_days or attended_hours:
+        return (
+            f"集中培训未达 {MIN_TRAINING_DAYS} 天或 {MIN_TRAINING_HOURS} 学时："
+            f"已登记 {attended_days} 天 / {attended_hours} 学时"
+        )
+    return f"集中培训未登记：须参加不少于 {MIN_TRAINING_DAYS} 天或 {MIN_TRAINING_HOURS} 学时的集中培训"
+
+
 @dataclass(frozen=True)
 class TransitionRule:
     """一次流转的规则"""
@@ -56,6 +101,8 @@ class TransitionRule:
     target: MemberStage
     required_materials: tuple[str, ...] = ()
     min_days: int = 0
+    #: 自然月时限；与 min_days 同时存在时取较晚的日期。用于"申请满 6 个月"这类按月计算的规则。
+    min_months: int = 0
     procedures: tuple[str, ...] = ()  # 建议履行的程序（供流转建议使用）
     description: str = ""
 
@@ -66,6 +113,9 @@ DEFAULT_TRANSITIONS: tuple[TransitionRule, ...] = (
         MemberStage.APPLICANT,
         MemberStage.ACTIVIST,
         required_materials=("入党申请书", "党组织谈话记录"),
+        # 细则要求"递交入党申请书满 6 个月"才能确定为入党积极分子；锚点是申请书落款日期，
+        # 不是建档日期。服务层会用最早一份已核验申请书的落款日期核算。
+        min_months=6,
         procedures=("支委会研究确定",),
         description="入党申请人 → 入党积极分子",
     ),
@@ -74,15 +124,28 @@ DEFAULT_TRANSITIONS: tuple[TransitionRule, ...] = (
         MemberStage.CANDIDATE,
         required_materials=("思想汇报", "培养考察记录", "群众评议材料", "党课培训证明"),
         min_days=365,
-        procedures=("培养期满且评议通过", "支委会研究确定"),
+        procedures=("培养联系人", "培养期满且评议通过", "支委会研究确定"),
         description="入党积极分子 → 发展对象",
     ),
     TransitionRule(
         MemberStage.CANDIDATE,
         MemberStage.PROBATIONARY,
-        required_materials=("政治审查材料", "公示情况报告", "支部大会决议", "上级审批意见"),
-        min_days=90,
-        procedures=("政治审查", "公示", "支部大会通过", "上级审批"),
+        # "上级审批意见"是批复回填后的材料，不应作为支部大会前流转的前置，否则会与
+        # "上级审批报送要求人员已是预备党员"形成循环。上级审批仍由报送台账单独登记。
+        required_materials=("政治审查材料", "公示情况报告", "支部大会决议"),
+        # 细则没有"发展对象满 90 天"的固定间隔；原 90 天是配置误读，已移除。
+        # 政审结论与集中培训由服务层按事实台账单独校验。
+        procedures=(
+            "入党介绍人",
+            "政治审查",
+            "集中培训",
+            "支委会审查",
+            "上级党委预审",
+            "填写入党志愿书",
+            "公示",
+            "支部大会通过",
+            "上级审批",
+        ),
         description="发展对象 → 预备党员",
     ),
     TransitionRule(
@@ -130,8 +193,12 @@ _MATERIAL_KEYS: dict[str, tuple[MemberStage, MemberStage]] = {
 # YAML 时限键 → (source, target)
 _MIN_DAYS_KEYS: dict[str, tuple[MemberStage, MemberStage]] = {
     "activist_training_min_days": (MemberStage.ACTIVIST, MemberStage.CANDIDATE),
-    "candidate_training_days": (MemberStage.CANDIDATE, MemberStage.PROBATIONARY),
     "probationary_period_min_days": (MemberStage.PROBATIONARY, MemberStage.MEMBER),
+}
+
+# YAML 自然月时限键 → (source, target)
+_MIN_MONTHS_KEYS: dict[str, tuple[MemberStage, MemberStage]] = {
+    "applicant_to_activist_min_months": (MemberStage.APPLICANT, MemberStage.ACTIVIST),
 }
 
 
@@ -183,6 +250,23 @@ class StageRules:
                     names.append(name)
         return tuple(names)
 
+    def earliest_transition_date(self, anchor: date, rule: TransitionRule) -> date:
+        """按规则计算最早可办理日期；天数和自然月同时存在时取较晚者。"""
+        earliest = anchor + timedelta(days=max(0, rule.min_days))
+        if rule.min_months > 0:
+            earliest = max(earliest, add_months(anchor, rule.min_months))
+        return earliest
+
+    @staticmethod
+    def min_period_label(rule: TransitionRule) -> str:
+        """给人工提示用的时限文字，不把天数与月数混成一个模糊说法。"""
+        parts = []
+        if rule.min_months > 0:
+            parts.append(f"{rule.min_months} 个月")
+        if rule.min_days > 0:
+            parts.append(f"{rule.min_days} 天")
+        return "、".join(parts) or "无固定间隔"
+
     @classmethod
     def default(cls) -> "StageRules":
         return cls()
@@ -214,10 +298,14 @@ def load_stage_rules(config_path: Optional[str] = None) -> StageRules:
             materials[mapping] = tuple(str(item) for item in value)
 
     min_days: dict[tuple[MemberStage, MemberStage], int] = {}
+    min_months: dict[tuple[MemberStage, MemberStage], int] = {}
     development = data.get("member_development") or {}
     for key, mapping in _MIN_DAYS_KEYS.items():
         if key in development and isinstance(development[key], int):
             min_days[mapping] = int(development[key])
+    for key, mapping in _MIN_MONTHS_KEYS.items():
+        if key in development and isinstance(development[key], int):
+            min_months[mapping] = int(development[key])
 
     transitions = []
     for rule in DEFAULT_TRANSITIONS:
@@ -228,6 +316,7 @@ def load_stage_rules(config_path: Optional[str] = None) -> StageRules:
                 target=rule.target,
                 required_materials=materials.get(key, rule.required_materials),
                 min_days=min_days.get(key, rule.min_days),
+                min_months=min_months.get(key, rule.min_months),
                 procedures=rule.procedures,
                 description=rule.description,
             )

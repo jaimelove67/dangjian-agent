@@ -29,6 +29,11 @@ class QualificationCheckRequest(BaseModel):
     target_stage: str = Field(..., description="拟转入阶段")
     materials: List[str] = Field(default_factory=list, description="已提交材料名称")
     days_in_stage: int = Field(0, ge=0, description="在当前阶段已停留天数")
+    months_in_stage: Optional[int] = Field(
+        None,
+        ge=0,
+        description="在当前阶段已满自然月数；不传时按 days_in_stage // 30 估算，仅作建议",
+    )
 
 
 class QualificationResult(BaseModel):
@@ -39,7 +44,9 @@ class QualificationResult(BaseModel):
     missing_materials: List[str] = Field(default_factory=list)
     present_materials: List[str] = Field(default_factory=list)
     min_days: int = 0
+    min_months: int = 0
     days_in_stage: int = 0
+    months_in_stage: int = 0
 
 
 class TransitionSuggestionRequest(QualificationCheckRequest):

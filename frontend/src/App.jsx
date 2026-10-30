@@ -114,6 +114,7 @@ import {
   demoAccountAvailable,
 } from "./roles";
 import { Organization, Members } from "./pages/Members";
+import { MemberInfoPage } from "./pages/MemberInfo";
 import { Meetings, Activities, Learning } from "./pages/Activities";
 import {
   Assistant,
@@ -243,6 +244,12 @@ export const NAV = [
     id: "members",
     label: "党员管理",
     icon: UsersThree,
+    permission: "member.query",
+  },
+  {
+    id: "member-info",
+    label: "党员信息采集",
+    icon: IdentificationCard,
     permission: "member.query",
   },
   {
@@ -930,6 +937,8 @@ function Shell() {
               <Organization />
             ) : ["members", "archive"].includes(route) ? (
               <Members mode={route} />
+            ) : route === "member-info" ? (
+              <MemberInfoPage />
             ) : route === "meetings" ? (
               IS_LIVE ? <LiveBusinessWorkspace kind="life"><Meetings /></LiveBusinessWorkspace> : <Meetings />
             ) : route === "activities" ? (

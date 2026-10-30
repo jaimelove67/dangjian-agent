@@ -15,6 +15,22 @@ export const roleApi = {
     return request(`/member-full/profiles/${id(profile)}/materials/scan`, { method: "POST", body });
   },
   archive: () => request("/member/self/archive"),
+  selfInfo: () => request("/member/info-collection/self"),
+  saveSelfInfo: (body) =>
+    request("/member/info-collection/self", json("PUT", body)),
+  submitSelfInfo: (body) =>
+    request("/member/info-collection/self/submit", json("POST", body)),
+  infoCollections: () => request("/member/info-collections?page_size=200"),
+  infoCollection: (collection) =>
+    request(`/member/info-collections/${id(collection)}`),
+  saveInfoCollection: (collection, body) =>
+    request(`/member/info-collections/${id(collection)}`, json("PATCH", body)),
+  reviewInfoCollection: (collection, body) =>
+    request(`/member/info-collections/${id(collection)}/review`, json("POST", body)),
+  exportInfoCollection: (collection) =>
+    request(`/member/info-collections/${id(collection)}/export.docx`, {
+      download: true,
+    }),
   ownMaterials: (page = 1) =>
     request(`/member/self/materials?page=${page}&page_size=20`),
   submitMaterial: ({ file, title, category, description, submission_key }) => {
@@ -60,6 +76,27 @@ export const roleApi = {
   transition: (profile, body) =>
     request(
       `/member-full/profiles/${id(profile)}/transition`,
+      json("POST", body),
+    ),
+  politicalReviews: (profile) =>
+    request(`/member-full/profiles/${id(profile)}/political-reviews`),
+  addPoliticalReview: (profile, body) =>
+    request(
+      `/member-full/profiles/${id(profile)}/political-reviews`,
+      json("POST", body),
+    ),
+  trainings: (profile) =>
+    request(`/member-full/profiles/${id(profile)}/trainings`),
+  addTraining: (profile, body) =>
+    request(
+      `/member-full/profiles/${id(profile)}/trainings`,
+      json("POST", body),
+    ),
+  procedures: (profile) =>
+    request(`/member-full/profiles/${id(profile)}/procedures`),
+  addProcedure: (profile, body) =>
+    request(
+      `/member-full/profiles/${id(profile)}/procedures`,
       json("POST", body),
     ),
   cultivation: (profile, body) =>

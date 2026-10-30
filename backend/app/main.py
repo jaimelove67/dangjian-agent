@@ -27,6 +27,7 @@ from app.api.v1 import (
     meeting,
     member,
     member_full,
+    member_info,
     member_review,
     member_selection,
     member_self,
@@ -244,6 +245,7 @@ app.include_router(embeddings.router, prefix="/api/v1", tags=["向量化"])
 app.include_router(qa.router, prefix="/api/v1", tags=["知识问答"])
 app.include_router(member.router, prefix="/api/v1", tags=["党员发展"])
 app.include_router(member_self.router, prefix="/api/v1", tags=["本人档案与材料"])
+app.include_router(member_info.router, prefix="/api/v1", tags=["党员基本信息采集"])
 app.include_router(member_full.router, prefix="/api/v1", tags=["党员发展全流程"])
 app.include_router(member_transfer.router, prefix="/api/v1", tags=["党员发展全流程"])
 app.include_router(member_upper_report.router, prefix="/api/v1", tags=["党员发展全流程"])

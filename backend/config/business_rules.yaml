@@ -2,12 +2,15 @@
 
 # 党员发展阶段时限（天）
 member_development:
+  # 递交入党申请书满 6 个月才能确定为入党积极分子（锚点为申请书落款日期）
+  applicant_to_activist_min_months: 6
+
   # 入党积极分子培养期
   activist_training_days: 365
   activist_training_min_days: 365
 
-  # 发展对象培训期
-  candidate_training_days: 90
+  # 发展对象到预备党员不设固定间隔。原 candidate_training_days: 90 是对
+  # "集中培训不少于 3 天 / 24 学时"的误读，已移除；集中培训由事实台账校验。
 
   # 预备党员预备期
   probationary_period_days: 365
@@ -31,11 +34,12 @@ material_requirements:
     - 党课培训证明
 
   # 发展对象 -> 预备党员
+  # 上级审批意见是批复回填后的材料，不是支部大会前的前置；否则会与"上级审批
+  # 报送要求人员已是预备党员"形成循环。上级审批仍由 member_upper_reports 单独登记。
   candidate_to_probationary:
     - 政治审查材料
     - 公示情况报告
     - 支部大会决议
-    - 上级审批意见
 
   # 预备党员 -> 正式党员
   probationary_to_member:

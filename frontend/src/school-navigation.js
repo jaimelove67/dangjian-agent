@@ -16,6 +16,7 @@ export const SCHOOL_NAVIGATION = [
     items: [
       ["organization", "组织结构与负责人"],
       ["members", "党员名册与归属"],
+      ["member-info", "党员信息采集"],
       ["archive", "党员档案与材料"],
     ],
   },

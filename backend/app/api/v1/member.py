@@ -691,6 +691,7 @@ async def qualification_check(
             target_stage=body.target_stage,
             materials=body.materials,
             days_in_stage=body.days_in_stage,
+            months_in_stage=body.months_in_stage,
         )
     except ValueError as exc:
         raise _invalid_stage(exc) from exc
@@ -716,7 +717,9 @@ async def qualification_check(
             missing_materials=outcome.missing_materials,
             present_materials=outcome.present_materials,
             min_days=outcome.min_days,
+            min_months=outcome.min_months,
             days_in_stage=outcome.days_in_stage,
+            months_in_stage=outcome.months_in_stage,
         ),
         trace_id=_trace_id(request),
     )
@@ -741,6 +744,7 @@ async def transition_suggestion(
             target_stage=body.target_stage,
             materials=body.materials,
             days_in_stage=body.days_in_stage,
+            months_in_stage=body.months_in_stage,
         )
     except ValueError as exc:
         raise _invalid_stage(exc) from exc

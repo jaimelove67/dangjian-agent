@@ -6,6 +6,7 @@ import "./pages.css";
 import "./responsive.css";
 import "./roles.css";
 import "./school.css";
+import "./member-info.css";
 
 // crypto.randomUUID 仅在安全上下文（HTTPS / localhost）存在。
 // 私有化部署常以明文 http://IP 访问，此时调用会抛 TypeError 导致整页白屏。

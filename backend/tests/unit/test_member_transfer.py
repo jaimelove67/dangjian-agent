@@ -108,8 +108,9 @@ def test_materials_for_stage_unions_existing_requirements_along_the_path():
 
     assert rules.materials_for_stage(MemberStage.APPLICANT) == ()
     assert len(rules.materials_for_stage(MemberStage.ACTIVIST)) == 2
-    assert len(rules.materials_for_stage(MemberStage.PROBATIONARY)) == 10
-    assert len(rules.materials_for_stage(MemberStage.MEMBER)) == 12
+    # 上级审批意见是批复回填材料，不再作为支部大会前的前置，因此比原清单少 1 项。
+    assert len(rules.materials_for_stage(MemberStage.PROBATIONARY)) == 9
+    assert len(rules.materials_for_stage(MemberStage.MEMBER)) == 11
     # 预备党员转入时清单里不该出现尚未发生的转正材料
     probationary = rules.materials_for_stage(MemberStage.PROBATIONARY)
     assert "转正申请书" not in probationary

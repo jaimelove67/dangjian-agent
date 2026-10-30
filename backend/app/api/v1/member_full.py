@@ -35,9 +35,12 @@ from app.schemas.member_ext import (
     CultivationCreate,
     MaterialCreate,
     MaterialReview,
+    PoliticalReviewCreate,
+    ProcedureCreate,
     ProfileUpdate,
     ReminderResolve,
     ScoringRequest,
+    TrainingCreate,
     TransitionRequest,
     VoteBatch,
 )
@@ -163,6 +166,9 @@ async def profile_detail(
     data["materials"] = await service.list_materials(profile_id)
     data["stage_history"] = await service.stage_history(profile_id)
     data["cultivation"] = await service.cultivation(profile_id)
+    data["political_reviews"] = await service.political_reviews(profile_id)
+    data["trainings"] = await service.trainings(profile_id)
+    data["procedures"] = await service.procedures(profile_id)
     data["boundary"] = DECISION_BOUNDARY
     return await respond(request, service, data, "read", "member", profile_id)
 
@@ -274,6 +280,7 @@ async def archive_scan(
     reason: str = Form(..., description="归档说明（4–200 字），写入审计"),
     note: str = Form("", description="备注，随材料保存"),
     file_version: str = Form("扫描归档", min_length=1, max_length=50),
+    document_date: date | None = Form(None, description="材料落款日期；入党申请书必填"),
     submit_date: date | None = Form(None),
     cloud_ocr: bool = Form(False, description="是否允许云端识别；材料会出网，敏感级材料一律不识别"),
     service: MemberDevelopment = Depends(member_service),
@@ -310,6 +317,7 @@ async def archive_scan(
         note=note.strip(),
         cloud_ocr=cloud_ocr,
         file_version=file_version.strip(),
+        document_date=document_date,
         submit_date=submit_date,
     )
     data = service.material_view(material)
@@ -385,6 +393,147 @@ async def review_material(
         "review_material",
         "member_material",
         material_id,
+    )
+
+
+@router.get(
+    "/member-full/profiles/{profile_id}/political-reviews",
+    response_model=APIResponse[dict],
+    summary="查看政治审查结论",
+    description="返回组织已登记的政审结论与历史；原始政审材料仍按涉密级单独管理。",
+    tags=["党员发展"],
+)
+async def political_reviews(
+    profile_id: str, request: Request, service: MemberDevelopment = Depends(member_service)
+) -> APIResponse[dict]:
+    return await respond(
+        request,
+        service,
+        await service.political_reviews(profile_id),
+        "read_political_reviews",
+        "member_political_review",
+        profile_id,
+    )
+
+
+@router.post(
+    "/member-full/profiles/{profile_id}/political-reviews",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_transition)],
+    summary="登记政治审查结论",
+    description="登记组织形成的政审结论；只增不改，最新一条为当前结论，不替代组织审查。",
+    tags=["党员发展"],
+)
+async def add_political_review(
+    profile_id: str,
+    body: PoliticalReviewCreate,
+    request: Request,
+    service: MemberDevelopment = Depends(member_service),
+) -> APIResponse[dict]:
+    record = await service.add_political_review(profile_id, body)
+    return await respond(
+        request,
+        service,
+        row_data(record),
+        "create_political_review",
+        "member_political_review",
+        str(record.id),
+    )
+
+
+@router.get(
+    "/member-full/profiles/{profile_id}/trainings",
+    response_model=APIResponse[dict],
+    summary="查看集中培训记录",
+    description="返回已登记的集中培训事实与是否达到 3 天 / 24 学时要求。",
+    tags=["党员发展"],
+)
+async def trainings(
+    profile_id: str, request: Request, service: MemberDevelopment = Depends(member_service)
+) -> APIResponse[dict]:
+    return await respond(
+        request,
+        service,
+        await service.trainings(profile_id),
+        "read_trainings",
+        "member_training",
+        profile_id,
+    )
+
+
+@router.post(
+    "/member-full/profiles/{profile_id}/trainings",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_transition)],
+    summary="登记集中培训",
+    description="登记实际参加的天数 / 学时；是否计入发展程序仍须人工核验培训证明原件。",
+    tags=["党员发展"],
+)
+async def add_training(
+    profile_id: str,
+    body: TrainingCreate,
+    request: Request,
+    service: MemberDevelopment = Depends(member_service),
+) -> APIResponse[dict]:
+    record = await service.add_training(profile_id, body)
+    return await respond(
+        request,
+        service,
+        row_data(record),
+        "create_training",
+        "member_training",
+        str(record.id),
+    )
+
+
+@router.get(
+    "/member-full/profiles/{profile_id}/procedures",
+    response_model=APIResponse[dict],
+    summary="查看发展程序记录",
+    description=(
+        "返回培养联系人、入党介绍人、支委会审查、上级党委预审、入党志愿书和上级谈话"
+        "的当前状态与历史；只登记事实，不替代组织程序。"
+    ),
+    tags=["党员发展"],
+)
+async def procedures(
+    profile_id: str, request: Request, service: MemberDevelopment = Depends(member_service)
+) -> APIResponse[dict]:
+    return await respond(
+        request,
+        service,
+        await service.procedures(profile_id),
+        "read_procedures",
+        "member_procedure",
+        profile_id,
+    )
+
+
+@router.post(
+    "/member-full/profiles/{profile_id}/procedures",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_transition)],
+    summary="登记发展程序事实",
+    description=(
+        "登记培养联系人、入党介绍人、支委会审查、上级党委预审、入党志愿书或上级谈话；"
+        "只增不改，最新一条为当前状态，不自动推进阶段。"
+    ),
+    tags=["党员发展"],
+)
+async def add_procedure(
+    profile_id: str,
+    body: ProcedureCreate,
+    request: Request,
+    service: MemberDevelopment = Depends(member_service),
+) -> APIResponse[dict]:
+    record = await service.add_procedure(profile_id, body)
+    return await respond(
+        request,
+        service,
+        row_data(record),
+        "create_procedure",
+        "member_procedure",
+        str(record.id),
     )
 
 

@@ -93,6 +93,9 @@ class MemberMaterial(Base):
     # 字段级敏感分级（T-MEM-12）：登记时按材料类型带出的密级快照，配置调整不回改历史。
     data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="internal")
     file_version: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    # 材料落款日期（本人签字 / 出具单位落款），与"组织收到日期" submit_date 分开。
+    # 入党申请书的 18 周岁与"满 6 个月"都以本列为锚点，不能用收到日期代替。
+    document_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     submit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     submitter_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
@@ -116,6 +119,148 @@ class MemberMaterial(Base):
     # 结构化抽取建议值（材料类型/所属人/落款日期/出具单位/要点）：只是核对辅助，
     # 不写台账字段——材料类型仍由归档人选定，模型判断不能直接变成组织记录。
     extracted_fields: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class MemberPoliticalReview(Base):
+    """政治审查结论台账：登记组织形成的结论，不替组织作审查。
+
+    政审的**原始材料**仍按 ``政治审查材料`` 的涉密级管理，正文不对接口返回；
+    本表只保存组织已经形成的结论、审查范围、日期、登记依据和依据材料，供接收预备党员前校验。
+    记录只增不改：纠正结论时新增一条，最新一条（按审查日期、登记时间）为当前结论。
+    """
+
+    __tablename__ = "member_political_reviews"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        Index(
+            "ix_member_political_reviews_profile",
+            "tenant_id",
+            "profile_id",
+            "reviewed_on",
+        ),
+        Index(
+            "ix_member_political_reviews_scope",
+            "tenant_id",
+            "org_unit_id",
+            "status",
+        ),
+    )
+
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # 登记时的姓名 / 组织 / 阶段快照：人员改名、流转后历史行仍能读回去
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    # in_progress 审查中 / passed 合格 / failed 不合格
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="in_progress")
+    reviewed_on: Mapped[date] = mapped_column(Date, nullable=False)
+    reviewed_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    # 审查范围（本人及直系亲属 / 主要社会关系等），由组织人员按实际填写
+    scope: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    conclusion: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 登记依据：组织审查过程、结论形成依据；与结论同属敏感级
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 可关联已归档的政治审查材料；原件仍走材料密级出口
+    material_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # 组织结论属敏感级；原始政审材料仍按 classified 管理，二者不混用
+    data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="sensitive")
+    # 操作版本：每次登记新增一条，编号只增不减
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class MemberTraining(Base):
+    """集中培训台账：登记实际参加的天数 / 学时，不自动认定培训有效。
+
+    细则要求发展对象参加短期集中培训，时间不少于三天（或不少于二十四学时）。
+    本表只保存"谁在何时参加了什么培训、多少天/学时、由谁出具证明、登记依据"，
+    是否计入发展程序仍由组织人员按培训通知、结业证明等原件核验。
+    """
+
+    __tablename__ = "member_trainings"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        Index("ix_member_trainings_profile", "tenant_id", "profile_id", "end_on"),
+        Index("ix_member_trainings_scope", "tenant_id", "org_unit_id", "training_type"),
+    )
+
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    # 当前只登记集中培训；保留类型列，后续可区分党课、专题培训等，不混算
+    training_type: Mapped[str] = mapped_column(String(40), nullable=False, default="centralized")
+    start_on: Mapped[date] = mapped_column(Date, nullable=False)
+    end_on: Mapped[date] = mapped_column(Date, nullable=False)
+    days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    issuer: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    # 可关联结业证明 / 培训证明扫描件
+    certificate_material_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 登记依据：培训通知、结业证明等原件核对情况
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="internal")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+
+
+class MemberProcedure(Base):
+    """发展程序事实台账：培养联系人、入党介绍人、支委会审查、上级预审、志愿书与谈话。
+
+    这些记录只登记“谁在何时完成了什么程序、依据是什么”，不替代组织作出决定，也不自动
+    改变发展阶段。阶段流转时只校验组织已经登记的事实是否具备；缺项时提示补录，由组织
+    人员按程序办理。记录按 ``kind`` 分类、只增不改：纠正或再次办理时新增一条，最新一条
+    作为当前状态。联系人可关联本校正式党员档案，外部正式党员须人工核验并留下依据。
+    """
+
+    __tablename__ = "member_procedures"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        Index(
+            "ix_member_procedures_profile",
+            "tenant_id",
+            "profile_id",
+            "kind",
+            "occurred_on",
+        ),
+        Index(
+            "ix_member_procedures_scope",
+            "tenant_id",
+            "org_unit_id",
+            "kind",
+            "status",
+        ),
+    )
+
+    profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    org_unit_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # 登记时的姓名 / 组织 / 阶段快照：人员改名、流转后历史行仍能读回去
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    # contact / introducer / branch_committee_review / upper_pre_review /
+    # application_form / upper_talk
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    occurred_on: Mapped[date] = mapped_column(Date, nullable=False)
+    # 联系人 assigned / 介绍人 confirmed；审查 in_progress|passed|failed；
+    # 预审 in_progress|passed|supplement|failed；志愿书 draft|submitted|reviewed；
+    # 谈话 completed
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    # 角色 / 事项名称，例如“第一入党介绍人”“支委会审查”
+    title: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    # 组织形成的意见 / 结论 / 谈话情况；联系人与志愿书可为空
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 登记依据：组织程序、会议记录、批复文号等原件核对情况
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 分类字段：联系人/介绍人/志愿书为 internal；审查、预审、谈话为 sensitive
+    details: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="internal")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
 
 
 class MemberStageHistory(Base):
@@ -457,3 +602,82 @@ class MemberLeagueRecommendation(Base):
     revoke_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # 操作版本：登记 / 作废各留一版完整快照，编号只增不减
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class MemberInfoCollection(Base):
+    """党员基本信息采集表当前版本。
+
+    本人只填写个人信息，支部补录组织信息；支部、院系、学校逐级审核。
+    当前行保存最新版本，``history`` 保留每次提交和审核事件；已备案版本不覆盖
+    历史快照。身份证号不进入本表，页面只读取档案中的脱敏值。
+    """
+
+    __tablename__ = "member_info_collections"
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "profile_id", name="uq_member_info_collections_profile"
+        ),
+        Index(
+            "ix_member_info_collections_scope",
+            "tenant_id",
+            "org_unit_id",
+            "status",
+            "updated_at",
+        ),
+    )
+
+    profile_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("member_profiles.id"), nullable=False
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+    member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    member_stage: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    member_stage_label: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=""
+    )
+    org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    department: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    id_card_masked: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=""
+    )
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    stage_joined_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    history: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    collector_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    member_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    branch_reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    branch_reviewed_by_name: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=""
+    )
+    branch_opinion: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    department_reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    department_reviewed_by_name: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=""
+    )
+    department_opinion: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_by_name: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=""
+    )
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    returned_by_name: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=""
+    )
+    return_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    return_stage: Mapped[str] = mapped_column(String(32), nullable=False, default="")

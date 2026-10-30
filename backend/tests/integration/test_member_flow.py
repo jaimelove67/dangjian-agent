@@ -83,6 +83,7 @@ def test_qualification_endpoint_branch_secretary_ok():
                     "target_stage": "activist",
                     "materials": ["入党申请书", "党组织谈话记录"],
                     "days_in_stage": 0,
+                    "months_in_stage": 6,
                 },
             )
     finally:

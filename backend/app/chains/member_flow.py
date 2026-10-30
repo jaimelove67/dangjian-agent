@@ -28,7 +28,9 @@ class QualificationOutcome:
     missing_materials: list[str] = field(default_factory=list)
     present_materials: list[str] = field(default_factory=list)
     min_days: int = 0
+    min_months: int = 0
     days_in_stage: int = 0
+    months_in_stage: int = 0
 
 
 @dataclass
@@ -65,17 +67,28 @@ class MemberFlow:
         target_stage: MemberStage | str,
         materials: Optional[list[str]] = None,
         days_in_stage: int = 0,
+        months_in_stage: int | None = None,
     ) -> QualificationOutcome:
-        """资格校验：材料齐全性 + 最短时限"""
+        """资格校验：材料齐全性 + 最短时限。
+
+        ``months_in_stage`` 不传时按 ``days_in_stage // 30`` 估算，只用于历史建议接口；
+        正式阶段流转由服务层按申请书落款日期和自然月精确核算。
+        """
         current = self._coerce(current_stage)
         target = self._coerce(target_stage)
         provided = set(materials or [])
+        effective_months = (
+            months_in_stage if months_in_stage is not None else max(0, days_in_stage // 30)
+        )
 
         rule = self.rules.get_rule(current, target)
         if rule is None:
             label = f"{STAGE_LABELS.get(current, current)} → {STAGE_LABELS.get(target, target)}"
             return QualificationOutcome(
-                eligible=False, blockers=[f"不允许的流转：{label}"], days_in_stage=days_in_stage
+                eligible=False,
+                blockers=[f"不允许的流转：{label}"],
+                days_in_stage=days_in_stage,
+                months_in_stage=effective_months,
             )
 
         missing = [m for m in rule.required_materials if m not in provided]
@@ -86,6 +99,10 @@ class MemberFlow:
             blockers.append("材料不齐：" + "、".join(missing))
         if days_in_stage < rule.min_days:
             blockers.append(f"未满足最短时限：需 {rule.min_days} 天，当前 {days_in_stage} 天")
+        if rule.min_months > 0 and effective_months < rule.min_months:
+            blockers.append(
+                f"未满足最短时限：需满 {rule.min_months} 个月，当前 {effective_months} 个月"
+            )
 
         return QualificationOutcome(
             eligible=not blockers,
@@ -93,7 +110,9 @@ class MemberFlow:
             missing_materials=missing,
             present_materials=present,
             min_days=rule.min_days,
+            min_months=rule.min_months,
             days_in_stage=days_in_stage,
+            months_in_stage=effective_months,
         )
 
     def suggest_transition(
@@ -103,6 +122,7 @@ class MemberFlow:
         target_stage: MemberStage | str,
         materials: Optional[list[str]] = None,
         days_in_stage: int = 0,
+        months_in_stage: int | None = None,
     ) -> SuggestionOutcome:
         """流转建议：给出拟转入阶段与应履行程序（**不写入阶段**）"""
         current = self._coerce(current_stage)
@@ -112,6 +132,7 @@ class MemberFlow:
             target_stage=target,
             materials=materials,
             days_in_stage=days_in_stage,
+            months_in_stage=months_in_stage,
         )
         rule = self.rules.get_rule(current, target)
         return SuggestionOutcome(
@@ -168,11 +189,13 @@ class MemberFlowState(TypedDict, total=False):
     target_stage: str
     materials: list[str]
     days_in_stage: int
+    months_in_stage: int
     eligible: bool
     blockers: list[str]
     missing_materials: list[str]
     present_materials: list[str]
     min_days: int
+    min_months: int
     todos: list[dict[str, str]]
     suggested_target: Optional[str]
     procedures: list[str]
@@ -194,6 +217,7 @@ def build_member_graph(flow: Optional[MemberFlow] = None) -> Any:
             target_stage=state["target_stage"],
             materials=state.get("materials", []),
             days_in_stage=state.get("days_in_stage", 0),
+            months_in_stage=state.get("months_in_stage"),
         )
         return {
             "eligible": outcome.eligible,
@@ -201,6 +225,7 @@ def build_member_graph(flow: Optional[MemberFlow] = None) -> Any:
             "missing_materials": outcome.missing_materials,
             "present_materials": outcome.present_materials,
             "min_days": outcome.min_days,
+            "min_months": outcome.min_months,
         }
 
     def todo_node(state: MemberFlowState) -> dict[str, Any]:
@@ -217,6 +242,7 @@ def build_member_graph(flow: Optional[MemberFlow] = None) -> Any:
             target_stage=state["target_stage"],
             materials=state.get("materials", []),
             days_in_stage=state.get("days_in_stage", 0),
+            months_in_stage=state.get("months_in_stage"),
         )
         return {
             "suggested_target": outcome.suggested_target,

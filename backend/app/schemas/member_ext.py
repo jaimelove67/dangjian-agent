@@ -2,7 +2,7 @@
 
 import re
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -63,15 +63,115 @@ class ProfileUpdate(MemberInput):
 class MaterialCreate(MemberInput):
     material_type: Label
     file_version: str = Field(default="", max_length=100)
+    # 材料落款日期与组织收到日期分开；入党申请书必须填写，用于 18 周岁与满 6 个月核算。
+    document_date: date | None = None
     submit_date: date | None = None
     stage: str | None = Field(default=None, max_length=20)
     reason: Reason
+
+    @field_validator("document_date", "submit_date")
+    @classmethod
+    def material_dates_not_in_future(cls, value: date | None) -> date | None:
+        if value and value > date.today():
+            raise ValueError("材料落款日期和组织收到日期不能晚于今天")
+        return value
+
+    @model_validator(mode="after")
+    def application_date_required(self) -> "MaterialCreate":
+        if self.material_type == "入党申请书" and self.document_date is None:
+            raise ValueError("入党申请书须填写落款日期，用于核验申请时年满18周岁和申请满6个月")
+        return self
+
+
+class PoliticalReviewCreate(MemberInput):
+    """登记组织形成的政审结论；原始政审材料仍走材料归档与涉密级出口。"""
+
+    status: Literal["in_progress", "passed", "failed"]
+    reviewed_on: date
+    scope: Label
+    conclusion: str = Field(default="", max_length=4000)
+    note: str = Field(default="", max_length=2000)
+    material_id: str | None = Field(default=None, max_length=36)
+    reason: Reason
+
+    @field_validator("reviewed_on")
+    @classmethod
+    def review_date_not_in_future(cls, value: date) -> date:
+        if value > date.today():
+            raise ValueError("政审日期不能晚于今天")
+        return value
+
+    @model_validator(mode="after")
+    def conclusion_required_for_decision(self) -> "PoliticalReviewCreate":
+        if self.status in {"passed", "failed"} and not self.conclusion.strip():
+            raise ValueError("作出政审结论时须填写结论内容")
+        return self
+
+
+class TrainingCreate(MemberInput):
+    """登记集中培训事实；是否计入发展程序仍由组织人员核验原件后确认。"""
+
+    training_type: Literal["centralized"] = "centralized"
+    start_on: date
+    end_on: date
+    days: int | None = Field(default=None, ge=0, le=365)
+    hours: int | None = Field(default=None, ge=0, le=2000)
+    issuer: str = Field(default="", max_length=200)
+    certificate_material_id: str | None = Field(default=None, max_length=36)
+    note: str = Field(default="", max_length=2000)
+    reason: Reason
+
+    @model_validator(mode="after")
+    def training_dates_and_amount(self) -> "TrainingCreate":
+        if self.start_on > date.today() or self.end_on > date.today():
+            raise ValueError("培训日期不能晚于今天")
+        if self.end_on < self.start_on:
+            raise ValueError("培训结束日期不能早于开始日期")
+        if not (self.days or 0) and not (self.hours or 0):
+            raise ValueError("请填写培训天数或学时，至少一项大于0")
+        return self
+
+
+class ProcedureCreate(MemberInput):
+    """登记发展程序事实；具体字段按 kind 由服务层校验，不在此处替组织判断。"""
+
+    kind: Literal[
+        "contact",
+        "introducer",
+        "branch_committee_review",
+        "upper_pre_review",
+        "application_form",
+        "upper_talk",
+    ]
+    occurred_on: date
+    status: str = Field(default="", max_length=20)
+    title: str = Field(default="", max_length=100)
+    summary: str = Field(default="", max_length=4000)
+    note: str = Field(default="", max_length=2000)
+    reason: Reason
+    details: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("occurred_on")
+    @classmethod
+    def occurred_not_in_future(cls, value: date) -> date:
+        if value > date.today():
+            raise ValueError("程序日期不能晚于今天")
+        return value
 
 
 class MaterialReview(MemberInput):
     review_status: Literal["approved", "rejected"]
     note: str = Field(default="", max_length=500)
+    # 历史材料补录落款日期：核验时一并写入，原状态先留基线，写入后再留审核快照。
+    document_date: date | None = None
     reason: Reason
+
+    @field_validator("document_date")
+    @classmethod
+    def review_date_not_in_future(cls, value: date | None) -> date | None:
+        if value and value > date.today():
+            raise ValueError("材料落款日期不能晚于今天")
+        return value
 
 
 class TransitionRequest(MemberInput):

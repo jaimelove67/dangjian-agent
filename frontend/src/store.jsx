@@ -25,6 +25,7 @@ function emptyData() {
     notificationRead: false,
     personalMaterials: [],
     materialReceipts: [],
+    memberInfoCollections: [],
     developmentProfiles: {},
     accounts: [],
     tenants: [],

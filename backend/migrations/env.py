@@ -32,6 +32,7 @@ from app.models.member import (  # noqa: F401
     MemberArchiveCheck,
     MemberBatch,
     MemberCultivation,
+    MemberInfoCollection,
     MemberMaterial,
     MemberProfile,
     MemberReminder,

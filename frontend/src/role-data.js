@@ -2,6 +2,7 @@ import { DEMO_PERSONAS, accountOrganizations } from "./roles.js";
 import { seedMembers } from "./data.js";
 import { buildSchoolData } from "./school-data.js";
 import { extendPlatformData } from "./platform-data.js";
+import { seedDemoInfoCollections } from "./member-info.js";
 export function roleSeed() {
   const organizer = DEMO_PERSONAS.find((p) => p.id === "organizer").user;
   const student = DEMO_PERSONAS.find((p) => p.id === "student").user;
@@ -37,6 +38,7 @@ export function roleSeed() {
       },
     ],
     materialReceipts: [],
+    memberInfoCollections: seedDemoInfoCollections(),
     developmentProfiles: {},
     accounts: DEMO_PERSONAS.map((p) => ({
       ...p.user,
@@ -156,7 +158,91 @@ export function getDemoDevelopment(member, stored) {
     })),
     cultivation: [],
     stage_history: [],
+    procedures: emptyProcedureState(),
   };
+}
+export function emptyProcedureState() {
+  return {
+    contacts: { items: [], current: null, satisfied: false, notice: "尚未登记培养联系人" },
+    introducers: { items: [], current: [], count: 0, satisfied: false, notice: "尚未登记入党介绍人" },
+    branch_committee_review: { items: [], current: null, satisfied: false, notice: "尚未登记支委会审查" },
+    upper_pre_review: { items: [], current: null, satisfied: false, notice: "尚未登记上级党委预审" },
+    application_form: { items: [], current: null, satisfied: false, notice: "尚未登记入党志愿书" },
+    upper_talk: { items: [], current: null, satisfied: false, notice: "尚未登记上级党委派人谈话" },
+    requirement: "接收预备党员前应完成培养联系人、入党介绍人、支委会审查、上级党委预审和入党志愿书登记；上级党委派人谈话应在上级审批前完成。系统只登记事实，不替代组织程序。",
+    data_level: "internal",
+    data_level_label: "内部",
+    cloud_allowed: false,
+    embedding_allowed: false,
+  };
+}
+function procedureKey(kind) {
+  return kind === "contact" ? "contacts" : kind === "introducer" ? "introducers" : kind;
+}
+function summarizeProcedure(key, items) {
+  const current = items[0] || null;
+  if (key === "contacts") {
+    return { items, current, satisfied: Boolean(current), notice: current ? "已登记培养联系人" : "尚未登记培养联系人" };
+  }
+  if (key === "introducers") {
+    const latest = items.slice(0, 2);
+    return {
+      items,
+      current: latest,
+      count: latest.length,
+      satisfied: latest.length > 0,
+      notice: latest.length === 0 ? "尚未登记入党介绍人" : latest.length < 2 ? "已登记1名入党介绍人；细则一般由两名正式党员担任" : "已登记2名入党介绍人",
+    };
+  }
+  if (key === "branch_committee_review") {
+    const status = current?.status;
+    return {
+      items,
+      current,
+      satisfied: status === "passed",
+      notice: !current ? "尚未登记支委会审查" : status === "passed" ? "支委会审查已通过" : status === "failed" ? "支委会审查未通过" : "支委会审查进行中",
+    };
+  }
+  if (key === "upper_pre_review") {
+    const status = current?.status;
+    return {
+      items,
+      current,
+      satisfied: status === "passed",
+      notice: !current ? "尚未登记上级党委预审" : status === "passed" ? "上级党委预审已通过" : status === "supplement" ? "上级党委预审要求补充材料" : status === "failed" ? "上级党委预审未通过" : "上级党委预审进行中",
+    };
+  }
+  if (key === "application_form") {
+    const status = current?.status;
+    return {
+      items,
+      current,
+      satisfied: ["submitted", "reviewed"].includes(status),
+      notice: !current ? "尚未登记入党志愿书" : status === "reviewed" ? "入党志愿书已审核" : status === "submitted" ? "入党志愿书已提交" : "入党志愿书正在填写",
+    };
+  }
+  if (key === "upper_talk") {
+    const status = current?.status;
+    return {
+      items,
+      current,
+      satisfied: status === "completed",
+      notice: !current ? "尚未登记上级党委派人谈话" : status === "completed" ? "上级党委派人谈话已完成" : "上级党委派人谈话状态待核对",
+    };
+  }
+  return { items, current, satisfied: false, notice: "程序状态待核对" };
+}
+export function addDemoProcedure(state, record) {
+  const next = { ...emptyProcedureState(), ...(state || {}) };
+  const key = procedureKey(record.kind);
+  const group = next[key] || { items: [] };
+  const items = [record, ...(group.items || [])].sort((a, b) => {
+    const byDate = String(b.occurred_on || "").localeCompare(String(a.occurred_on || ""));
+    if (byDate) return byDate;
+    return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+  });
+  next[key] = summarizeProcedure(key, items);
+  return next;
 }
 export function newAudit(user, action, type, id) {
   return {
