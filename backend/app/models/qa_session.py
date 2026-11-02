@@ -28,6 +28,9 @@ class QASession(Base):
     #: 本次提问携带的附件元数据（编号 / 文件名 / 字数 / 是否截断）。
     #: 只存元数据不存正文：材料是提问人的临时背景，长期留存正文既无必要也扩大泄露面。
     attachments: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    #: 本次回答参考的本人资料来源（档案 / 采集表 / 个人材料）元数据；
+    # 只存名称和编号，不存个人材料正文。
+    personal_sources: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     # 版本指纹（SEC-11 / T-SEC-11）：这条答案由哪个提示词版本、哪个工作流契约版本产出。
     # 允许为空：本功能上线前的历史记录没有留痕，界面显示"未留痕"而不是假装知道。
     versions: Mapped[Any | None] = mapped_column(JSON, nullable=True)

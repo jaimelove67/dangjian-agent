@@ -1546,6 +1546,25 @@ button.meeting-image {
   border-color: #f0a6ac;
   box-shadow: 0 0 0 3px #fceeee55;
 }
+.ai-personal-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 0 8px;
+  color: #5e6879;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ai-personal-scope input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--red);
+}
+.ai-personal-scope small {
+  color: var(--muted);
+  font-size: 10px;
+}
 .ai-composer textarea {
   width: 100%;
   min-height: 45px;
@@ -1669,6 +1688,27 @@ button.meeting-image {
   line-height: 1.9;
   color: #b0b9c7;
   margin: 10px 0;
+}
+.personal-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid #e4e9f2;
+  border-radius: 5px;
+  background: #f8faff;
+  font-size: 10px;
+  color: #657188;
+}
+.personal-sources > span {
+  font-weight: 600;
+  color: #3f4b5f;
+}
+.personal-sources small {
+  font-size: 10px;
+  color: #7a8598;
 }
 .message-warning {
   font-size: 11px;

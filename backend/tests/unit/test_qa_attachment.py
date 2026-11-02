@@ -128,7 +128,7 @@ def test_no_kb_evidence_with_material_answers_without_citations():
     assert response.citations == []
     # 没有引用就不能留 [n] 角标：界面上点了会没反应
     assert "[1]" not in response.answer
-    assert any("仅依据你上传的材料" in item for item in response.warnings)
+    assert any("仅依据你提供的材料" in item for item in response.warnings)
 
 
 def test_no_kb_evidence_without_material_still_refuses():

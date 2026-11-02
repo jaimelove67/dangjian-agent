@@ -15,6 +15,7 @@ from app.core.tenant import tenant_context
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask
 from app.models.member import (
     MemberCultivation,
+    MemberInfoCollection,
     MemberMaterial,
     MemberPoliticalReview,
     MemberProcedure,
@@ -38,6 +39,7 @@ from app.schemas.member_ext import (
 from app.services import activity_service
 from app.services.file_store import read_original, save_original
 from app.services.member_service import MemberDevelopment
+from app.services.qa_personal_context import build_personal_context
 
 
 class LocalSession:
@@ -66,6 +68,7 @@ def member_data():
         MemberProfile,
         MemberVote,
         MemberCultivation,
+        MemberInfoCollection,
         MemberMaterial,
         MemberPoliticalReview,
         MemberProcedure,
@@ -1060,6 +1063,122 @@ async def test_flow_board_scopes_profiles_and_closes_task_reminders(member_data)
     assert target["procedures"]["party_group"]["status"] == "assigned"
     assert "summary" not in target["procedures"]["party_group"]
     assert "编入党支部和党小组" not in target["missing"]
+
+
+@pytest.mark.asyncio
+async def test_personal_qa_context_is_own_data_and_masks_identifiers(member_data):
+    """制度问答的本人资料只取当前账号自己的档案、采集表和个人材料。"""
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="qa-self",
+            tenant_id="review-a",
+            user_id="reviewer-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="问答本人",
+            current_stage="member",
+            stage_joined_on=date(2024, 1, 1),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    db.add(
+        MemberInfoCollection(
+            id="qa-collection",
+            tenant_id="review-a",
+            profile_id="qa-self",
+            org_unit_id="branch-a",
+            member_name="问答本人",
+            member_stage="member",
+            member_stage_label="正式党员",
+            org_name="branch-a",
+            version=2,
+            status="archived",
+            payload={
+                "gender": "female",
+                "ethnicity": "汉族",
+                "education_code": "22",
+                "mobile": "13800138000",
+                "address": "不应进入问答上下文的住址",
+                "join_party_on": "2020-06-01",
+                "full_member_on": "2021-06-01",
+                "job_code": "321",
+                "party_status": "normal",
+                "filing_type": "new",
+                "relation_transfer": False,
+                "lost_contact": False,
+                "floating": False,
+            },
+        )
+    )
+    db.add(
+        MemberMaterial(
+            id="qa-material",
+            tenant_id="review-a",
+            profile_id="qa-self",
+            org_unit_id="branch-a",
+            user_id="reviewer-a",
+            stage="member",
+            material_type="思想汇报",
+            title="2026年思想汇报",
+            description="本人提交",
+            file_version="v1",
+            document_date=date(2026, 10, 1),
+            review_status="approved",
+            data_level="internal",
+            extracted_text="联系电话13800138000，身份证430321200001011234，正文内容。",
+        )
+    )
+    db.add(
+        MemberMaterial(
+            id="qa-sensitive",
+            tenant_id="review-a",
+            profile_id="qa-self",
+            org_unit_id="branch-a",
+            user_id="reviewer-a",
+            stage="member",
+            material_type="政治审查材料",
+            title="敏感材料",
+            data_level="sensitive",
+            extracted_text="敏感材料正文不应参与问答。",
+        )
+    )
+    db.add(
+        MemberMaterial(
+            id="qa-other",
+            tenant_id="review-a",
+            profile_id="qa-self",
+            org_unit_id="branch-a",
+            user_id="other-user",
+            stage="member",
+            material_type="思想汇报",
+            title="他人材料",
+            data_level="internal",
+            extracted_text="他人材料正文不应出现。",
+        )
+    )
+    db.commit()
+
+    context = await build_personal_context(service.db, service.user)
+    assert context.has_profile and context.has_content
+    assert "问答本人" in context.text
+    assert "正式党员" in context.text
+    assert "2026年思想汇报" in context.text
+    assert "138****8000" in context.text
+    assert "430321********1234" in context.text
+    assert "13800138000" not in context.text
+    assert "430321200001011234" not in context.text
+    assert "不应进入问答上下文的住址" not in context.text
+    assert "敏感材料正文不应参与问答" not in context.text
+    assert "他人材料正文不应出现" not in context.text
+    assert any("敏感/涉密材料" in warning for warning in context.warnings)
+    assert {item["kind"] for item in context.sources} == {
+        "profile",
+        "info_collection",
+        "material",
+    }
 
 
 @pytest.mark.asyncio

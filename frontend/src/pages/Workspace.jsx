@@ -192,6 +192,7 @@ function conversationFromRecords(conversationKey, records) {
       refused: r.refused,
       hasSufficientEvidence: r.has_sufficient_evidence,
       warnings: r.warnings || [],
+      personalSources: r.personal_sources || [],
       createdAt: new Date(r.created_at).getTime() || Date.now(),
     });
   }
@@ -233,6 +234,10 @@ export function Assistant() {
   const { routeParams, session } = useApp();
   const { data, update, notify } = useStore();
   const [input, setInput] = useState(routeParams.prompt || "");
+  const [includePersonal, setIncludePersonal] = useState(
+    ["member", "applicant"].includes(session.user.role) ||
+      Boolean(session.user.profile_id),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [history, setHistory] = useState(false);
@@ -363,6 +368,7 @@ export function Assistant() {
       const answer = IS_LIVE
         ? await backend.ask({
             question: q,
+            include_personal: includePersonal,
             ...(sessionId ? { session_id: sessionId } : {}),
           })
         : demoAnswer(q);
@@ -382,6 +388,7 @@ export function Assistant() {
         refused: answer.refused,
         hasSufficientEvidence: answer.has_sufficient_evidence,
         warnings: answer.warnings || [],
+        personalSources: answer.personal_sources || [],
         createdAt: Date.now(),
       });
     } catch (err) {
@@ -506,6 +513,17 @@ export function Assistant() {
                       ))}
                     </div>
                   )}
+                  {m.personalSources?.length > 0 && (
+                    <div className="personal-sources">
+                      <span>参考本人资料</span>
+                      {m.personalSources.map((item) => (
+                        <small key={`${item.kind}-${item.id}`}>
+                          {item.title}
+                          {item.material_type ? ` · ${item.material_type}` : ""}
+                        </small>
+                      ))}
+                    </div>
+                  )}
                   {m.disclaimer && (
                     <p className="message-disclaimer">{m.disclaimer}</p>
                   )}
@@ -530,6 +548,17 @@ export function Assistant() {
       <div className="ai-composer-area">
         {error && <ErrorBox error={error} />}
         <form className="ai-composer" onSubmit={send}>
+          {IS_LIVE && (
+            <label className="ai-personal-scope">
+              <input
+                type="checkbox"
+                checked={includePersonal}
+                onChange={(event) => setIncludePersonal(event.target.checked)}
+              />
+              <span>参考我的资料</span>
+              <small>本人档案、基本信息采集表和个人材料，仅本人可见</small>
+            </label>
+          )}
           <textarea
             ref={inputRef}
             value={input}

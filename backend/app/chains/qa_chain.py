@@ -315,7 +315,7 @@ class QAChain:
             answer=answer,
             citations=[],
             warnings=[
-                "制度库未检索到可引用的片段：以下内容仅依据你上传的材料整理，"
+                "制度库未检索到可引用的片段：以下内容仅依据你提供的材料（含本人资料）整理，"
                 "不作为制度依据，请以正式文件与组织意见为准。"
             ],
             disclaimer=DEFAULT_DISCLAIMER,

@@ -37,6 +37,7 @@ from app.deps import get_current_tenant, require_permissions
 from app.llm.base import DataLevel
 from app.models.qa_session import QASession
 from app.models.user import User
+from app.rag.privacy import LEVELS as DATA_LEVEL_ORDER
 from app.rag.rag_service import RAGService
 from app.rag.retrieval.access import knowledge_filters
 from app.schemas.common import APIResponse, ErrorCode
@@ -51,6 +52,7 @@ from app.services.qa_attachment_service import (
     material_block,
     store_attachment,
 )
+from app.services.qa_personal_context import build_personal_context
 from app.services.qa_record_io import build_qa_records
 from app.services.qa_record_service import (
     MAX_EXPORT_ROWS,
@@ -94,6 +96,13 @@ class QuestionRequest(BaseModel):
             "附件只作为提问背景材料进提示词，不参与检索、不占引用编号"
         ),
     )
+    include_personal: bool = Field(
+        False,
+        description=(
+            "是否参考当前账号本人的档案、基本信息采集表和个人提交材料；"
+            "个人资料只作本人情况参考，不作为制度依据"
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_question_or_attachment(self) -> "QuestionRequest":
@@ -115,6 +124,17 @@ class QAAttachmentSchema(BaseModel):
     notes: list[str] = Field(
         default_factory=list, description="附件提示（OCR 误差、只识别了部分页等），随回答一起展示"
     )
+
+
+class PersonalSourceSchema(BaseModel):
+    """本次回答参考的本人资料来源（只回元数据，不回正文）"""
+
+    id: str
+    kind: str
+    title: str
+    material_type: str = ""
+    occurred_on: str = ""
+    version: int = 0
 
 
 class CitationSchema(BaseModel):
@@ -152,6 +172,8 @@ class QuestionResponse(BaseModel):
     session_id: Optional[str] = None
     #: 本次提问携带的附件（只回元数据）。材料不进引用，只说明"看过哪些材料"。
     attachments: list[QAAttachmentSchema] = Field(default_factory=list)
+    #: 本次回答参考的本人资料（档案、采集表、个人材料），只回元数据。
+    personal_sources: list[PersonalSourceSchema] = Field(default_factory=list)
     # 版本指纹（SEC-11 / T-SEC-11）：这条答案由哪个提示词版本、哪个工作流契约版本产出。
     # 写入问答记录后即可事后追溯；引用条各自带 content_revision 说明引的是哪一版。
     versions: dict[str, Any] = Field(
@@ -180,6 +202,11 @@ class QASessionItem(QuestionResponse):
             for item in (getattr(record, "attachments", None) or [])
             if isinstance(item, dict) and item.get("id")
         ]
+        personal_sources = [
+            PersonalSourceSchema(**item)
+            for item in (getattr(record, "personal_sources", None) or [])
+            if isinstance(item, dict) and item.get("id")
+        ]
         return cls(
             id=str(record.id),
             question=record.question,
@@ -195,6 +222,7 @@ class QASessionItem(QuestionResponse):
             refused=record.refused,
             session_id=record.session_id,
             attachments=attachments,
+            personal_sources=personal_sources,
             # 本功能上线前的历史记录没有版本指纹，返回空字典，界面显示"未留痕"
             versions=dict(record.versions or {}),
         )
@@ -424,6 +452,18 @@ async def ask_question(
         user_id=str(user.id),
         attachment_ids=body.attachment_ids,
     )
+    personal = (
+        await build_personal_context(db, user) if body.include_personal else None
+    )
+    personal_used = bool(personal and personal.has_content)
+    if personal_used and personal is not None:
+        data_level = max([data_level, personal.data_level], key=DATA_LEVEL_ORDER.index)
+    material_parts: list[str] = []
+    attachment_text = material_block(attachments)
+    if attachment_text:
+        material_parts.append(attachment_text)
+    if personal_used and personal is not None:
+        material_parts.append(personal.text)
     # 创建 RAG 服务
     rag_service = RAGService(
         db,
@@ -434,7 +474,7 @@ async def ask_question(
         session=_session_store(user) if body.session_id else None,
         context={"tenant_id": tenant_id, "user_id": str(user.id), "request_id": _trace_id(request)},
         no_evidence_threshold=tenant_config.get(tenant_id, "no_evidence_threshold"),
-        material=material_block(attachments) or None,
+        material="\n\n".join(material_parts) or None,
     )
 
     # 执行问答
@@ -448,6 +488,21 @@ async def ask_question(
         warnings.append(
             f"本次回答同时参考了你上传的 {len(attachments)} 份材料；材料内容不作为制度依据。"
         )
+    if personal_used and personal is not None:
+        warnings.extend(personal.warnings)
+        warnings.append(
+            "本次回答参考了你的本人档案、基本信息采集表或个人材料；"
+            "个人资料仅作本人情况参考，不作为制度依据。"
+        )
+    elif body.include_personal:
+        warnings.append(
+            "当前账号没有可参考的本人档案或个人材料，本次仅依据制度库回答。"
+        )
+    personal_sources = (
+        [PersonalSourceSchema(**item) for item in personal.sources]
+        if personal_used and personal is not None
+        else []
+    )
     response = QuestionResponse(
         answer=rag_response.answer,
         citations=citations,
@@ -459,6 +514,7 @@ async def ask_question(
         refused=rag_response.refused,
         session_id=body.session_id,
         attachments=[QAAttachmentSchema(**item.summary()) for item in attachments],
+        personal_sources=personal_sources,
         # 版本留痕（SEC-11）：在"回答产生的那一刻"记下当时的提示词与工作流契约版本，
         # 而不是事后按当前配置倒推——配置随时可改，倒推会把旧答案说成新版本的产物。
         versions=version_fingerprint(tenant_id),
@@ -493,6 +549,9 @@ async def ask_question(
             "session_id": body.session_id,
             # 材料不进引用，但"这次问了什么、看了哪些材料"必须留痕
             "attachments": [{"file_name": a.file_name, "chars": a.chars} for a in attachments],
+            "personal_sources": [
+                {"kind": item.kind, "title": item.title} for item in personal_sources
+            ],
         },
     )
     await db.commit()
