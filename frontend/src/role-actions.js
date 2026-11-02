@@ -69,7 +69,16 @@ export function transitionDemoMember(
     !memberInScope(session.user, member)
   )
     throw new Error("该档案不在当前账号的办理范围内。");
-  if (STAGES.indexOf(target) !== STAGES.indexOf(member.stage) + 1)
+  const disqualified = target === "取消预备党员资格";
+  const returned = member.stage === "退回";
+  if (disqualified) {
+    if (member.stage !== "预备党员")
+      throw new Error("只有预备党员可以办理取消预备党员资格。");
+  } else if (
+    returned
+      ? target !== STAGES[1]
+      : STAGES.indexOf(target) !== STAGES.indexOf(member.stage) + 1
+  )
     throw new Error("请按相邻阶段办理，不支持跳过或倒退发展阶段。");
   if (!basis.trim() || !opinion.trim())
     throw new Error("请填写人工办理依据和意见。");

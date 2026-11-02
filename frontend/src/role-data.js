@@ -1,8 +1,9 @@
 import { DEMO_PERSONAS, accountOrganizations } from "./roles.js";
-import { seedMembers } from "./data.js";
+import { seedActivities, seedMembers } from "./data.js";
 import { buildSchoolData } from "./school-data.js";
 import { extendPlatformData } from "./platform-data.js";
 import { seedDemoInfoCollections } from "./member-info.js";
+import { STAGE_LABELS } from "./contracts.js";
 export function roleSeed() {
   const organizer = DEMO_PERSONAS.find((p) => p.id === "organizer").user;
   const student = DEMO_PERSONAS.find((p) => p.id === "student").user;
@@ -112,6 +113,40 @@ export function extendRoleData(data) {
     existing.meetings = [...data.meetings, roleMeeting];
     existing.roleDataVersion = 1;
   }
+  // 已发布的自建活动补一条消息通知，避免旧浏览器数据在修复后仍显示“没有通知”。
+  if (!data.activityNoticeVersion) {
+    const seedIds = new Set(seedActivities.map((activity) => activity.id));
+    const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    const noticed = new Set(
+      tasks
+        .filter((task) => task.kind === "activity_notice")
+        .map((task) => task.activity_id),
+    );
+    const notices = (data.activities || [])
+      .filter(
+        (activity) =>
+          !seedIds.has(activity.id) &&
+          !noticed.has(activity.id) &&
+          activity.organization,
+      )
+      .map((activity) => ({
+        id: `activity-notice-${activity.id}`,
+        kind: "activity_notice",
+        title: `新主题党日：${activity.title}`,
+        date: String(activity.date || "").slice(5),
+        status: "待查看",
+        route: "activities",
+        completed: false,
+        tenant_id: activity.tenant_id || "school-1",
+        org_unit_id: activity.orgId || "",
+        department: activity.department || activity.organization,
+        activity_id: activity.id,
+        created_by: activity.created_by || "",
+        created_at: activity.created_at || new Date().toISOString(),
+      }));
+    existing.tasks = [...notices, ...tasks];
+    existing.activityNoticeVersion = 1;
+  }
   return extendPlatformData(existing);
 }
 export const MATERIAL_CATEGORIES = {
@@ -169,7 +204,11 @@ export function emptyProcedureState() {
     upper_pre_review: { items: [], current: null, satisfied: false, notice: "尚未登记上级党委预审" },
     application_form: { items: [], current: null, satisfied: false, notice: "尚未登记入党志愿书" },
     upper_talk: { items: [], current: null, satisfied: false, notice: "尚未登记上级党委派人谈话" },
-    requirement: "接收预备党员前应完成培养联系人、入党介绍人、支委会审查、上级党委预审和入党志愿书登记；上级党委派人谈话应在上级审批前完成。系统只登记事实，不替代组织程序。",
+    branch_vote: { items: [], current: null, satisfied: false, notice: "尚未登记支部大会票决" },
+    probation_outcome: { items: [], current: null, satisfied: false, notice: "尚未登记预备党员转正结果" },
+    higher_record: { items: [], current: null, satisfied: false, notice: "尚未登记再上一级党委组织部门备案" },
+    party_group: { items: [], current: null, satisfied: false, notice: "尚未登记编入党支部和党小组" },
+    requirement: "接收预备党员前应完成培养联系人、入党介绍人、支委会审查、上级党委预审和入党志愿书登记；上级党委派人谈话应在上级审批前完成。预备党员转正前应登记支部大会票决和转正结果；延长预备期作为独立记录，取消预备党员资格为终态。系统只登记事实，不替代组织程序。",
     data_level: "internal",
     data_level_label: "内部",
     cloud_allowed: false,
@@ -230,6 +269,46 @@ function summarizeProcedure(key, items) {
       notice: !current ? "尚未登记上级党委派人谈话" : status === "completed" ? "上级党委派人谈话已完成" : "上级党委派人谈话状态待核对",
     };
   }
+  if (key === "branch_vote") {
+    const status = current?.status;
+    return {
+      items,
+      current,
+      satisfied: status === "passed",
+      notice: !current ? "尚未登记支部大会票决" : status === "passed" ? "支部大会票决通过" : "支部大会票决未通过",
+    };
+  }
+  if (key === "probation_outcome") {
+    const status = current?.status;
+    return {
+      items,
+      current,
+      satisfied: Boolean(current),
+      notice: !current
+        ? "尚未登记预备党员转正结果"
+        : status === "qualified"
+          ? "预备党员已按期转正"
+          : status === "extended"
+            ? `延长预备期至 ${current?.details?.effective_until || "未登记日期"}`
+            : "已登记取消预备党员资格",
+    };
+  }
+  if (key === "higher_record") {
+    return {
+      items,
+      current,
+      satisfied: current?.status === "recorded",
+      notice: current ? "再上一级党委组织部门备案已登记" : "尚未登记再上一级党委组织部门备案",
+    };
+  }
+  if (key === "party_group") {
+    return {
+      items,
+      current,
+      satisfied: current?.status === "assigned",
+      notice: current ? "已编入党支部和党小组" : "尚未登记编入党支部和党小组",
+    };
+  }
   return { items, current, satisfied: false, notice: "程序状态待核对" };
 }
 export function addDemoProcedure(state, record) {
@@ -243,6 +322,178 @@ export function addDemoProcedure(state, record) {
   });
   next[key] = summarizeProcedure(key, items);
   return next;
+}
+const FLOW_STAGE_ORDER = [
+  "applicant",
+  "activist",
+  "candidate",
+  "probationary",
+  "member",
+  "disqualified",
+  "rejected",
+];
+const FLOW_REQUIRED_MATERIALS = {
+  applicant: ["入党申请书", "党组织谈话记录"],
+  activist: ["思想汇报", "培养考察记录", "群众评议材料", "党课培训证明"],
+  candidate: ["政治审查材料", "公示情况报告", "支部大会决议"],
+  probationary: ["转正申请书", "预备期考察记录", "支部大会决议"],
+};
+const FLOW_NEXT_STEP = {
+  applicant: "递交申请并接受党组织谈话",
+  activist: "培养考察，研究确定发展对象",
+  candidate: "履行接收预备党员程序",
+  probationary: "预备期考察，办理转正",
+  member: "继续教育管理",
+  disqualified: "已终止发展",
+  rejected: "按组织意见重新考察",
+};
+function stageCode(label) {
+  return Object.keys(STAGE_LABELS).find((key) => STAGE_LABELS[key] === label) || label;
+}
+function daysSince(value) {
+  const time = Date.parse(value || "");
+  if (Number.isNaN(time)) return 0;
+  return Math.max(0, Math.floor((Date.now() - time) / 86400000));
+}
+export function buildDemoFlowBoard(
+  members = [],
+  developmentProfiles = {},
+  resolvedReminders = [],
+) {
+  const resolved = new Set(resolvedReminders);
+  const items = members.map((member) => {
+    const code = stageCode(member.stage);
+    const detail = getDemoDevelopment(member, developmentProfiles[member.id]);
+    const procedures = detail.procedures || emptyProcedureState();
+    const approved = new Set(
+      (detail.materials || [])
+        .filter(
+          (material) =>
+            material.review_status === "approved" &&
+            materialSource(material) !== "personal",
+        )
+        .map((material) => material.material_type),
+    );
+    const missing = [];
+    const addMissing = (value) => {
+      if (value && !missing.includes(value)) missing.push(value);
+    };
+    for (const name of FLOW_REQUIRED_MATERIALS[code] || [])
+      if (!approved.has(name)) addMissing(name);
+    if (code === "activist" && !procedures.contacts?.satisfied)
+      addMissing("培养联系人");
+    if (code === "candidate") {
+      if (!procedures.contacts?.satisfied) addMissing("培养联系人");
+      if (!procedures.introducers?.satisfied) addMissing("入党介绍人");
+      if (!procedures.branch_committee_review?.satisfied)
+        addMissing("支委会审查通过");
+      if (!procedures.upper_pre_review?.satisfied)
+        addMissing("上级党委预审通过");
+      if (!procedures.application_form?.satisfied)
+        addMissing("入党志愿书已提交或已审核");
+      if (!detail.political_reviews?.satisfied)
+        addMissing("政治审查合格结论");
+      if (!detail.trainings?.satisfied)
+        addMissing("集中培训不少于3天或24学时");
+    }
+    if (code === "probationary") {
+      const vote = procedures.branch_vote?.current;
+      const outcome = procedures.probation_outcome?.current;
+      if (outcome?.status === "disqualified") {
+        if (!vote) addMissing("支部大会讨论票决");
+      } else if (
+        !vote ||
+        vote.status !== "passed" ||
+        vote.details?.meeting_for !== "conversion"
+      )
+        addMissing("支部大会转正票决通过");
+      if (!outcome) addMissing("预备党员转正结果");
+      else if (outcome.status === "extended")
+        addMissing(
+          `延长预备期至 ${outcome.details?.effective_until || "未登记日期"}，未满`,
+        );
+      else if (outcome.status === "disqualified")
+        addMissing("取消预备党员资格待办理");
+      if (!procedures.party_group?.satisfied)
+        addMissing("编入党支部和党小组");
+      if (!procedures.higher_record?.satisfied)
+        addMissing("再上一级党委组织部门备案");
+    }
+    const stageJoinedOn =
+      detail.stage_joined_on || member.stage_joined_on || "2026-01-01";
+    const reminders = [];
+    if (code === "probationary") {
+      const due = stageJoinedOn;
+      if (!procedures.higher_record?.satisfied)
+        reminders.push({
+          id: `demo-${member.id}-higher_record`,
+          kind: "higher_record",
+          due_on: due,
+          status: "open",
+          note: "",
+        });
+      if (!procedures.party_group?.satisfied)
+        reminders.push({
+          id: `demo-${member.id}-party_group`,
+          kind: "party_group",
+          due_on: due,
+          status: "open",
+          note: "",
+        });
+      const oathId = `demo-${member.id}-oath`;
+      if (!resolved.has(oathId)) {
+        reminders.push({
+          id: oathId,
+          kind: "oath",
+          due_on: due,
+          status: "open",
+          note: "",
+        });
+        addMissing("入党宣誓");
+      }
+    }
+    return {
+      id: member.id,
+      name: member.name,
+      org_name: member.organization || member.org_name || "",
+      org_unit_id: member.orgId || member.org_unit_id || "",
+      current_stage: code,
+      stage_label: STAGE_LABELS[code] || member.stage,
+      stage_joined_on: stageJoinedOn,
+      days_in_stage: daysSince(stageJoinedOn),
+      next_stage:
+        { applicant: "activist", activist: "candidate", candidate: "probationary", probationary: "member" }[
+          code
+        ] || "",
+      next_step: FLOW_NEXT_STEP[code] || "核对档案阶段",
+      missing,
+      procedures: {},
+      political_review: detail.political_reviews?.current
+        ? {
+            status: detail.political_reviews.current.status,
+            reviewed_on: detail.political_reviews.current.reviewed_on,
+          }
+        : null,
+      training_ready: Boolean(detail.trainings?.satisfied),
+      reminders,
+    };
+  });
+  const counts = {};
+  for (const item of items)
+    counts[item.current_stage] = (counts[item.current_stage] || 0) + 1;
+  return {
+    items,
+    stage_summary: FLOW_STAGE_ORDER.map((code) => ({
+      stage: code,
+      label: STAGE_LABELS[code] || code,
+      count: counts[code] || 0,
+    })),
+    total: items.length,
+    shown: items.length,
+    truncated: false,
+    notice:
+      "看板汇总材料、程序事实和提醒，不自动推进阶段，也不替代组织决定。",
+  };
 }
 export function newAudit(user, action, type, id) {
   return {

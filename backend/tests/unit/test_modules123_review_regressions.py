@@ -19,6 +19,7 @@ from app.models.member import (
     MemberPoliticalReview,
     MemberProcedure,
     MemberProfile,
+    MemberReminder,
     MemberStageHistory,
     MemberTraining,
     MemberVote,
@@ -68,6 +69,7 @@ def member_data():
         MemberMaterial,
         MemberPoliticalReview,
         MemberProcedure,
+        MemberReminder,
         MemberStageHistory,
         MemberTraining,
         ContentRevision,
@@ -109,6 +111,16 @@ def member_data():
         db.commit()
         yield service, db
     engine.dispose()
+
+
+def service_for(db, role: UserRole, *, user_id: str = "reviewer-role"):
+    """构造同一租户、同一支部范围下指定角色的服务，用于权限回归。"""
+    service = MemberDevelopment(
+        LocalSession(db),
+        User(id=user_id, tenant_id="review-a", role=role),
+    )
+    service.org_ids = ["branch-a"]
+    return service
 
 
 @pytest.mark.asyncio
@@ -323,6 +335,7 @@ async def test_personal_application_cannot_satisfy_development_gate(member_data)
 async def test_receiving_probationary_requires_political_review_and_training(member_data):
     """政审合格结论与集中培训是接收预备党员的事实前置，缺一不可。"""
     service, db = member_data
+    upper = service_for(db, UserRole.DEPARTMENT_ADMIN, user_id="reviewer-upper")
     profile = MemberProfile(
         id="gate",
         tenant_id="review-a",
@@ -436,7 +449,7 @@ async def test_receiving_probationary_requires_political_review_and_training(mem
         await service.transition("gate", body)
     assert "上级党委预审未通过或未登记" in error.value.detail
 
-    pre_review = await service.add_procedure(
+    pre_review = await upper.add_procedure(
         "gate",
         ProcedureCreate(
             kind="upper_pre_review",
@@ -569,9 +582,57 @@ async def test_external_contact_requires_manual_verification(member_data):
 
 
 @pytest.mark.asyncio
+async def test_procedure_registration_is_role_specific(member_data):
+    """支部程序与上级程序按角色分别登记，具备流转权限也不能越权。"""
+    branch, db = member_data
+    upper = service_for(db, UserRole.DEPARTMENT_ADMIN, user_id="reviewer-upper")
+    organizer = service_for(db, UserRole.ORGANIZER, user_id="reviewer-organizer")
+
+    with pytest.raises(HTTPException) as error:
+        await branch.add_procedure(
+            "own",
+            ProcedureCreate(
+                kind="upper_pre_review",
+                occurred_on=date.today(),
+                status="passed",
+                summary="上级党委预审通过",
+                reason="越权登记",
+                details={"upper_org": "校党委"},
+            ),
+        )
+    assert error.value.status_code == 403
+    assert "学校管理员或院系管理员" in error.value.detail
+
+    with pytest.raises(HTTPException) as error:
+        await upper.add_procedure(
+            "own",
+            ProcedureCreate(
+                kind="contact",
+                occurred_on=date.today(),
+                reason="越权登记",
+                details={"linked_profile_id": "senior"},
+            ),
+        )
+    assert error.value.status_code == 403
+    assert "支部书记或支部组织员" in error.value.detail
+
+    contact = await organizer.add_procedure(
+        "own",
+        ProcedureCreate(
+            kind="contact",
+            occurred_on=date.today(),
+            reason="组织员登记培养联系人",
+            details={"linked_profile_id": "senior"},
+        ),
+    )
+    assert contact.status == "assigned"
+
+
+@pytest.mark.asyncio
 async def test_procedure_summary_includes_upper_talk_after_probationary(member_data):
     """上级谈话在预备党员阶段登记，作为上级审批前的提示事实。"""
     service, db = member_data
+    upper = service_for(db, UserRole.SCHOOL_ADMIN, user_id="reviewer-school")
     profile = MemberProfile(
         id="talk-target",
         tenant_id="review-a",
@@ -588,7 +649,7 @@ async def test_procedure_summary_includes_upper_talk_after_probationary(member_d
     db.commit()
     state = await service.procedures("talk-target")
     assert state["upper_talk"]["satisfied"] is False
-    record = await service.add_procedure(
+    record = await upper.add_procedure(
         "talk-target",
         ProcedureCreate(
             kind="upper_talk",
@@ -601,6 +662,404 @@ async def test_procedure_summary_includes_upper_talk_after_probationary(member_d
     assert record.status == "completed"
     state = await service.procedures("talk-target")
     assert state["upper_talk"]["satisfied"] is True
+
+
+@pytest.mark.asyncio
+async def test_probationary_conversion_requires_branch_vote_and_qualified_outcome(member_data):
+    """转正必须同时有支部大会转正票决通过和按期转正结论，缺一项都阻断。"""
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="convert",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="转正对象",
+            current_stage="probationary",
+            stage_joined_on=date.today() - timedelta(days=400),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    for name in ("转正申请书", "预备期考察记录", "支部大会决议"):
+        db.add(
+            MemberMaterial(
+                tenant_id="review-a",
+                profile_id="convert",
+                org_unit_id="branch-a",
+                stage="probationary",
+                material_type=name,
+                review_status="approved",
+            )
+        )
+    db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        await service.transition(
+            "convert",
+            TransitionRequest(
+                target_stage="member",
+                decision_date=date.today(),
+                basis="支部大会转正",
+                opinion="同意按期转正",
+            ),
+        )
+    assert "转正结果未登记" in error.value.detail
+
+    await service.add_procedure(
+        "convert",
+        ProcedureCreate(
+            kind="probation_outcome",
+            occurred_on=date.today(),
+            status="qualified",
+            summary="支部大会同意按期转正",
+            reason="支部大会决议",
+        ),
+    )
+    await service.add_procedure(
+        "convert",
+        ProcedureCreate(
+            kind="branch_vote",
+            occurred_on=date.today() - timedelta(days=1),
+            status="not_passed",
+            summary="上次票决未通过",
+            reason="会议记录",
+            details={
+                "meeting_for": "conversion",
+                "eligible_count": 10,
+                "attended_count": 9,
+                "agree_count": 4,
+                "disagree_count": 4,
+                "abstain_count": 1,
+            },
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        await service.transition(
+            "convert",
+            TransitionRequest(
+                target_stage="member",
+                decision_date=date.today(),
+                basis="支部大会转正",
+                opinion="同意按期转正",
+            ),
+        )
+    assert "票决未通过" in error.value.detail
+
+    await service.add_procedure(
+        "convert",
+        ProcedureCreate(
+            kind="branch_vote",
+            occurred_on=date.today(),
+            status="passed",
+            summary="支部大会通过转正",
+            reason="会议记录",
+            details={
+                "meeting_for": "conversion",
+                "eligible_count": 10,
+                "attended_count": 10,
+                "agree_count": 9,
+                "disagree_count": 0,
+                "abstain_count": 1,
+            },
+        ),
+    )
+    converted = await service.transition(
+        "convert",
+        TransitionRequest(
+            target_stage="member",
+            decision_date=date.today(),
+            basis="支部大会转正",
+            opinion="同意按期转正",
+        ),
+    )
+    assert converted.current_stage == "member"
+
+
+@pytest.mark.asyncio
+async def test_extended_probation_blocks_early_conversion_and_shortening(member_data):
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="extend",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="延长对象",
+            current_stage="probationary",
+            stage_joined_on=date.today() - timedelta(days=400),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    for name in ("转正申请书", "预备期考察记录", "支部大会决议"):
+        db.add(
+            MemberMaterial(
+                tenant_id="review-a",
+                profile_id="extend",
+                org_unit_id="branch-a",
+                stage="probationary",
+                material_type=name,
+                review_status="approved",
+            )
+        )
+    db.commit()
+    until = date.today() + timedelta(days=30)
+    await service.add_procedure(
+        "extend",
+        ProcedureCreate(
+            kind="probation_outcome",
+            occurred_on=date.today(),
+            status="extended",
+            summary="延长预备期半年",
+            reason="组织决定",
+            details={"effective_until": until.isoformat()},
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        await service.transition(
+            "extend",
+            TransitionRequest(
+                target_stage="member",
+                decision_date=date.today(),
+                basis="支部大会转正",
+                opinion="同意按期转正",
+            ),
+        )
+    assert "延长预备期" in error.value.detail
+    with pytest.raises(HTTPException) as error:
+        await service.add_procedure(
+            "extend",
+            ProcedureCreate(
+                kind="probation_outcome",
+                occurred_on=date.today(),
+                status="qualified",
+                summary="提前登记按期转正",
+                reason="错误登记",
+            ),
+        )
+    assert "延长预备期未满" in error.value.detail
+    with pytest.raises(HTTPException) as error:
+        await service.add_procedure(
+            "extend",
+            ProcedureCreate(
+                kind="probation_outcome",
+                occurred_on=date.today(),
+                status="extended",
+                summary="缩短延长预备期",
+                reason="错误登记",
+                details={"effective_until": (until - timedelta(days=1)).isoformat()},
+            ),
+        )
+    assert "新的延长预备期截止日期" in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_cancelling_probationary_membership_is_terminal(member_data):
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="disqualify",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="取消资格对象",
+            current_stage="probationary",
+            stage_joined_on=date.today() - timedelta(days=30),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    db.commit()
+    await service.add_procedure(
+        "disqualify",
+        ProcedureCreate(
+            kind="probation_outcome",
+            occurred_on=date.today(),
+            status="disqualified",
+            summary="支部大会决定取消预备党员资格",
+            reason="组织决定",
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        await service.transition(
+            "disqualify",
+            TransitionRequest(
+                target_stage="disqualified",
+                decision_date=date.today(),
+                basis="支部大会决定",
+                opinion="取消预备党员资格",
+            ),
+        )
+    assert "票决未登记" in error.value.detail
+
+    await service.add_procedure(
+        "disqualify",
+        ProcedureCreate(
+            kind="branch_vote",
+            occurred_on=date.today(),
+            status="not_passed",
+            summary="转正票决未通过",
+            reason="会议记录",
+            details={
+                "meeting_for": "conversion",
+                "eligible_count": 10,
+                "attended_count": 10,
+                "agree_count": 3,
+                "disagree_count": 6,
+                "abstain_count": 1,
+            },
+        ),
+    )
+    terminal = await service.transition(
+        "disqualify",
+        TransitionRequest(
+            target_stage="disqualified",
+            decision_date=date.today(),
+            basis="支部大会决定",
+            opinion="取消预备党员资格",
+        ),
+    )
+    assert terminal.current_stage == "disqualified"
+    with pytest.raises(HTTPException) as error:
+        await service.transition(
+            "disqualify",
+            TransitionRequest(
+                target_stage="member",
+                decision_date=date.today(),
+                basis="错误流转",
+                opinion="错误流转",
+            ),
+        )
+    assert "不允许的流转" in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_branch_vote_role_and_count_validation(member_data):
+    service, db = member_data
+    upper = service_for(db, UserRole.SCHOOL_ADMIN, user_id="reviewer-school")
+    profile = MemberProfile(
+        id="vote-target",
+        tenant_id="review-a",
+        org_unit_id="branch-a",
+        org_name="branch-a",
+        name="票决对象",
+        current_stage="candidate",
+        stage_joined_on=date.today() - timedelta(days=30),
+        birth_date=date(1990, 1, 1),
+        year=2026,
+        batch_no="B1",
+    )
+    db.add(profile)
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        await upper.add_procedure(
+            "vote-target",
+            ProcedureCreate(
+                kind="branch_vote",
+                occurred_on=date.today(),
+                status="passed",
+                summary="越权登记",
+                reason="越权",
+                details={
+                    "meeting_for": "reception",
+                    "eligible_count": 5,
+                    "attended_count": 5,
+                    "agree_count": 5,
+                    "disagree_count": 0,
+                    "abstain_count": 0,
+                },
+            ),
+        )
+    assert error.value.status_code == 403
+    with pytest.raises(HTTPException) as error:
+        await service.add_procedure(
+            "vote-target",
+            ProcedureCreate(
+                kind="branch_vote",
+                occurred_on=date.today(),
+                status="passed",
+                summary="票数不实",
+                reason="会议记录",
+                details={
+                    "meeting_for": "reception",
+                    "eligible_count": 5,
+                    "attended_count": 6,
+                    "agree_count": 5,
+                    "disagree_count": 0,
+                    "abstain_count": 0,
+                },
+            ),
+        )
+    assert "实到人数不能大于应到人数" in error.value.detail
+    vote = await service.add_procedure(
+        "vote-target",
+        ProcedureCreate(
+            kind="branch_vote",
+            occurred_on=date.today(),
+            status="passed",
+            summary="支部大会通过接收",
+            reason="会议记录",
+            details={
+                "meeting_for": "reception",
+                "eligible_count": 5,
+                "attended_count": 5,
+                "agree_count": 5,
+                "disagree_count": 0,
+                "abstain_count": 0,
+            },
+        ),
+    )
+    assert vote.status == "passed"
+
+
+@pytest.mark.asyncio
+async def test_flow_board_scopes_profiles_and_closes_task_reminders(member_data):
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="flow-target",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="看板对象",
+            current_stage="probationary",
+            stage_joined_on=date.today() - timedelta(days=30),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    db.commit()
+    board = await service.flow_board()
+    ids = {item["id"] for item in board["items"]}
+    assert {"own", "senior", "flow-target"} <= ids
+    assert "other" not in ids
+    target = next(item for item in board["items"] if item["id"] == "flow-target")
+    kinds = {reminder["kind"] for reminder in target["reminders"]}
+    assert {"higher_record", "party_group", "oath"} <= kinds
+
+    await service.add_procedure(
+        "flow-target",
+        ProcedureCreate(
+            kind="party_group",
+            occurred_on=date.today(),
+            status="assigned",
+            summary="编入第一党小组",
+            reason="支部研究",
+            details={"party_branch": "第一党支部", "party_group": "第一党小组"},
+        ),
+    )
+    board = await service.flow_board()
+    target = next(item for item in board["items"] if item["id"] == "flow-target")
+    kinds = {reminder["kind"] for reminder in target["reminders"]}
+    assert "party_group" not in kinds
+    assert target["procedures"]["party_group"]["status"] == "assigned"
+    assert "summary" not in target["procedures"]["party_group"]
+    assert "编入党支部和党小组" not in target["missing"]
 
 
 @pytest.mark.asyncio

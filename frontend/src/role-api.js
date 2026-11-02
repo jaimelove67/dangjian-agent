@@ -92,6 +92,7 @@ export const roleApi = {
       `/member-full/profiles/${id(profile)}/trainings`,
       json("POST", body),
     ),
+  flowBoard: () => request("/member-full/flow-board"),
   procedures: (profile) =>
     request(`/member-full/profiles/${id(profile)}/procedures`),
   addProcedure: (profile, body) =>

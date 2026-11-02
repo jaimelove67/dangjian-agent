@@ -128,22 +128,28 @@ export function OwnArchive() {
           </dl>
           <MemberInfoSelfSection profile={own.profile} />
           <PanelTitle title="发展阶段" />
-          <div className="stage-stepper">
-            {STAGES.map((s, i) => (
-              <div key={s}>
-                <span
-                  className={
-                    i <= STAGES.indexOf(own.profile.stage)
-                      ? "stage-complete"
-                      : ""
-                  }
-                >
-                  {i + 1}
-                </span>
-                <p>{s}</p>
-              </div>
-            ))}
-          </div>
+          {own.profile.stage === "取消预备党员资格" ? (
+            <div className="inline-note development-terminal-note">
+              该档案已办理取消预备党员资格，发展阶段终止；已有记录继续保留。
+            </div>
+          ) : (
+            <div className="stage-stepper">
+              {STAGES.map((s, i) => (
+                <div key={s}>
+                  <span
+                    className={
+                      i <= STAGES.indexOf(own.profile.stage)
+                        ? "stage-complete"
+                        : ""
+                    }
+                  >
+                    {i + 1}
+                  </span>
+                  <p>{s}</p>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="inline-note">
             仅当前阶段与登记日期来自档案，不以进度条推断历史审批或培养事实。如需更正，请联系所属组织。
           </div>

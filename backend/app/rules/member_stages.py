@@ -37,6 +37,7 @@ class MemberStage(str, Enum):
     CANDIDATE = "candidate"  # 发展对象
     PROBATIONARY = "probationary"  # 预备党员
     MEMBER = "member"  # 正式党员
+    DISQUALIFIED = "disqualified"  # 取消预备党员资格（终态）
     REJECTED = "rejected"  # 退回
 
 
@@ -46,6 +47,7 @@ STAGE_LABELS: dict[MemberStage, str] = {
     MemberStage.CANDIDATE: "发展对象",
     MemberStage.PROBATIONARY: "预备党员",
     MemberStage.MEMBER: "正式党员",
+    MemberStage.DISQUALIFIED: "取消预备党员资格",
     MemberStage.REJECTED: "退回",
 }
 
@@ -155,6 +157,14 @@ DEFAULT_TRANSITIONS: tuple[TransitionRule, ...] = (
         min_days=365,
         procedures=("预备期满", "支部大会通过", "上级审批"),
         description="预备党员 → 正式党员",
+    ),
+    # 取消预备党员资格是终态，不是发展链上的普通阶段；必须由组织人员依据
+    # 已登记的转正结果和支部大会票决事实人工办理，不按票数自动认定。
+    TransitionRule(
+        MemberStage.PROBATIONARY,
+        MemberStage.DISQUALIFIED,
+        procedures=("预备期考察", "支部大会讨论", "取消预备党员资格"),
+        description="预备党员 → 取消预备党员资格（终态）",
     ),
     TransitionRule(
         MemberStage.ACTIVIST,

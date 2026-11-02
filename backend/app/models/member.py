@@ -208,12 +208,14 @@ class MemberTraining(Base):
 
 
 class MemberProcedure(Base):
-    """发展程序事实台账：培养联系人、入党介绍人、支委会审查、上级预审、志愿书与谈话。
+    """发展程序事实台账：培养联系人、入党介绍人、审查预审、票决、转正与后续事项。
 
     这些记录只登记“谁在何时完成了什么程序、依据是什么”，不替代组织作出决定，也不自动
     改变发展阶段。阶段流转时只校验组织已经登记的事实是否具备；缺项时提示补录，由组织
     人员按程序办理。记录按 ``kind`` 分类、只增不改：纠正或再次办理时新增一条，最新一条
     作为当前状态。联系人可关联本校正式党员档案，外部正式党员须人工核验并留下依据。
+    支部大会票决、预备党员转正结果、再上一级备案和编入党小组同样复用本台账；延长预备期
+    是独立记录，取消预备党员资格通过阶段流转进入终态，不写成普通阶段。
     """
 
     __tablename__ = "member_procedures"
@@ -242,12 +244,14 @@ class MemberProcedure(Base):
     member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     stage: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     # contact / introducer / branch_committee_review / upper_pre_review /
-    # application_form / upper_talk
+    # application_form / upper_talk / branch_vote / probation_outcome /
+    # higher_record / party_group
     kind: Mapped[str] = mapped_column(String(40), nullable=False)
     occurred_on: Mapped[date] = mapped_column(Date, nullable=False)
     # 联系人 assigned / 介绍人 confirmed；审查 in_progress|passed|failed；
     # 预审 in_progress|passed|supplement|failed；志愿书 draft|submitted|reviewed；
-    # 谈话 completed
+    # 谈话 completed；票决 passed|not_passed；转正结果 qualified|extended|disqualified；
+    # 再上一级备案 recorded；编入党小组 assigned
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     # 角色 / 事项名称，例如“第一入党介绍人”“支委会审查”
     title: Mapped[str] = mapped_column(String(100), nullable=False, default="")

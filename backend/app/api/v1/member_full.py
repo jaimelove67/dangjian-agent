@@ -120,6 +120,28 @@ async def roster_stats(
     )
 
 
+@router.get(
+    "/member-full/flow-board",
+    response_model=APIResponse[dict],
+    summary="查看党员发展流程看板",
+    description=(
+        "按组织范围汇总各阶段人员、材料与程序缺项、预备党员转正结果和 18/19/20 提醒；"
+        "只读汇总，不自动推进阶段。"
+    ),
+    tags=["党员发展"],
+)
+async def flow_board(
+    request: Request, service: MemberDevelopment = Depends(member_service)
+) -> APIResponse[dict]:
+    return await respond(
+        request,
+        service,
+        await service.flow_board(),
+        "read_flow_board",
+        "member_flow_board",
+    )
+
+
 @router.get("/member-full/batches", response_model=APIResponse[dict])
 async def batches(
     request: Request,
@@ -582,7 +604,11 @@ async def sync_reminders(
     )
 
 
-@router.post("/member-full/reminders/{reminder_id}/resolve", response_model=APIResponse[dict])
+@router.post(
+    "/member-full/reminders/{reminder_id}/resolve",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_transition)],
+)
 async def resolve_reminder(
     reminder_id: str,
     body: ReminderResolve,

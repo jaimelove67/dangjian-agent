@@ -142,6 +142,10 @@ class ProcedureCreate(MemberInput):
         "upper_pre_review",
         "application_form",
         "upper_talk",
+        "branch_vote",
+        "probation_outcome",
+        "higher_record",
+        "party_group",
     ]
     occurred_on: date
     status: str = Field(default="", max_length=20)
@@ -176,7 +180,13 @@ class MaterialReview(MemberInput):
 
 class TransitionRequest(MemberInput):
     target_stage: Literal[
-        "applicant", "activist", "candidate", "probationary", "member", "rejected"
+        "applicant",
+        "activist",
+        "candidate",
+        "probationary",
+        "member",
+        "disqualified",
+        "rejected",
     ]
     decision_date: date
     basis: str = Field(min_length=1, max_length=2000)

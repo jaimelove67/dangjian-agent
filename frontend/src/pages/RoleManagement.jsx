@@ -10,6 +10,8 @@ import {
   IdentificationCard,
   Clock,
   ShieldCheck,
+  ArrowsClockwise,
+  WarningCircle,
 } from "@phosphor-icons/react";
 import { useApp } from "../app-context";
 import { useStore } from "../store";
@@ -28,6 +30,7 @@ import {
   getDemoDevelopment,
   emptyProcedureState,
   addDemoProcedure,
+  buildDemoFlowBoard,
 } from "../role-data";
 import { getDemoFile } from "../demo-files";
 import {
@@ -673,8 +676,182 @@ export function ReviewCenter() {
     </section>
   );
 }
+const DEVELOPMENT_TABS = [
+  "材料清单",
+  "培养记录",
+  "发展程序",
+  "阶段流转",
+  "流程看板",
+];
+const VOTE_MEETING_LABELS = {
+  reception: "接收预备党员",
+  conversion: "预备党员转正",
+  disqualification: "取消预备党员资格",
+};
+const REMINDER_LABELS = {
+  higher_record: "再上一级党委组织部门备案",
+  party_group: "编入党支部和党小组",
+  oath: "入党宣誓",
+  probationary_expiration: "预备期届满",
+  probationary_expiration_advance: "预备期即将届满",
+  material_submission: "材料提交",
+  material_submission_advance: "材料提交临近",
+  training_period: "培养期",
+  training_period_advance: "培养期临近",
+  meeting_discussion: "会议讨论",
+  meeting_discussion_advance: "会议讨论临近",
+};
+function FlowBoard({ board, loading, error, canResolve, onSelect, onResolve, onRefresh }) {
+  const summary = board?.stage_summary || [];
+  const visibleStages = summary.filter(
+    (stage) =>
+      stage.count > 0 ||
+      ["applicant", "activist", "candidate", "probationary", "member"].includes(
+        stage.stage,
+      ),
+  );
+  return (
+    <div className="flow-board-wrap">
+      <div className="sub-toolbar">
+        <span>
+          {board?.notice ||
+            "按阶段汇总材料、程序事实和提醒；点击人员进入具体办理。"}
+        </span>
+        <button
+          type="button"
+          className="button secondary"
+          disabled={loading}
+          onClick={onRefresh}
+        >
+          <ArrowsClockwise size={15} />
+          刷新看板
+        </button>
+      </div>
+      {error && <ErrorBox error={error} retry={onRefresh} />}
+      {loading && !board && <Loading />}
+      {board && (
+        <>
+          <div className="flow-summary">
+            {visibleStages.map((stage) => (
+              <span key={stage.stage}>
+                {stage.label}
+                <strong>{stage.count}</strong>
+              </span>
+            ))}
+          </div>
+          <div className="flow-board">
+            {visibleStages.map((stage) => {
+              const items = (board.items || []).filter(
+                (item) => item.current_stage === stage.stage,
+              );
+              return (
+                <section className="flow-column" key={stage.stage}>
+                  <header>
+                    <h3>{stage.label}</h3>
+                    <Badge
+                      tone={
+                        ["disqualified", "rejected"].includes(stage.stage)
+                          ? "red"
+                          : "blue"
+                      }
+                    >
+                      {items.length}
+                    </Badge>
+                  </header>
+                  <div className="flow-column-list">
+                    {items.map((item) => (
+                      <article className="flow-card" key={item.id}>
+                        <button
+                          type="button"
+                          className="flow-card-title"
+                          onClick={() => onSelect(item.id, "材料清单")}
+                        >
+                          <strong>{item.name}</strong>
+                          <span>{item.org_name || "未登记组织"}</span>
+                        </button>
+                        <div className="flow-card-meta">
+                          <span>停留 {item.days_in_stage} 天</span>
+                          <span>{item.next_step}</span>
+                        </div>
+                        {item.missing?.length > 0 && (
+                          <div className="flow-gaps">
+                            {item.missing.slice(0, 4).map((gap) => (
+                              <span key={gap}>
+                                <WarningCircle size={12} />
+                                {gap}
+                              </span>
+                            ))}
+                            {item.missing.length > 4 && (
+                              <span>另有 {item.missing.length - 4} 项</span>
+                            )}
+                          </div>
+                        )}
+                        {!item.missing?.length && (
+                          <div className="flow-clear">
+                            <CheckCircle size={13} />
+                            当前阶段未发现登记缺项
+                          </div>
+                        )}
+                        {item.reminders?.length > 0 && (
+                          <div className="flow-reminders">
+                            {item.reminders.map((reminder) => (
+                              <div key={reminder.id}>
+                                <span>
+                                  {REMINDER_LABELS[reminder.kind] || reminder.kind}
+                                  <small>到期 {reminder.due_on}</small>
+                                </span>
+                                {reminder.kind === "oath" && canResolve ? (
+                                  <button
+                                    type="button"
+                                    className="text-button link"
+                                    onClick={() => onResolve(item, reminder)}
+                                  >
+                                    标记已宣誓
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="text-button link"
+                                    onClick={() =>
+                                      onSelect(
+                                        item.id,
+                                        ["higher_record", "party_group"].includes(
+                                          reminder.kind,
+                                        )
+                                          ? "发展程序"
+                                          : "材料清单",
+                                      )
+                                    }
+                                  >
+                                    进入办理
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                    {!items.length && (
+                      <div className="flow-empty">本阶段暂无人员</div>
+                    )}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 function procedureStatusLabel(group) {
   if (!group?.current) return "未登记";
+  if (
+    group.current.status === "assigned" &&
+    group.current.kind === "party_group"
+  )
+    return "已编入";
   return (
     {
       assigned: "已指定",
@@ -687,16 +864,25 @@ function procedureStatusLabel(group) {
       submitted: "已提交",
       reviewed: "已审核",
       completed: "已完成",
+      not_passed: "未通过",
+      qualified: "按期转正",
+      extended: "延长预备期",
+      disqualified: "取消预备党员资格",
+      recorded: "已备案",
     }[group.current.status] || "待核对"
   );
 }
 function procedureTone(group) {
   if (!group?.current) return "blue";
+  if (group.current.status === "extended") return "orange";
+  if (["failed", "not_passed", "disqualified"].includes(group.current.status))
+    return "red";
   if (group.satisfied) return "green";
-  return group.current.status === "failed" ? "red" : "orange";
+  return "orange";
 }
 function DevelopmentProcedurePanel({
   state,
+  stage,
   canRegisterBranch,
   canRegisterUpper,
   disabled,
@@ -708,6 +894,10 @@ function DevelopmentProcedurePanel({
   const preReview = state.upper_pre_review || {};
   const form = state.application_form || {};
   const talk = state.upper_talk || {};
+  const branchVote = state.branch_vote || {};
+  const outcome = state.probation_outcome || {};
+  const higherRecord = state.higher_record || {};
+  const partyGroup = state.party_group || {};
   const introducerItems = Array.isArray(introducers.current)
     ? introducers.current
     : [];
@@ -948,6 +1138,202 @@ function DevelopmentProcedurePanel({
           )}
         </div>
       </div>
+
+      {["发展对象", "预备党员", "正式党员"].includes(stage) && (
+        <>
+          <div className="sub-toolbar">
+            <span>支部大会票决与预备党员转正</span>
+          </div>
+          <div className="procedure-grid">
+            <div className="development-gate-card">
+              <span className="metric-icon blue">
+                <ClipboardText size={22} />
+              </span>
+              <div>
+                <h3>
+                  支部大会票决{" "}
+                  <Badge tone={procedureTone(branchVote)}>
+                    {procedureStatusLabel(branchVote)}
+                  </Badge>
+                </h3>
+                <p>{branchVote.notice || "尚未登记支部大会票决"}</p>
+                {branchVote.current && (
+                  <p>
+                    票决事项：
+                    {VOTE_MEETING_LABELS[
+                      branchVote.current.details?.meeting_for
+                    ] || "支部大会"}
+                    ；票决日期：{branchVote.current.occurred_on || "未登记"}；
+                    应到/实到：
+                    {branchVote.current.details?.eligible_count ?? "—"}/
+                    {branchVote.current.details?.attended_count ?? "—"}；
+                    同意/不同意/弃权：
+                    {branchVote.current.details?.agree_count ?? "—"}/
+                    {branchVote.current.details?.disagree_count ?? "—"}/
+                    {branchVote.current.details?.abstain_count ?? "—"}；
+                    决议：{branchVote.current.summary || "未填写"}
+                  </p>
+                )}
+                <p>
+                  票决结果由组织人员按会议记录登记，系统不按票数自动判定通过。
+                </p>
+              </div>
+              {canRegisterBranch && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={disabled}
+                  onClick={() => onRegister("branch_vote")}
+                >
+                  {stage === "发展对象" ? "登记接收票决" : "登记支部大会票决"}
+                </button>
+              )}
+            </div>
+
+            {["预备党员", "正式党员"].includes(stage) && (
+              <div className="development-gate-card">
+                <span className="metric-icon blue">
+                  <ShieldCheck size={22} />
+                </span>
+                <div>
+                  <h3>
+                    预备党员转正结果{" "}
+                    <Badge tone={procedureTone(outcome)}>
+                      {procedureStatusLabel(outcome)}
+                    </Badge>
+                  </h3>
+                  <p>{outcome.notice || "尚未登记预备党员转正结果"}</p>
+                  {outcome.current && (
+                    <p>
+                      决定日期：{outcome.current.occurred_on || "未登记"}；
+                      结论：{outcome.current.summary || "未填写"}
+                      {outcome.current.details?.effective_until
+                        ? `；延长至 ${outcome.current.details.effective_until}`
+                        : ""}
+                    </p>
+                  )}
+                  <p>
+                    按期转正、延长预备期和取消预备党员资格均按组织结论登记；延长预备期不是新阶段。
+                  </p>
+                </div>
+                {canRegisterBranch && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={disabled}
+                    onClick={() => onRegister("probation_outcome")}
+                  >
+                    登记转正结果
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {["预备党员", "正式党员"].includes(stage) && (
+        <>
+          <div className="sub-toolbar">
+            <span>预备党员后续事项</span>
+          </div>
+          <div className="procedure-grid">
+            <div className="development-gate-card">
+              <span className="metric-icon blue">
+                <FileText size={22} />
+              </span>
+              <div>
+                <h3>
+                  再上一级党委组织部门备案{" "}
+                  <Badge tone={procedureTone(higherRecord)}>
+                    {procedureStatusLabel(higherRecord)}
+                  </Badge>
+                </h3>
+                <p>
+                  {higherRecord.notice ||
+                    "尚未登记再上一级党委组织部门备案"}
+                </p>
+                {higherRecord.current && (
+                  <p>
+                    备案日期：{higherRecord.current.occurred_on || "未登记"}；
+                    上级党组织：{higherRecord.current.details?.upper_org || "未登记"}；
+                    批复文号：{higherRecord.current.details?.reply_no || "未登记"}
+                  </p>
+                )}
+                <p>
+                  仅登记备案事实和批复要素，不代替再上一级党委组织部门办理。
+                </p>
+              </div>
+              {canRegisterUpper && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={disabled}
+                  onClick={() => onRegister("higher_record")}
+                >
+                  登记备案
+                </button>
+              )}
+            </div>
+
+            <div className="development-gate-card">
+              <span className="metric-icon blue">
+                <UserCircle size={22} />
+              </span>
+              <div>
+                <h3>
+                  编入党支部和党小组{" "}
+                  <Badge tone={procedureTone(partyGroup)}>
+                    {procedureStatusLabel(partyGroup)}
+                  </Badge>
+                </h3>
+                <p>
+                  {partyGroup.notice || "尚未登记编入党支部和党小组"}
+                </p>
+                {partyGroup.current && (
+                  <p>
+                    编入日期：{partyGroup.current.occurred_on || "未登记"}；
+                    党支部：{partyGroup.current.details?.party_branch || "未登记"}；
+                    党小组：{partyGroup.current.details?.party_group || "未登记"}
+                  </p>
+                )}
+                <p>
+                  编入党支部和党小组由支部办理；系统只做轻量登记，不建立独立模块。
+                </p>
+              </div>
+              {canRegisterBranch && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={disabled}
+                  onClick={() => onRegister("party_group")}
+                >
+                  登记编组
+                </button>
+              )}
+            </div>
+
+            {stage === "预备党员" && (
+              <div className="development-gate-card">
+                <span className="metric-icon blue">
+                  <CheckCircle size={22} />
+                </span>
+                <div>
+                  <h3>
+                    入党宣誓 <Badge tone="orange">待组织</Badge>
+                  </h3>
+                  <p>
+                    入党宣誓由党组织安排，系统只做提醒，不建立独立宣誓模块。
+                  </p>
+                  <p>
+                    宣誓完成后，请在“流程看板”中由具备阶段办理权限的人员标记已宣誓。
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </>
   );
 }
@@ -964,6 +1350,10 @@ export function DevelopmentWorkbench() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(0);
+  const [board, setBoard] = useState(null);
+  const [boardLoading, setBoardLoading] = useState(false);
+  const [boardError, setBoardError] = useState(null);
+  const [resolvedDemoReminders, setResolvedDemoReminders] = useState([]);
   const materialDraft = useMaterialDraft({ material_type: "", document_date: "" });
   const people = w.members.filter(
     (p) =>
@@ -997,6 +1387,26 @@ export function DevelopmentWorkbench() {
       active = false;
     };
   }, [member?.id, tick, session.user.id]);
+  useEffect(() => {
+    if (!IS_LIVE || tab !== "流程看板") return;
+    let active = true;
+    setBoardLoading(true);
+    setBoardError(null);
+    roleApi
+      .flowBoard()
+      .then((result) => {
+        if (active) setBoard(result);
+      })
+      .catch((e) => {
+        if (active) setBoardError(e);
+      })
+      .finally(() => {
+        if (active) setBoardLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [tab, tick, session.user.id]);
   const detail = member
     ? IS_LIVE
       ? profile?.id === member.id
@@ -1030,6 +1440,14 @@ export function DevelopmentWorkbench() {
     requirement: "集中培训不少于 3 天或 24 学时",
   };
   const procedureState = detail?.procedures || emptyProcedureState();
+  const flowBoardData = IS_LIVE
+    ? board
+    : buildDemoFlowBoard(
+        w.members,
+        data.developmentProfiles,
+        resolvedDemoReminders,
+      );
+  const canResolveReminder = hasPermission(session, "member.stage_transition");
   const canRegisterBranchProcedure = ["branch_secretary", "organizer"].includes(
     session.user.role,
   );
@@ -1039,6 +1457,9 @@ export function DevelopmentWorkbench() {
   const formalMembers = w.members.filter(
     (p) => p.stage === "正式党员" && p.id !== member?.id,
   );
+  const conversionVoteReady =
+    procedureState.branch_vote?.current?.status === "passed" &&
+    procedureState.branch_vote?.current?.details?.meeting_for === "conversion";
   const procedureGaps = [
     !procedureState.contacts.satisfied && "培养联系人",
     !procedureState.introducers.satisfied && "入党介绍人",
@@ -1053,6 +1474,8 @@ export function DevelopmentWorkbench() {
     (m) => m.material_type === "党课培训证明" && m.review_status === "approved",
   );
   const canRegisterGates = ["发展对象", "预备党员", "正式党员"].includes(stage);
+  const canTransition =
+    (STAGES.includes(stage) && stage !== "正式党员") || stage === "退回";
   // 完整政审结论只给有阶段办理权限的角色；后端读取出口已按权限脱敏，这里同时兜住演示数据。
   const canReadPoliticalConclusion = hasPermission(
     session,
@@ -1324,6 +1747,47 @@ export function DevelopmentWorkbench() {
           details.talker_org = f.get("talker_org").trim();
           if (!details.talker) throw new Error("请填写谈话人。");
           if (!summary) throw new Error("请填写谈话情况。");
+        } else if (kind === "branch_vote") {
+          details.meeting_for = f.get("meeting_for") || "conversion";
+          const rawCounts = [
+            "eligible_count",
+            "attended_count",
+            "agree_count",
+            "disagree_count",
+            "abstain_count",
+          ];
+          for (const field of rawCounts) {
+            const raw = String(f.get(field) ?? "").trim();
+            if (!raw) throw new Error("请填写应到、实到和各项票数。");
+            details[field] = Number(raw);
+          }
+          if (!summary) throw new Error("请填写票决结果和决议内容。");
+          if (details.attended_count > details.eligible_count)
+            throw new Error("实到人数不能大于应到人数。");
+          if (
+            details.agree_count +
+              details.disagree_count +
+              details.abstain_count >
+            details.attended_count
+          )
+            throw new Error("同意、不同意和弃权票数之和不能大于实到人数。");
+        } else if (kind === "probation_outcome") {
+          details.effective_until =
+            status === "extended" ? f.get("effective_until") || "" : "";
+          if (status === "extended" && !details.effective_until)
+            throw new Error("延长预备期须填写截止日期。");
+          if (details.effective_until && details.effective_until <= occurred_on)
+            throw new Error("延长预备期截止日期须晚于本次决定日期。");
+          if (!summary) throw new Error("请填写组织形成的转正结论。");
+        } else if (kind === "higher_record") {
+          details.upper_org = f.get("upper_org").trim();
+          details.reply_no = f.get("reply_no").trim();
+          if (!details.upper_org) throw new Error("请填写上级党组织。");
+        } else if (kind === "party_group") {
+          details.party_branch = f.get("party_branch").trim();
+          details.party_group = f.get("party_group").trim();
+          details.assigned_on = occurred_on;
+          if (!details.party_group) throw new Error("请填写党小组。");
         }
         const body = {
           kind,
@@ -1343,7 +1807,14 @@ export function DevelopmentWorkbench() {
             ...body,
             title:
               title ||
-              { contact: "培养联系人", introducer: "入党介绍人" }[kind] ||
+              {
+                contact: "培养联系人",
+                introducer: "入党介绍人",
+                branch_vote: "支部大会票决",
+                probation_outcome: "预备党员转正结果",
+                higher_record: "再上一级党委组织部门备案",
+                party_group: "编入党支部和党小组",
+              }[kind] ||
               "",
             status:
               kind === "contact"
@@ -1352,7 +1823,11 @@ export function DevelopmentWorkbench() {
                   ? "confirmed"
                   : kind === "upper_talk"
                     ? "completed"
-                    : status,
+                    : kind === "higher_record"
+                      ? "recorded"
+                      : kind === "party_group"
+                        ? "assigned"
+                        : status,
             id: crypto.randomUUID(),
             created_at: new Date().toISOString(),
             created_by: session.user.name,
@@ -1360,6 +1835,8 @@ export function DevelopmentWorkbench() {
               "branch_committee_review",
               "upper_pre_review",
               "upper_talk",
+              "branch_vote",
+              "probation_outcome",
             ].includes(kind)
               ? "sensitive"
               : "internal",
@@ -1578,7 +2055,15 @@ export function DevelopmentWorkbench() {
                   <h3>{p.name}</h3>
                   <p>{p.organization}</p>
                 </div>
-                <Badge tone={p.stage === "正式党员" ? "green" : "orange"}>
+                <Badge
+                  tone={
+                    p.stage === "正式党员"
+                      ? "green"
+                      : p.stage === "取消预备党员资格"
+                        ? "red"
+                        : "orange"
+                  }
+                >
                   {p.stage}
                 </Badge>
               </button>
@@ -1590,7 +2075,62 @@ export function DevelopmentWorkbench() {
           {(error || w.error) && !modal && (
             <ErrorBox error={error || w.error} retry={w.reload} />
           )}{" "}
-          {member ? (
+          {tab === "流程看板" ? (
+            <>
+              <Tabs
+                items={DEVELOPMENT_TABS}
+                active={tab}
+                onChange={setTab}
+              />
+              <FlowBoard
+                board={flowBoardData}
+                loading={boardLoading}
+                error={boardError}
+                canResolve={canResolveReminder}
+                onSelect={(profileId, targetTab) => {
+                  setSelected(profileId);
+                  setTab(targetTab || "材料清单");
+                  setError(null);
+                }}
+                onResolve={async (item, reminder) => {
+                  try {
+                    if (IS_LIVE) {
+                      await roleApi.resolveReminder(
+                        reminder.id,
+                        "已按组织安排完成入党宣誓",
+                      );
+                      setBoard((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              items: prev.items.map((row) =>
+                                row.id === item.id
+                                  ? {
+                                      ...row,
+                                      reminders: row.reminders.filter(
+                                        (entry) => entry.id !== reminder.id,
+                                      ),
+                                    }
+                                  : row,
+                              ),
+                            }
+                          : prev,
+                      );
+                    } else {
+                      setResolvedDemoReminders((prev) => [
+                        ...prev,
+                        reminder.id,
+                      ]);
+                    }
+                    notify("入党宣誓提醒已办结");
+                  } catch (e) {
+                    setBoardError(e);
+                  }
+                }}
+                onRefresh={() => setTick((value) => value + 1)}
+              />
+            </>
+          ) : member ? (
             <>
               <div className="development-person">
                 <div>
@@ -1632,20 +2172,27 @@ export function DevelopmentWorkbench() {
                   </button>
                 </div>
               </div>
-              <div className="mini-stage-rail">
-                {STAGES.map((s, i) => (
-                  <div
-                    key={s}
-                    className={i <= STAGES.indexOf(stage) ? "done" : ""}
-                  >
-                    <CheckCircle
-                      size={16}
-                      weight={i <= STAGES.indexOf(stage) ? "fill" : "regular"}
-                    />
-                    <span>{s}</span>
-                  </div>
-                ))}
-              </div>
+              {stage === "取消预备党员资格" ? (
+                <div className="inline-note development-terminal-note">
+                  <WarningCircle size={16} />
+                  该人员已办理取消预备党员资格，发展阶段终止；已有记录继续保留，不再办理后续阶段流转。
+                </div>
+              ) : (
+                <div className="mini-stage-rail">
+                  {STAGES.map((s, i) => (
+                    <div
+                      key={s}
+                      className={i <= STAGES.indexOf(stage) ? "done" : ""}
+                    >
+                      <CheckCircle
+                        size={16}
+                        weight={i <= STAGES.indexOf(stage) ? "fill" : "regular"}
+                      />
+                      <span>{s}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="inline-note">
                 <span>出生年月：{detail?.birth_date || "未登记"}</span>
                 <span>入团时间：{detail?.league_joined_on || "未登记"}</span>
@@ -1667,7 +2214,7 @@ export function DevelopmentWorkbench() {
                 <span>{eligibility?.note}</span>
               </div>
               <Tabs
-                items={["材料清单", "培养记录", "发展程序", "阶段流转"]}
+                items={DEVELOPMENT_TABS}
                 active={tab}
                 onChange={setTab}
               />
@@ -1975,6 +2522,7 @@ export function DevelopmentWorkbench() {
               ) : tab === "发展程序" ? (
                 <DevelopmentProcedurePanel
                   state={procedureState}
+                  stage={stage}
                   canRegisterBranch={canRegisterBranchProcedure}
                   canRegisterUpper={canRegisterUpperProcedure}
                   disabled={!detail || busy}
@@ -1989,7 +2537,7 @@ export function DevelopmentWorkbench() {
                     <span>阶段变更由组织人员人工办理</span>
                     <button
                       className="button primary"
-                      disabled={!detail || busy || STAGES.indexOf(stage) === 4}
+                      disabled={!detail || busy || !canTransition}
                       onClick={() => {
                         setModal("transition");
                         setError(null);
@@ -2314,11 +2862,18 @@ export function DevelopmentWorkbench() {
                 <>
                   <Field label="目标阶段">
                     <select name="target_stage">
-                      {STAGES.filter(
-                        (s, i) => i === STAGES.indexOf(stage) + 1,
-                      ).map((s) => (
-                        <option key={s}>{s}</option>
-                      ))}
+                      {stage === "退回" ? (
+                        <option>入党积极分子</option>
+                      ) : (
+                        STAGES.filter(
+                          (s, i) => i === STAGES.indexOf(stage) + 1,
+                        ).map((s) => (
+                          <option key={s}>{s}</option>
+                        ))
+                      )}
+                      {stage === "预备党员" && (
+                        <option>取消预备党员资格</option>
+                      )}
                     </select>
                   </Field>
                   <Field label="决定日期" required>
@@ -2360,8 +2915,25 @@ export function DevelopmentWorkbench() {
                             }`
                           : stage === "预备党员"
                             ? `此操作登记人工决定，不能替代支部讨论、上级审批或其他应履行程序。${
+                                !conversionVoteReady
+                                  ? "程序提示：支部大会转正票决尚未登记或未通过。"
+                                  : ""
+                              }${
+                                !procedureState.probation_outcome?.current
+                                  ? "程序提示：预备党员转正结果尚未登记。"
+                                  : procedureState.probation_outcome.current
+                                        .status === "extended"
+                                    ? `当前为延长预备期至 ${
+                                        procedureState.probation_outcome.current
+                                          .details?.effective_until || "未登记日期"
+                                      }，未满不能办理按期转正。`
+                                    : procedureState.probation_outcome.current
+                                          .status === "disqualified"
+                                      ? "当前转正结果为取消预备党员资格，只能办理对应阶段变更。"
+                                      : ""
+                              }${
                                 !procedureState.upper_talk.satisfied
-                                  ? "程序提示：上级党委派人谈话尚未登记，应在上级审批前完成。"
+                                  ? "上级党委派人谈话尚未登记，应在上级审批前完成。"
                                   : ""
                               }`
                             : "此操作登记人工决定，不能替代支部讨论、上级审批或其他应履行程序。"}
@@ -2409,6 +2981,10 @@ export function DevelopmentWorkbench() {
               upper_pre_review: "登记上级党委预审",
               application_form: "登记入党志愿书",
               upper_talk: "登记上级党委派人谈话",
+              branch_vote: "登记支部大会票决",
+              probation_outcome: "登记预备党员转正结果",
+              higher_record: "登记再上一级党委组织部门备案",
+              party_group: "登记编入党支部和党小组",
             }[modal.kind] || "登记发展程序"
           }
           wide
@@ -2580,6 +3156,143 @@ export function DevelopmentWorkbench() {
                       max={todayIso()}
                     />
                   </Field>
+                </>
+              ) : modal.kind === "branch_vote" ? (
+                <>
+                  <Field label="票决日期" required>
+                    <input
+                      name="occurred_on"
+                      type="date"
+                      required
+                      max={todayIso()}
+                      defaultValue={todayIso()}
+                    />
+                  </Field>
+                  <Field label="票决事项" required>
+                    <select
+                      name="meeting_for"
+                      defaultValue={stage === "发展对象" ? "reception" : "conversion"}
+                    >
+                      {stage === "发展对象" ? (
+                        <option value="reception">接收预备党员</option>
+                      ) : (
+                        <>
+                          <option value="reception">接收预备党员（历史补录）</option>
+                          <option value="conversion">预备党员转正</option>
+                          <option value="disqualification">取消预备党员资格</option>
+                        </>
+                      )}
+                    </select>
+                  </Field>
+                  <Field label="票决结果" required>
+                    <select name="status" defaultValue="passed">
+                      <option value="passed">通过</option>
+                      <option value="not_passed">未通过</option>
+                    </select>
+                  </Field>
+                  <Field label="应到人数" required>
+                    <input name="eligible_count" type="number" min="0" max="10000" required />
+                  </Field>
+                  <Field label="实到人数" required>
+                    <input name="attended_count" type="number" min="0" max="10000" required />
+                  </Field>
+                  <Field label="同意票数" required>
+                    <input name="agree_count" type="number" min="0" max="10000" required />
+                  </Field>
+                  <Field label="不同意票数" required>
+                    <input name="disagree_count" type="number" min="0" max="10000" required />
+                  </Field>
+                  <Field label="弃权票数" required>
+                    <input name="abstain_count" type="number" min="0" max="10000" required />
+                  </Field>
+                  <Field label="票决结果和决议内容" required full>
+                    <textarea name="summary" rows={4} required maxLength={4000} />
+                  </Field>
+                  <div className="inline-note field full">
+                    系统只登记会议票数、结果和决议，不按票数自动判定通过；票决事项须与当前发展阶段相符。
+                  </div>
+                </>
+              ) : modal.kind === "probation_outcome" ? (
+                <>
+                  <Field label="决定日期" required>
+                    <input
+                      name="occurred_on"
+                      type="date"
+                      required
+                      max={todayIso()}
+                      defaultValue={todayIso()}
+                    />
+                  </Field>
+                  <Field label="转正结果" required>
+                    <select name="status" defaultValue="qualified">
+                      <option value="qualified">按期转正</option>
+                      <option value="extended">延长预备期</option>
+                      <option value="disqualified">取消预备党员资格</option>
+                    </select>
+                  </Field>
+                  <Field label="延长预备期至">
+                    <input name="effective_until" type="date" />
+                    <small>仅“延长预备期”必填；须晚于决定日期，且晚于上一次延长截止日期。</small>
+                  </Field>
+                  <Field label="组织结论" required full>
+                    <textarea name="summary" rows={4} required maxLength={4000} />
+                  </Field>
+                  <div className="inline-note field full">
+                    延长预备期是独立记录，不改变发展阶段；取消预备党员资格须通过阶段流转进入终态。
+                  </div>
+                </>
+              ) : modal.kind === "higher_record" ? (
+                <>
+                  <Field label="备案日期" required>
+                    <input
+                      name="occurred_on"
+                      type="date"
+                      required
+                      max={todayIso()}
+                      defaultValue={todayIso()}
+                    />
+                  </Field>
+                  <Field label="上级党组织" required>
+                    <input
+                      name="upper_org"
+                      maxLength={200}
+                      required
+                      placeholder="例如：校党委、院系党委"
+                    />
+                  </Field>
+                  <Field label="批复文号">
+                    <input name="reply_no" maxLength={64} />
+                  </Field>
+                  <Field label="备案说明" full>
+                    <textarea name="summary" rows={3} maxLength={4000} />
+                  </Field>
+                  <div className="inline-note field full">
+                    仅登记再上一级党委组织部门备案事实和批复要素，不替代上级党组织办理。
+                  </div>
+                </>
+              ) : modal.kind === "party_group" ? (
+                <>
+                  <Field label="编入日期" required>
+                    <input
+                      name="occurred_on"
+                      type="date"
+                      required
+                      max={todayIso()}
+                      defaultValue={todayIso()}
+                    />
+                  </Field>
+                  <Field label="党支部">
+                    <input name="party_branch" maxLength={200} />
+                  </Field>
+                  <Field label="党小组" required>
+                    <input name="party_group" maxLength={200} required />
+                  </Field>
+                  <Field label="编组说明" full>
+                    <textarea name="summary" rows={3} maxLength={4000} />
+                  </Field>
+                  <div className="inline-note field full">
+                    编入党支部和党小组由支部办理；系统只做轻量登记，不建立独立模块。
+                  </div>
                 </>
               ) : (
                 <>

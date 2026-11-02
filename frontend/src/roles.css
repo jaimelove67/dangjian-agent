@@ -695,9 +695,173 @@
 .procedure-grid .development-gate-card p {
   margin: 4px 0;
 }
+.development-terminal-note {
+  align-items: center;
+  gap: 8px;
+  color: #9f2b1f;
+  background: #fff6f4;
+  border: 1px solid #f2d8d3;
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin: 22px 0;
+}
+.flow-board-wrap {
+  min-width: 0;
+}
+.flow-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.flow-summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 11px;
+}
+.flow-summary strong {
+  color: var(--text);
+  font-size: 14px;
+}
+.flow-board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(190px, 1fr));
+  gap: 12px;
+  align-items: start;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+.flow-column {
+  min-width: 190px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fcfcfd;
+}
+.flow-column > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.flow-column > header h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.flow-column-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+.flow-card {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  padding: 10px;
+}
+.flow-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.flow-card-title strong {
+  font-size: 13px;
+  color: var(--text);
+}
+.flow-card-title span {
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+.flow-gaps,
+.flow-reminders {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.flow-gaps > span {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #a15c00;
+}
+.flow-gaps svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.flow-clear {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #1a7f4b;
+  font-size: 10px;
+}
+.flow-reminders {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.flow-reminders > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.flow-reminders > div > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.flow-reminders small {
+  color: #9ca3af;
+  font-size: 9px;
+}
+.flow-empty {
+  padding: 16px 4px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+}
 @media (max-width: 1000px) {
   .procedure-grid {
     grid-template-columns: 1fr;
+  }
+  .flow-board {
+    grid-template-columns: repeat(2, minmax(190px, 1fr));
+    overflow-x: visible;
+  }
+}
+@media (max-width: 700px) {
+  .flow-board {
+    grid-template-columns: 1fr;
+    overflow-x: visible;
   }
 }
 .cultivation-list h3 {

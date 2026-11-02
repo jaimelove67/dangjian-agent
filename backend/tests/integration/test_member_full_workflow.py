@@ -106,6 +106,7 @@ async def client_for(url, current_user):
                 await db.rollback()
                 raise
 
+    previous = dict(app.dependency_overrides)
     app.dependency_overrides[get_db] = database
     app.dependency_overrides[get_current_user] = lambda: current_user
     try:
@@ -116,6 +117,7 @@ async def client_for(url, current_user):
                 yield client, engine
     finally:
         app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)
         await engine.dispose()
 
 
@@ -545,71 +547,79 @@ async def test_political_review_and_training_are_hard_gates(member_url):
         )
         assert training["days"] == 3
 
-        blocked = await client.post(
-            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+        # 支部程序由支部书记登记；院系管理员不能代登记支部事实。
+        branch_actor = actor(
+            user_id="member-branch-author",
+            role=UserRole.BRANCH_SECRETARY,
+            org="branch-a",
         )
-        assert blocked.status_code == 422
-        assert "培养联系人未登记" in blocked.text
+        async with client_for(member_url, branch_actor) as (branch_client, _):
+            blocked = await branch_client.post(
+                f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+            )
+            assert blocked.status_code == 422
+            assert "培养联系人未登记" in blocked.text
 
-        contact = await ok(
-            client,
-            "POST",
-            f"/member-full/profiles/{profile['id']}/procedures",
-            {
-                "kind": "contact",
-                "occurred_on": (today - timedelta(days=80)).isoformat(),
-                "reason": "指定培养联系人",
-                "details": {"linked_profile_id": senior["id"]},
-            },
-        )
-        assert contact["details"]["linked_name"] == senior["name"]
-        assert contact["status"] == "assigned"
+            contact = await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/procedures",
+                {
+                    "kind": "contact",
+                    "occurred_on": (today - timedelta(days=80)).isoformat(),
+                    "reason": "指定培养联系人",
+                    "details": {"linked_profile_id": senior["id"]},
+                },
+            )
+            assert contact["details"]["linked_name"] == senior["name"]
+            assert contact["status"] == "assigned"
 
-        blocked = await client.post(
-            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
-        )
-        assert blocked.status_code == 422
-        assert "入党介绍人未登记" in blocked.text
+            blocked = await branch_client.post(
+                f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+            )
+            assert blocked.status_code == 422
+            assert "入党介绍人未登记" in blocked.text
 
-        introducer = await ok(
-            client,
-            "POST",
-            f"/member-full/profiles/{profile['id']}/procedures",
-            {
-                "kind": "introducer",
-                "occurred_on": today.isoformat(),
-                "reason": "确定入党介绍人",
-                "details": {"linked_profile_id": senior["id"]},
-            },
-        )
-        assert introducer["details"]["linked_name"] == senior["name"]
+            introducer = await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/procedures",
+                {
+                    "kind": "introducer",
+                    "occurred_on": today.isoformat(),
+                    "reason": "确定入党介绍人",
+                    "details": {"linked_profile_id": senior["id"]},
+                },
+            )
+            assert introducer["details"]["linked_name"] == senior["name"]
 
-        blocked = await client.post(
-            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
-        )
-        assert blocked.status_code == 422
-        assert "支委会审查未通过或未登记" in blocked.text
+            blocked = await branch_client.post(
+                f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+            )
+            assert blocked.status_code == 422
+            assert "支委会审查未通过或未登记" in blocked.text
 
-        branch_review = await ok(
-            client,
-            "POST",
-            f"/member-full/profiles/{profile['id']}/procedures",
-            {
-                "kind": "branch_committee_review",
-                "occurred_on": today.isoformat(),
-                "status": "passed",
-                "summary": "支委会审查通过",
-                "reason": "支委会审查",
-            },
-        )
-        assert branch_review["status"] == "passed"
+            branch_review = await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/procedures",
+                {
+                    "kind": "branch_committee_review",
+                    "occurred_on": today.isoformat(),
+                    "status": "passed",
+                    "summary": "支委会审查通过",
+                    "reason": "支委会审查",
+                },
+            )
+            assert branch_review["status"] == "passed"
 
-        blocked = await client.post(
-            f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
-        )
-        assert blocked.status_code == 422
-        assert "上级党委预审未通过或未登记" in blocked.text
+            blocked = await branch_client.post(
+                f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+            )
+            assert blocked.status_code == 422
+            assert "上级党委预审未通过或未登记" in blocked.text
 
+        # 上级党委预审由院系管理员登记，支部不具备该程序登记权限。
         pre_review = await ok(
             client,
             "POST",
@@ -631,28 +641,31 @@ async def test_political_review_and_training_are_hard_gates(member_url):
         assert blocked.status_code == 422
         assert "入党志愿书未提交或未登记" in blocked.text
 
-        application_form = await ok(
-            client,
-            "POST",
-            f"/member-full/profiles/{profile['id']}/procedures",
-            {
-                "kind": "application_form",
-                "occurred_on": today.isoformat(),
-                "status": "submitted",
-                "reason": "填写入党志愿书",
-                "details": {"form_no": "2026-001"},
-            },
-        )
-        assert application_form["status"] == "submitted"
+        async with client_for(member_url, branch_actor) as (branch_client, _):
+            application_form = await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/procedures",
+                {
+                    "kind": "application_form",
+                    "occurred_on": today.isoformat(),
+                    "status": "submitted",
+                    "reason": "填写入党志愿书",
+                    "details": {"form_no": "2026-001"},
+                },
+            )
+            assert application_form["status"] == "submitted"
 
-        profile = await ok(
-            client,
-            "POST",
-            f"/member-full/profiles/{profile['id']}/transition",
-            body,
-        )
-        assert profile["current_stage"] == "probationary"
+            # 支部大会记录阶段流转；上级审批意见另行补录，不在本次流转中替代。
+            profile = await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/transition",
+                body,
+            )
+            assert profile["current_stage"] == "probationary"
 
+        # 上级党委派人谈话由学校/院系管理员登记，作为上级审批前的提示事实。
         talk = await ok(
             client,
             "POST",
@@ -676,6 +689,206 @@ async def test_political_review_and_training_are_hard_gates(member_url):
         assert detail["procedures"]["upper_pre_review"]["satisfied"] is True
         assert detail["procedures"]["application_form"]["satisfied"] is True
         assert detail["procedures"]["upper_talk"]["satisfied"] is True
+
+
+@pytest.mark.asyncio
+async def test_probationary_conversion_flow_board_and_terminal_disqualification(member_url):
+    today = date.today()
+    branch_actor = actor(
+        user_id="member-branch-outcome",
+        role=UserRole.BRANCH_SECRETARY,
+        org="branch-a",
+    )
+    async with client_for(member_url, actor()) as (client, _):
+        profile = await new_profile(
+            client,
+            "转正办理对象",
+            stage="probationary",
+            stage_joined_on=(today - timedelta(days=400)).isoformat(),
+        )
+        for material_type in ("转正申请书", "预备期考察记录", "支部大会决议"):
+            item = await ok(
+                client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/materials",
+                {
+                    "material_type": material_type,
+                    "submit_date": today.isoformat(),
+                    "reason": "登记材料",
+                },
+            )
+            await ok(
+                client,
+                "POST",
+                f"/member-full/materials/{item['id']}/review",
+                {"review_status": "approved", "note": "核验通过", "reason": "人工核验"},
+            )
+
+        blocked = await client.post(
+            f"/api/v1/member-full/profiles/{profile['id']}/transition",
+            json={
+                "target_stage": "member",
+                "decision_date": today.isoformat(),
+                "basis": "支部大会转正",
+                "opinion": "同意按期转正",
+            },
+        )
+        assert blocked.status_code == 422
+        assert "转正结果未登记" in blocked.text
+
+        async with client_for(member_url, branch_actor) as (branch_client, _):
+            vote = await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/procedures",
+                {
+                    "kind": "branch_vote",
+                    "occurred_on": today.isoformat(),
+                    "status": "passed",
+                    "summary": "支部大会通过转正",
+                    "reason": "支部大会会议记录",
+                    "details": {
+                        "meeting_for": "conversion",
+                        "eligible_count": 10,
+                        "attended_count": 10,
+                        "agree_count": 9,
+                        "disagree_count": 0,
+                        "abstain_count": 1,
+                    },
+                },
+            )
+            assert vote["status"] == "passed"
+            outcome = await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/procedures",
+                {
+                    "kind": "probation_outcome",
+                    "occurred_on": today.isoformat(),
+                    "status": "qualified",
+                    "summary": "支部大会同意按期转正",
+                    "reason": "支部大会决议",
+                },
+            )
+            assert outcome["status"] == "qualified"
+            converted = await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/transition",
+                {
+                    "target_stage": "member",
+                    "decision_date": today.isoformat(),
+                    "basis": "支部大会转正",
+                    "opinion": "同意按期转正",
+                },
+            )
+            assert converted["current_stage"] == "member"
+
+        board = await ok(client, "GET", "/member-full/flow-board")
+        converted_item = next(
+            item for item in board["items"] if item["id"] == profile["id"]
+        )
+        assert converted_item["current_stage"] == "member"
+
+        disqualified = await new_profile(
+            client,
+            "取消资格对象",
+            stage="probationary",
+            stage_joined_on=(today - timedelta(days=100)).isoformat(),
+        )
+        async with client_for(member_url, branch_actor) as (branch_client, _):
+            await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{disqualified['id']}/procedures",
+                {
+                    "kind": "branch_vote",
+                    "occurred_on": today.isoformat(),
+                    "status": "not_passed",
+                    "summary": "转正票决未通过",
+                    "reason": "支部大会会议记录",
+                    "details": {
+                        "meeting_for": "conversion",
+                        "eligible_count": 10,
+                        "attended_count": 10,
+                        "agree_count": 3,
+                        "disagree_count": 6,
+                        "abstain_count": 1,
+                    },
+                },
+            )
+            await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{disqualified['id']}/procedures",
+                {
+                    "kind": "probation_outcome",
+                    "occurred_on": today.isoformat(),
+                    "status": "disqualified",
+                    "summary": "支部大会决定取消预备党员资格",
+                    "reason": "支部大会决议",
+                },
+            )
+            terminal = await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{disqualified['id']}/transition",
+                {
+                    "target_stage": "disqualified",
+                    "decision_date": today.isoformat(),
+                    "basis": "支部大会决定",
+                    "opinion": "取消预备党员资格",
+                },
+            )
+            assert terminal["current_stage"] == "disqualified"
+            blocked = await branch_client.post(
+                f"/api/v1/member-full/profiles/{disqualified['id']}/transition",
+                json={
+                    "target_stage": "member",
+                    "decision_date": today.isoformat(),
+                    "basis": "错误流转",
+                    "opinion": "错误流转",
+                },
+            )
+            assert blocked.status_code == 422
+
+        pending = await new_profile(
+            client,
+            "待转正提醒对象",
+            stage="probationary",
+            stage_joined_on=(today - timedelta(days=30)).isoformat(),
+        )
+        board = await ok(client, "GET", "/member-full/flow-board")
+        pending_item = next(
+            item for item in board["items"] if item["id"] == pending["id"]
+        )
+        kinds = {reminder["kind"] for reminder in pending_item["reminders"]}
+        assert {"higher_record", "party_group", "oath"} <= kinds
+        assert any(
+            row["stage"] == "disqualified" and row["count"] >= 1
+            for row in board["stage_summary"]
+        )
+
+        # 院系管理员具备阶段流转权限，但不能代登记支部大会票决。
+        forbidden = await client.post(
+            f"/api/v1/member-full/profiles/{pending['id']}/procedures",
+            json={
+                "kind": "branch_vote",
+                "occurred_on": today.isoformat(),
+                "status": "passed",
+                "summary": "越权登记",
+                "reason": "越权登记",
+                "details": {
+                    "meeting_for": "conversion",
+                    "eligible_count": 5,
+                    "attended_count": 5,
+                    "agree_count": 5,
+                    "disagree_count": 0,
+                    "abstain_count": 0,
+                },
+            },
+        )
+        assert forbidden.status_code == 403
 
 
 @pytest.mark.asyncio

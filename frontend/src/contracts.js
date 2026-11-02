@@ -22,6 +22,7 @@ export const STAGE_LABELS = {
   candidate: "发展对象",
   probationary: "预备党员",
   member: "正式党员",
+  disqualified: "取消预备党员资格",
   rejected: "退回",
 };
 export const RELATIONS = {
