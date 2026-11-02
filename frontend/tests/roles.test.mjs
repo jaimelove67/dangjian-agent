@@ -12,8 +12,14 @@ import {
   memberMatchesOrganization,
   scopedMeetings,
   sessionForAccount,
+  activityInScope,
 } from "../src/roles.js";
-import { seedMembers, STAGES } from "../src/data.js";
+import {
+  seedActivities,
+  seedMembers,
+  STAGES,
+  organizations,
+} from "../src/data.js";
 import { SCHOOL_NAVIGATION } from "../src/school-navigation.js";
 import {
   roleSeed,
@@ -21,6 +27,9 @@ import {
   materialSource,
   materialSourceNote,
   materialTypeLabel,
+  buildDemoFlowBoard,
+  emptyProcedureState,
+  addDemoProcedure,
 } from "../src/role-data.js";
 import {
   submitDemoMeeting,
@@ -58,8 +67,8 @@ test("a wildcard or forged explicit permission never grants a role extra authori
     false,
   );
 });
-test("self-service menus exclude all organization and knowledge routes", () => {
-  for (const id of ["teacher", "student", "applicant"]) {
+test("self-service menus exclude organization management while party members can view activities", () => {
+  for (const id of ["teacher", "student"]) {
     const s = demoSession(id);
     for (const route of [
       "members",
@@ -67,7 +76,6 @@ test("self-service menus exclude all organization and knowledge routes", () => {
       "accounts",
       "knowledge",
       "analytics",
-      "activities",
     ])
       assert.equal(canAccess(s, { id: route }), false);
     for (const route of [
@@ -76,9 +84,28 @@ test("self-service menus exclude all organization and knowledge routes", () => {
       "self-materials",
       "learning",
       "assistant",
+      "activities",
     ])
       assert.equal(canAccess(s, { id: route }), true);
   }
+  const applicant = demoSession("applicant");
+  for (const route of [
+    "members",
+    "reviews",
+    "accounts",
+    "knowledge",
+    "analytics",
+    "activities",
+  ])
+    assert.equal(canAccess(applicant, { id: route }), false);
+  for (const route of [
+    "dashboard",
+    "self-archive",
+    "self-materials",
+    "learning",
+    "assistant",
+  ])
+    assert.equal(canAccess(applicant, { id: route }), true);
 });
 test("learning courses are visible to members and applicants without center-group authority", () => {
   for (const id of ["teacher", "student", "applicant"]) {
@@ -163,6 +190,30 @@ test("role data migration is idempotent and personal fixtures stay explicitly ow
     twice.personalMaterials.every(
       (m) => m.owner_id && m.profile_id && !m.has_file,
     ),
+  );
+});
+test("existing user-created activities receive one notification on migration", () => {
+  const activity = {
+    id: "user-activity-notice-1",
+    title: "已发布的主题党日",
+    date: "2026-11-01",
+    organization: "机械工程学院",
+    orgId: "",
+  };
+  const once = extendRoleData({
+    meetings: [],
+    members: seedMembers,
+    activities: [...seedActivities, activity],
+    tasks: [],
+  });
+  const notices = once.tasks.filter((task) => task.kind === "activity_notice");
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].activity_id, activity.id);
+  assert.equal(notices[0].route, "activities");
+  const twice = extendRoleData(once);
+  assert.equal(
+    twice.tasks.filter((task) => task.kind === "activity_notice").length,
+    1,
   );
 });
 test("meeting submit requires in-scope editable revision and nonempty saved minutes", () => {
@@ -371,6 +422,105 @@ test("explicit account linking rejects different organizations, duplicate owners
     /其他账号/,
   );
 });
+test("department activities reach branch users in the same department without leaking other branches", () => {
+  const department = demoSession("department").user;
+  const secretary = demoSession("secretary").user;
+  const teacher = demoSession("teacher").user;
+  assert.equal(
+    activityInScope(department, { organization: department.department }),
+    true,
+  );
+  assert.equal(
+    activityInScope(secretary, { organization: secretary.department }),
+    true,
+  );
+  assert.equal(
+    activityInScope(secretary, { orgId: secretary.org_unit_id }),
+    true,
+  );
+  const otherBranch = organizations.find(
+    (org) =>
+      org.id !== secretary.org_unit_id &&
+      org.department === secretary.department,
+  );
+  assert.equal(
+    activityInScope(secretary, { orgId: otherBranch.id }),
+    false,
+  );
+  assert.equal(
+    activityInScope(department, { orgId: secretary.org_unit_id }),
+    true,
+  );
+  assert.equal(
+    activityInScope(department, { organization: "其他学院" }),
+    false,
+  );
+  assert.equal(
+    activityInScope(teacher, { organization: teacher.department }),
+    true,
+  );
+  assert.equal(
+    activityInScope(demoSession("applicant").user, {
+      organization: demoSession("applicant").user.department,
+    }),
+    false,
+  );
+});
+test("demo flow board exposes probation reminders and closes them after party-group registration", () => {
+  const member = seedMembers.find((m) => m.stage === "预备党员");
+  const first = buildDemoFlowBoard([member], {}, []);
+  const firstItem = first.items[0];
+  assert.equal(firstItem.current_stage, "probationary");
+  assert.deepEqual(
+    new Set(firstItem.reminders.map((r) => r.kind)),
+    new Set(["higher_record", "party_group", "oath"]),
+  );
+  const procedures = addDemoProcedure(emptyProcedureState(), {
+    kind: "party_group",
+    occurred_on: "2026-10-20",
+    status: "assigned",
+    summary: "编入第一党小组",
+    details: { party_branch: "第一党支部", party_group: "第一党小组" },
+    created_at: "2026-10-20T10:00:00+08:00",
+  });
+  const second = buildDemoFlowBoard(
+    [member],
+    { [member.id]: { procedures } },
+    [],
+  );
+  const secondItem = second.items[0];
+  assert.ok(!secondItem.reminders.some((r) => r.kind === "party_group"));
+  assert.ok(!secondItem.missing.includes("编入党支部和党小组"));
+  assert.ok(
+    !buildDemoFlowBoard([member], {}, [`demo-${member.id}-oath`]).items[0]
+      .reminders.some((r) => r.kind === "oath"),
+  );
+});
+test("demo probationary membership can enter the terminal disqualified stage", () => {
+  const s = demoSession("school");
+  const member = seedMembers.find((m) => m.stage === "预备党员");
+  const next = transitionDemoMember(
+    s,
+    member,
+    "取消预备党员资格",
+    "支部大会决定",
+    "取消预备党员资格",
+    "2026-10-20",
+  );
+  assert.equal(next.stage, "取消预备党员资格");
+  assert.throws(
+    () =>
+      transitionDemoMember(
+        s,
+        seedMembers.find((m) => m.stage === "发展对象"),
+        "取消预备党员资格",
+        "依据",
+        "意见",
+        "2026-10-20",
+      ),
+    /只有预备党员/,
+  );
+});
 test("manual stage registration synchronizes the own archive date with the decision date", () => {
   const s = demoSession("organizer"),
     member = seedMembers.find(
@@ -386,6 +536,17 @@ test("manual stage registration synchronizes the own archive date with the decis
   );
   assert.equal(next.joined, "2026-10-20");
   assert.equal(next.stage_joined_on, "2026-10-20");
+  assert.equal(
+    transitionDemoMember(
+      s,
+      { ...member, stage: "退回" },
+      STAGES[1],
+      "退回后重新考察",
+      "同意重新列为入党积极分子",
+      "2026-10-20",
+    ).stage,
+    STAGES[1],
+  );
   assert.throws(
     () =>
       transitionDemoMember(s, member, STAGES[1], "依据", "意见", "2099-01-01"),

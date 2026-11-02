@@ -110,6 +110,7 @@ import {
   hasPermission,
   scopeLabel,
   scopedMembers,
+  activityInScope,
   PLATFORM_NAV_SPEC,
   demoAccountAvailable,
 } from "./roles";
@@ -258,7 +259,19 @@ export const NAV = [
     icon: CalendarBlank,
     permission: "meeting.query",
   },
-  { id: "activities", label: "主题党日", icon: Flag, permission: "meeting.query" },
+  {
+    id: "activities",
+    label: "主题党日",
+    icon: Flag,
+    permission: "education.query",
+    roles: [
+      "school_admin",
+      "department_admin",
+      "branch_secretary",
+      "organizer",
+      "member",
+    ],
+  },
   {
     id: "learning",
     label: "学习教育",
@@ -491,6 +504,8 @@ function Shell() {
   const [passwordDialog, setPasswordDialog] = useState(false);
   const school = session.user.role === "school_admin";
   const selfService = isSelfService(session.user);
+  const notificationRead = data.notificationReadBy?.[session.user.id] ?? false;
+  const notificationDone = data.notificationDoneBy?.[session.user.id] || [];
   const schoolGroup = schoolNavigationGroup(route);
   const [expandedGroup, setExpandedGroup] = useState(
     schoolGroup?.id || "school-home",
@@ -551,6 +566,17 @@ function Shell() {
         .filter((m) => m.name.includes(search.trim()))
         .slice(0, 4)
     : [];
+  const activityNotices = (data.tasks || [])
+    .filter(
+      (t) =>
+        t.kind === "activity_notice" &&
+        activityInScope(session.user, {
+          orgId: t.org_unit_id,
+          organization: t.department,
+          tenant_id: t.tenant_id,
+        }),
+    )
+    .map((t) => ({ ...t, route: "activities" }));
   const visibleTasks =
     session.user.role === "system_admin"
       ? [
@@ -579,7 +605,12 @@ function Shell() {
               (t.tenant_id || "school-1") === session.user.tenant_id &&
               can(NAV.find((n) => n.id === t.route)),
           )
-        : [];
+        : activityNotices;
+  const openTasks = visibleTasks.filter((task) =>
+    task.kind === "activity_notice"
+      ? !notificationDone.includes(task.id)
+      : !task.completed,
+  );
   return (
     <div className={`app-shell${school ? " school-shell" : ""}`}>
       <header className="topbar">
@@ -630,33 +661,44 @@ function Shell() {
               aria-label="消息通知"
               onClick={() => {
                 setNotification((v) => !v);
-                update("notificationRead", true);
+                update("notificationReadBy", (prev) => ({
+                  ...(prev || {}),
+                  [session.user.id]: true,
+                }));
               }}
             >
               <Bell size={21} />
-              {!data.notificationRead && <i />}
+              {!notificationRead && openTasks.length > 0 && <i />}
             </button>
             {notification && (
               <div className="notification-popover">
                 <strong>工作提醒</strong>
-                {visibleTasks
-                  .filter((t) => !t.completed)
-                  .map((t) => (
+                {openTasks.map((t) => (
                     <button
                       key={t.id}
                       onClick={() => {
+                        if (t.kind === "activity_notice")
+                          update("notificationDoneBy", (prev) => ({
+                            ...(prev || {}),
+                            [session.user.id]: [
+                              ...(prev?.[session.user.id] || []),
+                              t.id,
+                            ],
+                          }));
                         navigate(t.route);
                         setNotification(false);
                       }}
                     >
                       <span>{t.title}</span>
                       <small>
-                        {t.date} 截止
+                        {t.kind === "activity_notice"
+                          ? `活动日期 ${t.date}`
+                          : `${t.date} 截止`}
                         <CaretRight size={11} />
                       </small>
                     </button>
                   ))}
-                {visibleTasks.every((t) => t.completed) && <p>暂无待办提醒</p>}
+                {openTasks.length === 0 && <p>暂无待办提醒</p>}
               </div>
             )}
           </div>

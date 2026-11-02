@@ -88,10 +88,13 @@ export const ROLE_INFO = {
 export const SELF_ROUTES = new Set([
   "dashboard",
   "learning",
+  "activities",
   "self-archive",
   "self-materials",
   "assistant",
 ]);
+// 主题党日向党员开放只读与报名，不向入党申请人开放。
+export const MEMBER_ONLY_ROUTES = new Set(["activities"]);
 export const PLATFORM_NAV_SPEC = [
   { id: "dashboard", label: "平台工作台" },
   { id: "tenants", label: "租户管理", permission: "admin.identity" },
@@ -129,6 +132,11 @@ export function canAccess(session, item, live = false) {
   if (item.demo && live) return false;
   if (item.roles && !item.roles.includes(session.user.role)) return false;
   if (isSelfService(session.user) && !SELF_ROUTES.has(item.id)) return false;
+  if (
+    session.user.role === "applicant" &&
+    MEMBER_ONLY_ROUTES.has(item.id)
+  )
+    return false;
   return !item.permission || hasPermission(session, item.permission);
 }
 const branch = organizations.find((org) => org.id === seedMembers.at(-1).orgId);
@@ -277,6 +285,28 @@ export function scopedMeetings(data, session, live = false) {
   return live
     ? data.meetings
     : data.meetings.filter((m) => recordInScope(session?.user, m));
+}
+export function activityInScope(user, activity) {
+  const scope = ROLE_INFO[user?.role]?.scope;
+  if (!scope || !activity) return false;
+  if (scope === "all") return true;
+  if ((user.tenant_id || "school-1") !== (activity.tenant_id || "school-1"))
+    return false;
+  if (scope === "school") return true;
+  const activityOrgId = activity.orgId || activity.org_unit_id || "";
+  const activityOrg = organizations.find((org) => org.id === activityOrgId);
+  const department =
+    activity.department ||
+    activityOrg?.department ||
+    activity.organization ||
+    "";
+  if (scope === "department") return department === user.department;
+  if (scope === "branch" || (scope === "self" && user.role === "member")) {
+    // 支部活动按支部精确可见；院系级活动没有支部组织时，按所属院系向支部党员开放。
+    if (activityOrg) return activityOrg.id === user.org_unit_id;
+    return department === user.department;
+  }
+  return false;
 }
 export function scopedOrganizations(session) {
   const u = session?.user;

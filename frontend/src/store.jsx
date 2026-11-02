@@ -23,6 +23,8 @@ function emptyData() {
     courseOfferings: [],
     messages: [],
     notificationRead: false,
+    notificationReadBy: {},
+    notificationDoneBy: {},
     personalMaterials: [],
     materialReceipts: [],
     memberInfoCollections: [],

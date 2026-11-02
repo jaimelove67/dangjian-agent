@@ -27,6 +27,7 @@ import {
   meetingImageSelectionError,
 } from "../meeting-images";
 import {
+  activityInScope,
   scopedMeetings,
   scopedOrganizations,
   ROLE_INFO,
@@ -984,22 +985,25 @@ export function Activities() {
   const { data, update, notify } = useStore();
   const { session } = useApp();
   const schoolSupervisor = session.user.role === "school_admin";
-  const orgOptions = scopedOrganizations(session);
+  const canManage = hasPermission(session, "meeting.manage");
   const wholeSchool = ["school_admin", "system_admin"].includes(
     session.user.role,
   );
   const departmentOptions = wholeSchool
     ? DEPARTMENTS
     : [session.user.department];
-  const visibleActivities = data.activities.filter(
-    (a) =>
-      wholeSchool ||
-      (a.orgId
-        ? orgOptions.some((o) => o.id === a.orgId)
-        : session.user.role === "department_admin" &&
-          a.organization === session.user.department),
+  const creatorOrganizationOptions = wholeSchool
+    ? DEPARTMENTS
+    : session.user.role === "department_admin"
+      ? [session.user.department]
+      : [
+          organizations.find((o) => o.id === session.user.org_unit_id)?.name ||
+            session.user.department,
+        ];
+  const visibleActivities = data.activities.filter((a) =>
+    activityInScope(session.user, a),
   );
-  const [tab, setTab] = useState("活动管理");
+  const [tab, setTab] = useState(canManage ? "活动管理" : "活动列表");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [department, setDepartment] = useState("");
@@ -1009,38 +1013,63 @@ export function Activities() {
     (a) =>
       a.title.includes(query) &&
       (!status || a.status === status) &&
-      (!department || a.organization === department),
+      (!department || (a.department || a.organization) === department),
   );
   function create(e) {
     e.preventDefault();
+    if (!canManage) {
+      notify("当前账号没有发布主题党日的权限", "error");
+      return;
+    }
     const f = new FormData(e.currentTarget);
     const title = f.get("title").trim();
     if (!title) {
       notify("活动主题不能为空", "error");
       return;
     }
+    const createdAt = new Date().toISOString();
     const item = {
       id: crypto.randomUUID(),
       title,
       date: f.get("date"),
       location: f.get("location").trim(),
       organization: f.get("organization"),
-      orgId:
-        wholeSchool || session.user.role === "department_admin"
-          ? undefined
-          : session.user.org_unit_id,
+      orgId: wholeSchool ? undefined : session.user.org_unit_id,
+      department: session.user.department || f.get("organization"),
       description: f.get("description").trim(),
       participants: 0,
       status: "报名中",
       cover: 1,
+      tenant_id: session.user.tenant_id || "school-1",
+      created_by: session.user.id,
+      created_at: createdAt,
     };
     update("activities", (prev) => [item, ...prev]);
+    update("tasks", (prev) => [
+      {
+        id: crypto.randomUUID(),
+        kind: "activity_notice",
+        title: `新主题党日：${title}`,
+        date: item.date.slice(5),
+        status: "待查看",
+        route: "activities",
+        completed: false,
+        tenant_id: item.tenant_id,
+        org_unit_id: item.orgId || "",
+        department: item.department,
+        activity_id: item.id,
+        created_by: session.user.id,
+        created_at: createdAt,
+      },
+      ...(prev || []),
+    ]);
+    update("notificationReadBy", {});
     setAdding(false);
     setTab("活动管理");
     setStatus("");
     setDepartment("");
     setQuery("");
-    notify("活动发布记录已保存");
+    notify("活动已发布，相关人员可在消息通知中查看");
   }
   function enroll(item) {
     if (data.enrollments.includes(item.id)) return;
@@ -1061,6 +1090,7 @@ export function Activities() {
         title="主题党日"
         subtitle="让组织生活有温度，让红色精神有传承"
         action={
+          canManage &&
           !schoolSupervisor && (
             <button className="button primary" onClick={() => setAdding(true)}>
               <Plus size={18} />
@@ -1070,7 +1100,11 @@ export function Activities() {
         }
       />
       <Tabs
-        items={["活动管理", "活动签到", "活动统计"]}
+        items={
+          canManage
+            ? ["活动管理", "活动签到", "活动统计"]
+            : ["活动列表", "活动报名"]
+        }
         active={tab}
         onChange={setTab}
       />
@@ -1158,7 +1192,8 @@ export function Activities() {
                   参与 <b>{a.participants}</b> 人
                 </span>
                 <Badge>{a.status}</Badge>
-                {tab === "活动签到" && !schoolSupervisor && (
+                {["活动签到", "活动报名"].includes(tab) &&
+                  !schoolSupervisor && (
                   <button
                     className="text-button link"
                     onClick={() => enroll(a)}
@@ -1205,7 +1240,7 @@ export function Activities() {
               </Field>
               <Field label="组织单位">
                 <select name="organization">
-                  {departmentOptions.map((d) => (
+                  {creatorOrganizationOptions.map((d) => (
                     <option key={d}>{d}</option>
                   ))}
                 </select>

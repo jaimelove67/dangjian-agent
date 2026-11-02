@@ -448,5 +448,7 @@ export function buildInitialData() {
     courseOfferings: [],
     messages: [],
     notificationRead: false,
+    notificationReadBy: {},
+    notificationDoneBy: {},
   };
 }
