@@ -705,6 +705,36 @@
   padding: 12px 14px;
   margin: 22px 0;
 }
+.transition-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid #f0dfc7;
+  border-radius: 4px;
+  background: #fffbf5;
+}
+.transition-shortcuts > strong {
+  font-size: 13px;
+  color: #7a4b0c;
+}
+.transition-shortcuts > small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.transition-shortcut-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.transition-shortcut-list .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
 .flow-board-wrap {
   min-width: 0;
 }

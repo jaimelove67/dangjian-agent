@@ -1467,13 +1467,121 @@ export function DevelopmentWorkbench() {
     !procedureState.upper_pre_review.satisfied && "上级党委预审",
     !procedureState.application_form.satisfied && "入党志愿书",
   ].filter(Boolean);
+  const approvedMaterialTypes = new Set(
+    developmentMaterials
+      .filter((material) => material.review_status === "approved")
+      .map((material) => material.material_type),
+  );
+  const canRegisterMaterials = session.user.role !== "school_admin";
+  const canRegisterGates = ["发展对象", "预备党员", "正式党员"].includes(stage);
+  const transitionShortcuts = [];
+  function addTransitionShortcut(label, action) {
+    if (!transitionShortcuts.some((item) => item.label === label))
+      transitionShortcuts.push({ label, ...action });
+  }
+  function addProcedureShortcut(kind, label, allowed) {
+    if (allowed)
+      addTransitionShortcut(label, { type: "procedure", kind });
+  }
+  function addMaterialShortcut(materialType) {
+    if (!canRegisterMaterials || approvedMaterialTypes.has(materialType)) return;
+    addTransitionShortcut(`补交${materialType}`, {
+      type: "material",
+      materialType,
+    });
+  }
+  function addGateShortcut(modalName, label) {
+    if (canRegisterGates && session.user.role !== "school_admin")
+      addTransitionShortcut(label, { type: "modal", modalName });
+  }
+  if (stage === "入党申请人") {
+    addMaterialShortcut("入党申请书");
+    addMaterialShortcut("党组织谈话记录");
+  }
+  if (stage === "入党积极分子") {
+    addProcedureShortcut(
+      "contact",
+      "去登记培养联系人",
+      canRegisterBranchProcedure && !procedureState.contacts?.satisfied,
+    );
+    [
+      "思想汇报",
+      "培养考察记录",
+      "群众评议材料",
+      "党课培训证明",
+    ].forEach(addMaterialShortcut);
+  }
+  if (stage === "发展对象") {
+    addProcedureShortcut(
+      "contact",
+      "去登记培养联系人",
+      canRegisterBranchProcedure && !procedureState.contacts?.satisfied,
+    );
+    addProcedureShortcut(
+      "introducer",
+      "去登记入党介绍人",
+      canRegisterBranchProcedure && !procedureState.introducers?.satisfied,
+    );
+    addProcedureShortcut(
+      "branch_committee_review",
+      "去登记支委会审查",
+      canRegisterBranchProcedure && !procedureState.branch_committee_review?.satisfied,
+    );
+    addProcedureShortcut(
+      "upper_pre_review",
+      "去登记上级党委预审",
+      canRegisterUpperProcedure && !procedureState.upper_pre_review?.satisfied,
+    );
+    addProcedureShortcut(
+      "application_form",
+      "去登记入党志愿书",
+      canRegisterBranchProcedure && !procedureState.application_form?.satisfied,
+    );
+    if (!politicalState.satisfied) addGateShortcut("political", "去登记政治审查");
+    if (!trainingState.satisfied) addGateShortcut("training", "去登记集中培训");
+    ["政治审查材料", "公示情况报告", "支部大会决议"].forEach(
+      addMaterialShortcut,
+    );
+  }
+  if (stage === "预备党员") {
+    addProcedureShortcut(
+      "branch_vote",
+      "去登记支部大会转正票决",
+      canRegisterBranchProcedure && !conversionVoteReady,
+    );
+    const outcome = procedureState.probation_outcome?.current;
+    addProcedureShortcut(
+      "probation_outcome",
+      "去登记转正结果",
+      canRegisterBranchProcedure && outcome?.status !== "qualified",
+    );
+    ["转正申请书", "预备期考察记录", "支部大会决议"].forEach(
+      addMaterialShortcut,
+    );
+  }
+  function openTransitionShortcut(shortcut) {
+    setError(null);
+    if (shortcut.type === "procedure") {
+      setTab("发展程序");
+      setModal({ type: "procedure", kind: shortcut.kind });
+      return;
+    }
+    if (shortcut.type === "material") {
+      materialDraft.reset();
+      materialDraft.edit("material_type", shortcut.materialType);
+      setTab("材料清单");
+      setModal("material");
+      return;
+    }
+    setTab("培养记录");
+    setModal(shortcut.modalName);
+  }
   const politicalMaterials = developmentMaterials.filter(
     (m) => m.material_type === "政治审查材料" && m.review_status === "approved",
   );
   const trainingMaterials = developmentMaterials.filter(
     (m) => m.material_type === "党课培训证明" && m.review_status === "approved",
   );
-  const canRegisterGates = ["发展对象", "预备党员", "正式党员"].includes(stage);
   const canTransition =
     (STAGES.includes(stage) && stage !== "正式党员") || stage === "退回";
   // 完整政审结论只给有阶段办理权限的角色；后端读取出口已按权限脱敏，这里同时兜住演示数据。
@@ -2938,6 +3046,27 @@ export function DevelopmentWorkbench() {
                               }`
                             : "此操作登记人工决定，不能替代支部讨论、上级审批或其他应履行程序。"}
                   </div>
+                  {transitionShortcuts.length > 0 && (
+                    <div className="transition-shortcuts field full">
+                      <strong>未达标项快捷补登记</strong>
+                      <div className="transition-shortcut-list">
+                        {transitionShortcuts.map((shortcut) => (
+                          <button
+                            type="button"
+                            className="button secondary"
+                            key={shortcut.label}
+                            onClick={() => openTransitionShortcut(shortcut)}
+                          >
+                            {shortcut.label}
+                            <ArrowRight size={14} />
+                          </button>
+                        ))}
+                      </div>
+                      <small>
+                        点击后直接打开对应登记或材料提交界面；仍需按组织程序办理。
+                      </small>
+                    </div>
+                  )}
                 </>
               )}
             </div>

@@ -302,6 +302,7 @@ function MemberInfoForm({
       <AutoFields profile={profile || { ...collection, stage: collection?.member_stage }} />
       <div className="member-info-form-note">
         姓名、身份证号、出生日期、所在党支部和人员类别以组织档案为准，本人不能直接修改。
+        身份证号未登记时，请联系学校或院系管理员核对原件后补录。
       </div>
 
       <PanelTitle title={branchMode ? "本人填写信息" : "本人填写"} />
@@ -793,78 +794,76 @@ export function MemberInfoSelfSection({ profile }) {
             {collection ? infoStatusLabel(collection.status) : "待填写"}
           </Badge>
         </div>
-        {collection ? (
-          <>
-            <InfoSummary
-              payload={collection.payload}
-              profile={profile}
-              compact
-              branchFilled={["branch_approved", "department_approved", "archived"].includes(
-                collection.status,
-              )}
-            />
-            {collection.status === "returned" && collection.return_reason && (
-              <div className="member-info-return">
-                <WarningCircle size={18} />
-                <div>
-                  <strong>退回原因</strong>
-                  <p>{collection.return_reason}</p>
-                  <small>
-                    {collection.returned_by_name || "组织人员"} · {formatTime(collection.returned_at)}
-                  </small>
-                </div>
-              </div>
-            )}
-            <InfoTimeline collection={collection} />
-          </>
-        ) : (
-          <div className="member-info-empty">
-            <IdentificationCard size={32} weight="duotone" />
+        {collection?.status === "returned" && collection.return_reason && (
+          <div className="member-info-return">
+            <WarningCircle size={18} />
             <div>
-              <strong>尚未填写基本信息采集表</strong>
-              <p>请先核对档案中的姓名、身份证号、出生日期和所在支部，再填写本人信息。</p>
+              <strong>退回原因</strong>
+              <p>{collection.return_reason}</p>
+              <small>
+                {collection.returned_by_name || "组织人员"} · {formatTime(collection.returned_at)}
+              </small>
             </div>
           </div>
         )}
-        <div className="member-info-actions">
-          {canEdit && (
-            <button className="button primary" onClick={() => setEditing(true)}>
-              <PencilSimple size={17} />
-              {collection ? (collection.status === "returned" ? "修改后重新提交" : "继续填写") : "开始填写"}
-            </button>
-          )}
-          {collection && (
-            <button className="button secondary" onClick={() => setPrinting(true)}>
-              <Printer size={17} />
-              打印采集表
-            </button>
-          )}
-          {collection && !canEdit && collection.status !== "archived" && (
-            <span className="inline-note">当前处于审核环节，暂不能修改。</span>
-          )}
-          {collection?.status === "archived" && (
-            <span className="inline-note">已备案。信息需要变更时，请联系支部发起新的采集版本。</span>
-          )}
-        </div>
+        {editing ? (
+          <div className="member-info-inline-form">
+            <MemberInfoForm
+              key={`${collection?.id || "new"}-${collection?.status || "draft"}`}
+              profile={profile}
+              collection={collection}
+              initial={initial}
+              onSave={save}
+              onSubmit={submit}
+              onClose={() => setEditing(false)}
+            />
+          </div>
+        ) : (
+          <>
+            {collection ? (
+              <>
+                <InfoSummary
+                  payload={collection.payload}
+                  profile={profile}
+                  compact
+                  branchFilled={["branch_approved", "department_approved", "archived"].includes(
+                    collection.status,
+                  )}
+                />
+                <InfoTimeline collection={collection} />
+              </>
+            ) : (
+              <div className="member-info-empty">
+                <IdentificationCard size={32} weight="duotone" />
+                <div>
+                  <strong>尚未填写基本信息采集表</strong>
+                  <p>请先核对档案中的姓名、身份证号、出生日期和所在支部，再填写本人信息。</p>
+                </div>
+              </div>
+            )}
+            <div className="member-info-actions">
+              {canEdit && (
+                <button className="button primary" onClick={() => setEditing(true)}>
+                  <PencilSimple size={17} />
+                  {collection ? (collection.status === "returned" ? "修改后重新提交" : "继续填写") : "开始填写"}
+                </button>
+              )}
+              {collection && (
+                <button className="button secondary" onClick={() => setPrinting(true)}>
+                  <Printer size={17} />
+                  打印采集表
+                </button>
+              )}
+              {collection && !canEdit && collection.status !== "archived" && (
+                <span className="inline-note">当前处于审核环节，暂不能修改。</span>
+              )}
+              {collection?.status === "archived" && (
+                <span className="inline-note">已备案。信息需要变更时，请联系支部发起新的采集版本。</span>
+              )}
+            </div>
+          </>
+        )}
       </section>
-      {editing && (
-        <Modal
-          title={collection ? "填写党员基本信息采集表" : "开始填写党员基本信息采集表"}
-          wide
-          flat
-          onClose={() => setEditing(false)}
-        >
-          <MemberInfoForm
-            key={`${collection?.id || "new"}-${collection?.status || "draft"}`}
-            profile={profile}
-            collection={collection}
-            initial={initial}
-            onSave={save}
-            onSubmit={submit}
-            onClose={() => setEditing(false)}
-          />
-        </Modal>
-      )}
       {printing && collection && (
         <InfoPrint collection={collection} onClose={() => setPrinting(false)} />
       )}
@@ -946,6 +945,7 @@ export function MemberInfoPage() {
   async function openDetail(item) {
     setSelected(item.id);
     setDetail(item);
+    setEditing(false);
     setDetailError(null);
     if (!IS_LIVE) return;
     setDetailLoading(true);
@@ -1159,9 +1159,6 @@ export function MemberInfoPage() {
                 <span>人员类别：{profile?.person_category}</span>
                 <span>身份证号：{profile?.id_card_masked || "档案未登记"}</span>
               </div>
-              <InfoSummary payload={detail.payload} profile={profile} />
-              <PanelTitle title="流转记录" />
-              <InfoTimeline collection={detail} />
               {detail.status === "returned" && detail.return_reason && (
                 <div className="member-info-return">
                   <WarningCircle size={18} />
@@ -1172,62 +1169,67 @@ export function MemberInfoPage() {
                   </div>
                 </div>
               )}
-              <div className="modal-actions">
-                <button className="button secondary" onClick={closeDetail}>
-                  关闭
-                </button>
-                {IS_LIVE && (
-                  <button className="button secondary" onClick={exportWord}>
-                    导出 Word
-                  </button>
-                )}
-                {canEdit && (
-                  <button className="button secondary" onClick={() => setEditing(true)}>
-                    <PencilSimple size={17} />
-                    补录支部信息
-                  </button>
-                )}
-                {canReview && (
-                  <>
-                    <button
-                      className="button secondary"
-                      onClick={() => {
-                        setReview({ action: "return" });
-                        setReviewOpinion("");
-                        setReviewError(null);
-                      }}
-                    >
-                      退回补正
+              {editing ? (
+                <div className="member-info-inline-form">
+                  <MemberInfoForm
+                    mode="branch"
+                    profile={{ ...detail, stage: detail.member_stage }}
+                    collection={detail}
+                    initial={mergeBranchPayload(detail.payload, {})}
+                    onSave={saveBranch}
+                    onClose={() => setEditing(false)}
+                  />
+                </div>
+              ) : (
+                <>
+                  <InfoSummary payload={detail.payload} profile={profile} />
+                  <PanelTitle title="流转记录" />
+                  <InfoTimeline collection={detail} />
+                  <div className="modal-actions">
+                    <button className="button secondary" onClick={closeDetail}>
+                      关闭
                     </button>
-                    <button
-                      className="button primary"
-                      onClick={() => {
-                        setReview({ action: detail.status === "department_approved" ? "archive" : "approve" });
-                        setReviewOpinion("");
-                        setReviewError(null);
-                      }}
-                    >
-                      {actionLabel}
-                      <ArrowRight size={16} />
-                    </button>
-                  </>
-                )}
-              </div>
+                    {IS_LIVE && (
+                      <button className="button secondary" onClick={exportWord}>
+                        导出 Word
+                      </button>
+                    )}
+                    {canEdit && (
+                      <button className="button secondary" onClick={() => setEditing(true)}>
+                        <PencilSimple size={17} />
+                        填写/补录详细信息
+                      </button>
+                    )}
+                    {canReview && (
+                      <>
+                        <button
+                          className="button secondary"
+                          onClick={() => {
+                            setReview({ action: "return" });
+                            setReviewOpinion("");
+                            setReviewError(null);
+                          }}
+                        >
+                          退回补正
+                        </button>
+                        <button
+                          className="button primary"
+                          onClick={() => {
+                            setReview({ action: detail.status === "department_approved" ? "archive" : "approve" });
+                            setReviewOpinion("");
+                            setReviewError(null);
+                          }}
+                        >
+                          {actionLabel}
+                          <ArrowRight size={16} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
-        </Modal>
-      )}
-
-      {editing && detail && (
-        <Modal title="支部补录与核对" wide flat onClose={() => setEditing(false)}>
-          <MemberInfoForm
-            mode="branch"
-            profile={{ ...detail, stage: detail.member_stage }}
-            collection={detail}
-            initial={mergeBranchPayload(detail.payload, {})}
-            onSave={saveBranch}
-            onClose={() => setEditing(false)}
-          />
         </Modal>
       )}
 
