@@ -235,8 +235,9 @@ export function Assistant() {
   const { data, update, notify } = useStore();
   const [input, setInput] = useState(routeParams.prompt || "");
   const [includePersonal, setIncludePersonal] = useState(
-    ["member", "applicant"].includes(session.user.role) ||
-      Boolean(session.user.profile_id),
+    ["member", "applicant", "branch_secretary", "organizer"].includes(
+      session.user.role,
+    ) || Boolean(session.user.profile_id),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
