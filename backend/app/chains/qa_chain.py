@@ -73,6 +73,7 @@ class QAChain:
         no_evidence_threshold: Optional[float] = None,
         supplemental_material: Optional[str] = None,
         advisory_generator: Optional[Generator] = None,
+        material_only: bool = False,
     ) -> None:
         self.retriever = retriever
         self.generator = generator
@@ -92,6 +93,9 @@ class QAChain:
         # 没有可引片段时，用户要的是"就我这份材料看看怎么办"，此时直接拒答等于
         # 什么都没帮到——改为"仅依据材料作答 + 明示不构成依据"。
         self.supplemental_material = supplemental_material
+        # 本人身份/本人资料类问题只依据本人资料回答，不进入制度检索和引用核验；
+        # 否则模型给出“我是谁”时会因没有 [n] 角标被误判为无依据而拒答。
+        self.material_only = material_only
 
     async def ask(
         self,
@@ -116,6 +120,12 @@ class QAChain:
                 "rewritten_length": len(standalone_question),
             },
         )
+        if self.material_only and self.supplemental_material:
+            return await self._answer_from_material(
+                question=standalone_question,
+                tenant_id=tenant_id,
+                session_id=session_id,
+            )
 
         # 阶段 2：检索
         try:
@@ -315,7 +325,7 @@ class QAChain:
             answer=answer,
             citations=[],
             warnings=[
-                "制度库未检索到可引用的片段：以下内容仅依据你提供的材料（含本人资料）整理，"
+                "以下内容仅依据你提供的材料（含本人资料）整理，"
                 "不作为制度依据，请以正式文件与组织意见为准。"
             ],
             disclaimer=DEFAULT_DISCLAIMER,

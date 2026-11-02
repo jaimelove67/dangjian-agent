@@ -77,6 +77,25 @@ async def test_full_chain_success():
     assert "培养期" in response.answer
 
 
+async def test_personal_identity_material_only_skips_retrieval_and_citations():
+    retriever = FakeRetriever([_chunk(1)])
+    generator = FakeGenerator("您是陈晓明，信息工程学院教工第一党支部正式党员。")
+    chain = QAChain(
+        retriever=retriever,
+        generator=generator,
+        supplemental_material="[本人档案]\n姓名：陈晓明\n所在组织：信息工程学院教工第一党支部",
+        material_only=True,
+    )
+    response = await chain.ask(question="我是谁", tenant_id="t1")
+
+    assert retriever.calls == 0
+    assert generator.calls == 1
+    assert response.refused is False
+    assert response.citations == []
+    assert "陈晓明" in response.answer
+    assert any("仅依据你提供的材料" in warning for warning in response.warnings)
+
+
 async def test_reference_only_basis_refused():
     """非权威参考资料不能作为唯一依据（T-KB-12 / FR-KB-10）。"""
     chain = QAChain(

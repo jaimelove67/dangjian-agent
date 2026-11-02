@@ -172,6 +172,7 @@ class RAGService:
         context: Optional[dict] = None,
         no_evidence_threshold: Optional[float] = None,
         material: Optional[str] = None,
+        material_only: bool = False,
     ) -> None:
         self.db = db
         self.data_level = data_level
@@ -187,6 +188,7 @@ class RAGService:
         # 用户上传材料（已由 qa_attachment_service 拼成材料块）：只进生成提示词，
         # 不参与检索，也不占引用编号——编号 [n] 永远只指向检索到的制度片段。
         self.material = material
+        self.material_only = material_only
         self.retriever = HybridRetriever(db, data_level=data_level, use_reranker=use_reranker)
         self._model_service = get_model_service()
 
@@ -226,6 +228,7 @@ class RAGService:
             llm_call=self._rewrite,
             no_evidence_threshold=self.no_evidence_threshold,
             supplemental_material=self.material,
+            material_only=self.material_only,
         )
         response = await chain.ask(
             question=question,

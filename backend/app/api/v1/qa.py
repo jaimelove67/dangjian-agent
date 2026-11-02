@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict
 from datetime import date, datetime
 from typing import Any, Optional
@@ -65,6 +66,13 @@ from app.services.qa_session_service import create_session, list_sessions, soft_
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+#: 只问本人是谁、本人组织/阶段等身份事实时，直接依据本人资料回答，
+#: 不进入制度检索和引用核验；否则“我是谁”会因没有制度角标被误拒。
+_PERSONAL_IDENTITY_QUERY = re.compile(
+    r"(我是谁|我叫什么|我的(姓名|名字|组织|支部|阶段|档案|基本信息|入党时间|转正时间|党龄)"
+    r"|我是什么阶段|我在哪个支部|我属于哪个支部)"
+)
 
 # 问答需要基本的查询权限
 _require_query = require_permissions(Permission.QA_ASK)
@@ -456,6 +464,9 @@ async def ask_question(
         await build_personal_context(db, user) if body.include_personal else None
     )
     personal_used = bool(personal and personal.has_content)
+    personal_only = bool(
+        personal_used and _PERSONAL_IDENTITY_QUERY.search(body.question.strip())
+    )
     if personal_used and personal is not None:
         data_level = max([data_level, personal.data_level], key=DATA_LEVEL_ORDER.index)
     material_parts: list[str] = []
@@ -475,6 +486,7 @@ async def ask_question(
         context={"tenant_id": tenant_id, "user_id": str(user.id), "request_id": _trace_id(request)},
         no_evidence_threshold=tenant_config.get(tenant_id, "no_evidence_threshold"),
         material="\n\n".join(material_parts) or None,
+        material_only=personal_only,
     )
 
     # 执行问答
