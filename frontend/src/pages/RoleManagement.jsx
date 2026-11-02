@@ -683,6 +683,167 @@ const DEVELOPMENT_TABS = [
   "阶段流转",
   "流程看板",
 ];
+const DEVELOPMENT_STEP_GROUPS = [
+  "入党申请人",
+  "入党积极分子",
+  "发展对象",
+  "预备党员",
+  "正式党员",
+];
+const DEVELOPMENT_STEPS = [
+  { no: 1, title: "递交入党申请书", group: 0, check: "application" },
+  { no: 2, title: "党组织派人谈话", group: 0, check: "talk" },
+  { no: 3, title: "确定入党积极分子", group: 0 },
+  { no: 4, title: "上级党委备案", group: 1, check: "upper" },
+  { no: 5, title: "指定培养联系人", group: 1, check: "contact" },
+  { no: 6, title: "培养教育考察", group: 1, check: "cultivation" },
+  { no: 7, title: "确定发展对象", group: 1 },
+  { no: 8, title: "上级党委备案", group: 2, check: "upper" },
+  { no: 9, title: "确定入党介绍人", group: 2, check: "introducer" },
+  { no: 10, title: "进行政治审查", group: 2, check: "political" },
+  { no: 11, title: "短期集中培训", group: 2, check: "training" },
+  { no: 12, title: "支委会审查", group: 2, check: "branch_review" },
+  { no: 13, title: "上级党委预审", group: 2, check: "upper_pre_review" },
+  { no: 14, title: "填写入党志愿书", group: 2, check: "application_form" },
+  { no: 15, title: "支部大会讨论", group: 2, check: "reception_vote" },
+  { no: 16, title: "上级党委派人谈话", group: 3, check: "upper_talk" },
+  { no: 17, title: "上级党委审批", group: 3, check: "upper" },
+  { no: 18, title: "再上一级党委组织部门备案", group: 3, check: "higher_record" },
+  { no: 19, title: "编入党支部和党小组", group: 3, check: "party_group" },
+  { no: 20, title: "入党宣誓", group: 3, check: "oath" },
+  { no: 21, title: "继续教育考察", group: 4, check: "continued" },
+  { no: 22, title: "提出转正申请", group: 4, check: "transfer_application" },
+  { no: 23, title: "支部大会讨论转正", group: 4, check: "conversion" },
+  { no: 24, title: "上级党委审批", group: 4, check: "upper" },
+  { no: 25, title: "材料归档", group: 4, check: "archive" },
+];
+function addCalendarMonths(value, months) {
+  if (!value) return null;
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const target = new Date(year, month - 1 + months, 1);
+  const last = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(day, last));
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`;
+}
+function dateOnly(value) {
+  return value ? String(value).slice(0, 10) : "";
+}
+function addCalendarDays(value, days) {
+  const text = dateOnly(value);
+  if (!text) return null;
+  const [year, month, day] = text.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const target = new Date(year, month - 1, day + days);
+  const pad = (item) => String(item).padStart(2, "0");
+  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`;
+}
+function daysUntil(value) {
+  const text = dateOnly(value);
+  if (!text) return null;
+  const [year, month, day] = text.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const now = new Date();
+  const target = Date.UTC(year, month - 1, day);
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.ceil((target - today) / 86400000);
+}
+function DevelopmentWizard({
+  stage,
+  stageJoinedOn,
+  earliest,
+  remainingDays,
+  nextAction,
+  steps,
+  shortcuts,
+  onShortcut,
+}) {
+  const stageIndex = Math.max(0, DEVELOPMENT_STEP_GROUPS.indexOf(stage));
+  return (
+    <div className="development-wizard">
+      <div className="development-wizard-summary">
+        <div>
+          <span>当前阶段</span>
+          <strong>{stage || "未登记"}</strong>
+        </div>
+        <div>
+          <span>进入阶段</span>
+          <strong>{stageJoinedOn || "未登记"}</strong>
+        </div>
+        <div>
+          <span>下一办理</span>
+          <strong>{nextAction || "按组织程序办理"}</strong>
+        </div>
+        <div>
+          <span>最早可办理</span>
+          <strong>
+            {earliest
+              ? remainingDays > 0
+                ? `${earliest}（还需 ${remainingDays} 天）`
+                : `${earliest}（已满足）`
+              : "无固定间隔"}
+          </strong>
+        </div>
+      </div>
+      {shortcuts.length > 0 && (
+        <div className="development-wizard-shortcuts">
+          <span>当前缺项</span>
+          {shortcuts.map((shortcut) => (
+            <button
+              type="button"
+              className="button secondary"
+              key={shortcut.label}
+              onClick={() => onShortcut(shortcut)}
+            >
+              {shortcut.label}
+              <ArrowRight size={13} />
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="development-step-groups">
+        {DEVELOPMENT_STEP_GROUPS.map((group, groupIndex) => {
+          const groupSteps = steps.filter((step) => step.group === groupIndex);
+          const done = groupSteps.filter((step) => step.state === "done").length;
+          return (
+            <details
+              className="development-step-group"
+              key={group}
+              open={groupIndex === stageIndex}
+            >
+              <summary>
+                <span>{group}</span>
+                <small>
+                  {done}/{groupSteps.length} 已具备
+                </small>
+              </summary>
+              <ol>
+                {groupSteps.map((step) => (
+                  <li key={step.no} className={`step-${step.state}`}>
+                    <span className="development-step-no">{step.no}</span>
+                    <span>{step.title}</span>
+                    <small>
+                      {
+                        {
+                          done: "已完成",
+                          current: "待办理",
+                          pending: "未开始",
+                          check: "请核对",
+                        }[step.state]
+                      }
+                    </small>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const VOTE_MEETING_LABELS = {
   reception: "接收预备党员",
   conversion: "预备党员转正",
@@ -1576,6 +1737,71 @@ export function DevelopmentWorkbench() {
     setTab("培养记录");
     setModal(shortcut.modalName);
   }
+  const stageJoinedOn = dateOnly(
+    detail?.stage_joined_on || member?.stage_joined_on || member?.joined,
+  );
+  const applicationDate = developmentMaterials
+    .filter(
+      (material) =>
+        material.material_type === "入党申请书" &&
+        material.review_status === "approved" &&
+        material.document_date,
+    )
+    .map((material) => dateOnly(material.document_date))
+    .sort()[0];
+  const probationOutcome = procedureState.probation_outcome?.current;
+  let earliestDate = null;
+  if (stage === "入党申请人" && applicationDate)
+    earliestDate = addCalendarMonths(applicationDate, 6);
+  if (stage === "入党积极分子" && stageJoinedOn)
+    earliestDate = addCalendarDays(stageJoinedOn, 365);
+  if (stage === "预备党员") {
+    earliestDate =
+      probationOutcome?.status === "extended" &&
+      probationOutcome.details?.effective_until
+        ? dateOnly(probationOutcome.details.effective_until)
+        : addCalendarDays(stageJoinedOn, 365);
+  }
+  const remainingDays = daysUntil(earliestDate);
+  const receptionVote = procedureState.branch_vote?.current;
+  const wizardChecks = {
+    application: approvedMaterialTypes.has("入党申请书"),
+    talk: approvedMaterialTypes.has("党组织谈话记录"),
+    contact: Boolean(procedureState.contacts?.satisfied),
+    cultivation: Boolean(detail?.cultivation?.length),
+    introducer: Boolean(procedureState.introducers?.satisfied),
+    political: Boolean(politicalState.satisfied),
+    training: Boolean(trainingState.satisfied),
+    branch_review: Boolean(procedureState.branch_committee_review?.satisfied),
+    upper_pre_review: Boolean(procedureState.upper_pre_review?.satisfied),
+    application_form: Boolean(procedureState.application_form?.satisfied),
+    reception_vote:
+      receptionVote?.status === "passed" &&
+      receptionVote?.details?.meeting_for === "reception",
+    upper_talk: Boolean(procedureState.upper_talk?.satisfied),
+    higher_record: Boolean(procedureState.higher_record?.satisfied),
+    party_group: Boolean(procedureState.party_group?.satisfied),
+    transfer_application: approvedMaterialTypes.has("转正申请书"),
+    conversion:
+      conversionVoteReady && probationOutcome?.status === "qualified",
+  };
+  const stageGroupIndex = DEVELOPMENT_STEP_GROUPS.indexOf(stage);
+  const wizardSteps = DEVELOPMENT_STEPS.map((step) => {
+    let state = "pending";
+    if (stageGroupIndex >= 0) {
+      if (stageGroupIndex > step.group) state = "done";
+      else if (stageGroupIndex < step.group) state = "pending";
+      else if (!step.check) state = "current";
+      else if (["upper", "oath", "continued", "archive"].includes(step.check))
+        state = "check";
+      else state = wizardChecks[step.check] ? "done" : "current";
+    }
+    return { ...step, state };
+  });
+  const wizardNextAction =
+    stage === "正式党员"
+      ? "继续教育管理"
+      : transitionShortcuts[0]?.label || "完成当前阶段材料与程序";
   const politicalMaterials = developmentMaterials.filter(
     (m) => m.material_type === "政治审查材料" && m.review_status === "approved",
   );
@@ -2641,6 +2867,18 @@ export function DevelopmentWorkbench() {
                 />
               ) : (
                 <>
+                  {stageGroupIndex >= 0 && (
+                    <DevelopmentWizard
+                      stage={stage}
+                      stageJoinedOn={stageJoinedOn}
+                      earliest={earliestDate}
+                      remainingDays={remainingDays}
+                      nextAction={wizardNextAction}
+                      steps={wizardSteps}
+                      shortcuts={transitionShortcuts}
+                      onShortcut={openTransitionShortcut}
+                    />
+                  )}
                   <div className="sub-toolbar">
                     <span>阶段变更由组织人员人工办理</span>
                     <button
