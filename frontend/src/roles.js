@@ -11,6 +11,7 @@ const selfPermissions = [
 const branchPermissions = [
   "qa.ask",
   "knowledge.query",
+  "member.self_query",
   "member.query",
   "member.stage_transition",
   "member.scoring",

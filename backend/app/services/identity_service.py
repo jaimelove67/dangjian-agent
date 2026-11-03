@@ -508,6 +508,105 @@ class IdentityService:
                 .all()
             )
 
+    async def linked_profiles(
+        self, tenant_id: str, user_ids: list[str]
+    ) -> dict[str, MemberProfile]:
+        """按账号返回本人档案，用于账号列表显示关联状态。"""
+        if not user_ids:
+            return {}
+        with bypass_tenant_filter():
+            rows = (
+                (
+                    await self.db.execute(
+                        select(MemberProfile).where(
+                            MemberProfile.tenant_id == tenant_id,
+                            MemberProfile.user_id.in_(user_ids),
+                            MemberProfile.is_active.is_(True),
+                            MemberProfile.is_deleted.is_(False),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return {str(row.user_id): row for row in rows if row.user_id}
+
+    async def bind_member_profile(
+        self,
+        target: str | None,
+        record_id: str,
+        profile_id: str | None,
+    ) -> User:
+        """学校管理员为任意本校账号关联/解除本人党员档案。
+
+        管理组织的归属与本人档案所在支部相互独立；这里只校验同租户和一对一，
+        不要求 User.org_unit_id 与 MemberProfile.org_unit_id 相同。
+        """
+        tenant = await self.tenant(target)
+        if self.user.role not in {UserRole.SYSTEM_ADMIN, UserRole.SCHOOL_ADMIN}:
+            raise HTTPException(403, "只有平台或学校管理员可以调整账号本人档案")
+        users = await self.users(str(tenant.id))
+        row = next((item for item in users if str(item.id) == str(record_id)), None)
+        if row is None:
+            raise HTTPException(404, "账号不存在")
+        if row.role == UserRole.SYSTEM_ADMIN:
+            raise HTTPException(403, "平台管理员不能关联学校党员档案")
+
+        with bypass_tenant_filter():
+            current = (
+                (
+                    await self.db.execute(
+                        select(MemberProfile)
+                        .where(
+                            MemberProfile.tenant_id == str(tenant.id),
+                            MemberProfile.user_id == str(row.id),
+                            MemberProfile.is_deleted.is_(False),
+                        )
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            selected = None
+            if profile_id:
+                selected = (
+                    await self.db.execute(
+                        select(MemberProfile)
+                        .where(
+                            MemberProfile.id == profile_id,
+                            MemberProfile.tenant_id == str(tenant.id),
+                            MemberProfile.is_active.is_(True),
+                            MemberProfile.is_deleted.is_(False),
+                        )
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if selected is None:
+                    raise HTTPException(404, "党员档案不存在或已停用")
+                if selected.user_id and str(selected.user_id) != str(row.id):
+                    raise HTTPException(409, "该党员档案已关联其他账号，请先解除原关联")
+                if (
+                    row.role in {UserRole.MEMBER, UserRole.APPLICANT}
+                    and selected.org_unit_id
+                    and row.org_unit_id
+                    and str(selected.org_unit_id) != str(row.org_unit_id)
+                ):
+                    raise HTTPException(
+                        409, "普通党员/申请人账号组织须与本人档案支出一致，请先调整账号组织"
+                    )
+
+        for item in current:
+            if selected is None or str(item.id) != str(selected.id):
+                item.user_id = None
+        # 先提交旧关联的解除，再写入新关联，避免同一账号的一对一唯一约束
+        # 在同一批 UPDATE 中因执行顺序冲突。
+        await self.db.flush()
+        if selected is not None:
+            selected.user_id = str(row.id)
+            await self.db.flush()
+        return row
+
     async def save_user(
         self, target: str | None, values: dict[str, Any], record_id: str | None = None
     ) -> User:

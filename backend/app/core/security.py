@@ -286,6 +286,7 @@ _ALL_PERMISSIONS = frozenset(Permission) - frozenset(
 )
 _MANAGER_PERMISSIONS = frozenset(
     {
+        Permission.SELF_QUERY,
         Permission.QA_ASK,
         Permission.KNOWLEDGE_QUERY,
         Permission.KNOWLEDGE_MANAGE,
@@ -310,6 +311,7 @@ _MANAGER_PERMISSIONS = frozenset(
 )
 _BRANCH_PERMISSIONS = frozenset(
     {
+        Permission.SELF_QUERY,
         Permission.QA_ASK,
         Permission.KNOWLEDGE_QUERY,
         Permission.MEMBER_QUERY,
@@ -326,8 +328,9 @@ _BRANCH_PERMISSIONS = frozenset(
         Permission.REVIEW_MANAGE,
     }
 )
-# 本人服务：查看本人档案与提交私有材料。党员与申请人共用，
-# 组织人员通过名册把账号与档案明确关联后才生效。
+# 本人服务：查看本人档案与提交私有材料。党员与申请人共用；
+# 管理角色也可查看与账号关联的本人档案，但不具备本人材料提交入口。
+# 组织人员通过名册或账号管理把账号与档案明确关联后才生效。
 _SELF_SERVICE_PERMISSIONS = frozenset({Permission.SELF_QUERY, Permission.MATERIAL_SUBMIT})
 # 基层查看能力：制度问答、只读的制度目录和学习课程。党员与申请人共用。
 _BASE_VIEW_PERMISSIONS = frozenset(

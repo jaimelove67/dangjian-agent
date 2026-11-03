@@ -55,23 +55,36 @@ _query = require_permissions(Permission.MEMBER_QUERY)
 
 
 async def _own_profile(db: AsyncSession, user: User) -> MemberProfile | None:
-    if not user.org_unit_id:
-        return None
-    return (
+    # 本人档案按账号直接关联，不要求账号的管理组织等于档案支部；
+    # 管理账号可能管理学校/院系，但本人党员档案仍在具体支部。
+    profile = (
         await db.execute(
-            select(MemberProfile)
-            .join(OrgUnit, OrgUnit.id == MemberProfile.org_unit_id)
-            .where(
+            select(MemberProfile).where(
                 MemberProfile.tenant_id == str(user.tenant_id),
                 MemberProfile.user_id == str(user.id),
-                MemberProfile.org_unit_id == str(user.org_unit_id),
                 MemberProfile.is_deleted.is_(False),
                 MemberProfile.is_active.is_(True),
-                OrgUnit.tenant_id == str(user.tenant_id),
-                OrgUnit.is_deleted.is_(False),
             )
         )
     ).scalar_one_or_none()
+    if profile is None:
+        return None
+    # 档案所在组织被删除或停用时，档案本身也不再作为有效本人档案展示；
+    # 但账号管理组织变化不改变这层关联。
+    if profile.org_unit_id:
+        organization = (
+            await db.execute(
+                select(OrgUnit.id).where(
+                    OrgUnit.id == profile.org_unit_id,
+                    OrgUnit.tenant_id == str(user.tenant_id),
+                    OrgUnit.is_deleted.is_(False),
+                    OrgUnit.is_active.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if organization is None:
+            return None
+    return profile
 
 
 async def _managed_profile(

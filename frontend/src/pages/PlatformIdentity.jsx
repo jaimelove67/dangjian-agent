@@ -821,7 +821,8 @@ export function PlatformAccounts() {
     [modal, setModal] = useState(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(null),
-    [formRole, setFormRole] = useState("school_admin");
+    [formRole, setFormRole] = useState("school_admin"),
+    [memberProfileId, setMemberProfileId] = useState("");
   const tenantId = schoolScoped ? session.user.tenant_id : platformTenantId;
   useEffect(() => {
     if (schoolScoped) return;
@@ -854,7 +855,12 @@ export function PlatformAccounts() {
   const selectedTenant = tenants.find((t) => t.id === tenantId),
     isPlatform = selectedTenant?.tenant_type === "platform";
   const remote = useRemote(
-    () => Promise.all([api.users(tenantId), api.orgs(tenantId)]),
+    () =>
+      Promise.all([
+        api.users(tenantId),
+        api.orgs(tenantId),
+        api.memberCandidates(tenantId),
+      ]),
     [tenantId, session.user.id],
   );
   const accounts = IS_LIVE
@@ -871,6 +877,7 @@ export function PlatformAccounts() {
             org_type: "school",
           },
         ];
+  const candidates = IS_LIVE ? list(remote.value?.[2]) : [];
   const rows = accounts.filter(
     (a) =>
       (!query || `${a.username} ${a.name}`.includes(query)) &&
@@ -897,11 +904,12 @@ export function PlatformAccounts() {
   const roles = accountRolesForTenant(selectedTenant, { create: !selected });
   const editingSelf = selected?.id === session.user.id;
   const personalOrgLocked =
-    selected?.profile_id &&
+    selected?.member_profile_id &&
     ["member", "applicant"].includes(selected.role) &&
     ["member", "applicant"].includes(formRole);
   function open(mode, account) {
     setError(null);
+    setMemberProfileId(account?.member_profile_id || "");
     setFormRole(
       account?.role || (isPlatform ? "system_admin" : "school_admin"),
     );
@@ -951,6 +959,7 @@ export function PlatformAccounts() {
       )
         throw new Error("请选择与角色类型匹配的组织范围。");
       const body = { name, role: formRole, org_unit_id: orgId };
+      const selectedProfileId = f.get("member_profile_id") || "";
       const password = selected ? accountPasswordChange(f) : undefined;
       if (selected) {
         body.is_active = editingSelf
@@ -958,7 +967,7 @@ export function PlatformAccounts() {
           : f.get("is_active") === "true";
         ensureAccountChange(selected, body);
       } else {
-        requireAdmin();
+        if (!schoolScoped) requireAdmin();
         if (!IS_LIVE && data.accounts.some((a) => a.username === username))
           throw new Error("该账号已存在，请填写全平台唯一的账号。");
         body.username = username;
@@ -979,9 +988,18 @@ export function PlatformAccounts() {
           body.is_active !== (selected.is_active !== false));
       if (IS_LIVE) {
         if (password) body.password = password;
-        selected
-          ? await api.updateUser(tenantId, selected.id, body)
-          : await api.createUser(tenantId, body);
+        if (selected) {
+          await api.updateUser(tenantId, selected.id, body);
+          if (selectedProfileId !== (selected.member_profile_id || "")) {
+            await api.linkMemberProfile(tenantId, selected.id, {
+              profile_id: selectedProfileId || null,
+              reason: "账号管理调整本人党员档案",
+            });
+          }
+        } else {
+          if (selectedProfileId) body.member_id = selectedProfileId;
+          await api.createUser(tenantId, body);
+        }
         remote.reload();
       } else {
         if (password)
@@ -1238,20 +1256,18 @@ export function PlatformAccounts() {
               : "维护各类账号的基本信息、业务角色、组织归属、访问状态与密码"
           }
           action={
-            !schoolScoped && (
-              <button
-                className="button primary"
-                disabled={
-                  !selectedTenant ||
-                  selectedTenant.is_active === false ||
-                  remote.loading
-                }
-                onClick={() => open("edit")}
-              >
-                <Plus size={18} />
-                管理员开户
-              </button>
-            )
+            <button
+              className="button primary"
+              disabled={
+                !selectedTenant ||
+                selectedTenant.is_active === false ||
+                remote.loading
+              }
+              onClick={() => open("edit")}
+            >
+              <Plus size={18} />
+              新增账号
+            </button>
           }
         />
         <div className="identity-tenant-scope">
@@ -1351,6 +1367,7 @@ export function PlatformAccounts() {
                     "账号 / 姓名",
                     "系统角色",
                     "组织授权范围",
+                    "本人档案",
                     "状态",
                     "安全状态",
                     "操作",
@@ -1377,6 +1394,20 @@ export function PlatformAccounts() {
                         (a.role === "system_admin"
                           ? "平台全局"
                           : a.org_unit_id || "未授权")}
+                    </td>
+                    <td>
+                      {a.member_profile_name ? (
+                        <>
+                          <span>{a.member_profile_name}</span>
+                          {a.member_profile_org && (
+                            <small className="cell-subtext">
+                              {a.member_profile_org}
+                            </small>
+                          )}
+                        </>
+                      ) : (
+                        <span className="muted">未关联</span>
+                      )}
                     </td>
                     <td>
                       <StateBadge active={a.is_active} />
@@ -1435,8 +1466,8 @@ export function PlatformAccounts() {
                 title="当前范围暂无账号"
                 description={
                   schoolScoped
-                    ? "请调整筛选条件，或联系平台管理员开通账号。"
-                    : "选择学校或开通管理员账号。"
+                    ? "请调整筛选条件，或新增本校账号。"
+                    : "选择学校或开通账号。"
                 }
               />
             )}
@@ -1495,17 +1526,15 @@ export function PlatformAccounts() {
           </div>
         )}
         <p className="page-note">
-          {schoolScoped
-            ? "仅管理本校账号，账号开户由平台管理员办理。"
-            : "所有账号均可编辑属性，"}
-          修改保留审计记录，原密码不展示；本人档案绑定、当前账号权限和最后一位有效管理员受保护。
+          学校管理员仅管理本校账号，可新增账号并关联本人党员档案；
+          修改保留审计记录，原密码不展示，当前账号权限和最后一位有效管理员受保护。
         </p>
       </section>
       {modal && (
         <Modal
           title={
             {
-              edit: selected ? "编辑账号属性" : "管理员开户",
+              edit: selected ? "编辑账号属性" : "新增账号",
               detail: "账号详情",
               reset: "重置账号密码",
               toggle: selected?.is_active === false ? "启用账号" : "停用账号",
@@ -1545,11 +1574,7 @@ export function PlatformAccounts() {
                     defaultValue={selected?.name || ""}
                   />
                 </Field>
-                <Field
-                  label={selected ? "业务角色" : "管理员角色"}
-                  required
-                  full
-                >
+                <Field label="业务角色" required full>
                   <select
                     name="role"
                     disabled={editingSelf}
@@ -1603,6 +1628,38 @@ export function PlatformAccounts() {
                     )}
                   </Field>
                 )}
+                {formRole !== "system_admin" && (
+                  <Field label="本人党员档案" full>
+                    <select
+                      name="member_profile_id"
+                      value={memberProfileId}
+                      onChange={(e) => setMemberProfileId(e.target.value)}
+                    >
+                      <option value="">暂不关联</option>
+                      {selected?.member_profile_id &&
+                        !candidates.some(
+                          (item) => item.id === selected.member_profile_id,
+                        ) && (
+                          <option value={selected.member_profile_id}>
+                            {selected.member_profile_name || "已关联档案"}
+                            {selected.member_profile_org
+                              ? ` · ${selected.member_profile_org}`
+                              : ""}
+                          </option>
+                        )}
+                      {candidates.map((item) => (
+                        <option value={item.id} key={item.id}>
+                          {item.name}
+                          {item.org_name ? ` · ${item.org_name}` : ""}
+                          {item.current_stage ? ` · ${item.current_stage}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <small>
+                      管理组织与本人党员档案支部分开；普通党员/申请人建议必须关联。
+                    </small>
+                  </Field>
+                )}
                 {selected && (
                   <Field label="账号状态" required full>
                     <select
@@ -1644,7 +1701,7 @@ export function PlatformAccounts() {
               <FormActions
                 busy={busy}
                 close={() => setModal(null)}
-                label={selected ? "保存修改" : "创建管理员"}
+                label={selected ? "保存修改" : "创建账号"}
               />
             </form>
           ) : modal.mode === "detail" ? (
@@ -1669,7 +1726,11 @@ export function PlatformAccounts() {
                     "平台全局"}
                 </dd>
                 <dt>本人档案绑定</dt>
-                <dd>{selected.profile_id ? "已明确绑定" : "无本人档案绑定"}</dd>
+                <dd>
+                  {selected.member_profile_name
+                    ? `${selected.member_profile_name}${selected.member_profile_org ? ` · ${selected.member_profile_org}` : ""}`
+                    : "未关联本人档案"}
+                </dd>
                 <dt>密码安全</dt>
                 <dd>
                   {selected.force_password_change

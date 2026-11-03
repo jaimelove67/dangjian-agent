@@ -149,6 +149,13 @@ class UserCreate(StrictInput):
         return value
 
 
+class MemberProfileLink(StrictInput):
+    """账号与本人党员档案的关联/解除，不影响账号管理组织。"""
+
+    profile_id: str | None = Field(None, max_length=36)
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
 class UserUpdate(StrictInput):
     name: str | None = Field(None, min_length=1, max_length=50)
     role: UserRole | None = None

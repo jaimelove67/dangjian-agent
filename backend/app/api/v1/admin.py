@@ -87,7 +87,7 @@ async def member_candidates(
     tenant_id: Optional[str] = Query(
         None, max_length=36, description="跨租户开户仅平台系统管理员可用"
     ),
-    user: User = Depends(_require_system_admin),
+    user: User = Depends(_require_identity),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[list[AccountMemberOption]]:
     """列出尚未绑定登录账号的党员档案，供开户页直接选人。
@@ -105,6 +105,7 @@ async def member_candidates(
                         MemberProfile.tenant_id == str(target.id),
                         MemberProfile.user_id.is_(None),
                         MemberProfile.is_active.is_(True),
+                        MemberProfile.is_deleted.is_(False),
                     )
                     .order_by(MemberProfile.org_name, MemberProfile.name)
                 )
@@ -175,7 +176,7 @@ async def create_account(
     tenant_id: Optional[str] = Query(
         None, max_length=36, description="跨租户开户仅平台系统管理员可用"
     ),
-    user: User = Depends(_require_system_admin),
+    user: User = Depends(_require_identity),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[AccountCreated]:
     """创建账号，并在同一事务内记录不含密码的审计日志。
@@ -184,6 +185,8 @@ async def create_account(
     省略时落在当前登录租户，不改变既有行为；跨租户检索需绕过自动租户过滤。
     """
     target = str((await IdentityService(db, user).tenant(tenant_id)).id)
+    if user.role != UserRole.SYSTEM_ADMIN and body.role == UserRole.SYSTEM_ADMIN:
+        raise HTTPException(403, "学校管理员不能创建平台管理员账号")
     with bypass_tenant_filter():
         # 指定党员档案时，人员的姓名与归属以档案为准：名册才是组织关系的事实来源，
         # 开户表单里的同名/同组织输入只用于未选档案的手工开户。
@@ -196,6 +199,7 @@ async def create_account(
                         MemberProfile.id == body.member_id,
                         MemberProfile.tenant_id == target,
                         MemberProfile.is_active.is_(True),
+                        MemberProfile.is_deleted.is_(False),
                     )
                     .with_for_update()
                 )
@@ -204,11 +208,12 @@ async def create_account(
                 raise HTTPException(status_code=404, detail="党员档案不存在或已停用")
             if profile.user_id:
                 raise HTTPException(status_code=409, detail="该党员档案已关联其他账号")
-        effective_org_id = (
-            str(profile.org_unit_id)
-            if profile is not None and profile.org_unit_id
-            else body.org_unit_id
-        )
+        # 普通党员/申请人以本人档案所在支部为账号组织；管理账号的管理组织与
+        # 本人档案支部相互独立，不能再用档案组织覆盖学校/院系授权范围。
+        if profile is not None and body.role in {UserRole.MEMBER, UserRole.APPLICANT}:
+            effective_org_id = str(profile.org_unit_id) if profile.org_unit_id else body.org_unit_id
+        else:
+            effective_org_id = body.org_unit_id
         organization: OrgUnit | None = None
         if effective_org_id:
             organization = (
@@ -233,11 +238,10 @@ async def create_account(
             if expected_types and organization.org_type not in expected_types:
                 raise HTTPException(status_code=422, detail="所选角色与组织类型不匹配")
 
-        # 登录账号优先取档案身份证号：学校习惯用身份证登录，也省掉手敲 18 位的错误。
-        username = (
-            profile.id_card_no
-            if profile is not None and profile.id_card_no
-            else (body.username or "")
+        # 开户表单填写了登录账号时以表单为准；仅在未填写时用档案身份证号补位，
+        # 兼顾学校用身份证登录的习惯与新增账号页明确填写的账号。
+        username = body.username or (
+            profile.id_card_no if profile is not None and profile.id_card_no else ""
         )
         if not username:
             raise HTTPException(

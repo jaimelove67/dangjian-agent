@@ -271,12 +271,18 @@ def test_unlinked_account_never_matches_a_same_name_profile(workspace):
     assert workspace.session.scalar(select(func.count(MemberMaterial.id))) == 0
 
 
-@pytest.mark.parametrize("changed", ["org", "deleted", "inactive", "deleted_org"])
-def test_inactive_or_wrong_org_archive_is_not_available(workspace, changed):
+def test_archive_survives_account_organization_change(workspace):
+    """管理组织调整不等同于本人档案失效，档案仍按账号关联返回。"""
+    workspace.user.org_unit_id = "branch-b"
+    workspace.session.commit()
+    archive = workspace.client.get("/api/v1/member/self/archive").json()["data"]
+    assert archive["profile"]["id"] == "self-profile"
+
+
+@pytest.mark.parametrize("changed", ["deleted", "inactive", "deleted_org"])
+def test_inactive_or_deleted_org_archive_is_not_available(workspace, changed):
     profile = workspace.session.get(MemberProfile, "self-profile")
-    if changed == "org":
-        workspace.user.org_unit_id = "branch-b"
-    elif changed == "deleted":
+    if changed == "deleted":
         profile.is_deleted = True
     elif changed == "deleted_org":
         workspace.session.get(OrgUnit, "branch-a").is_deleted = True
@@ -375,14 +381,27 @@ def test_upload_size_and_pagination_limits(workspace, monkeypatch):
     )
 
 
-@pytest.mark.parametrize(
-    "role",
-    [role for role in UserRole if role not in (UserRole.MEMBER, UserRole.APPLICANT)],
-)
-def test_self_service_is_specific_to_member_and_applicant_roles(workspace, role):
-    workspace.user = actor(role=role)
+def test_system_admin_has_no_personal_archive_service(workspace):
+    workspace.user = actor(role=UserRole.SYSTEM_ADMIN)
     assert workspace.client.get("/api/v1/member/self/archive").status_code == 403
     assert workspace.client.get("/api/v1/member/self/materials").status_code == 403
+    assert submit(workspace).status_code == 403
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        UserRole.SCHOOL_ADMIN,
+        UserRole.DEPARTMENT_ADMIN,
+        UserRole.BRANCH_SECRETARY,
+        UserRole.ORGANIZER,
+    ],
+)
+def test_management_roles_can_read_own_archive_but_not_submit_materials(workspace, role):
+    workspace.user = actor(role=role)
+    assert workspace.client.get("/api/v1/member/self/archive").status_code == 200
+    # 本人材料列表与本人档案同属只读自查；提交入口仍只对党员/申请人开放。
+    assert workspace.client.get("/api/v1/member/self/materials").status_code == 200
     assert submit(workspace).status_code == 403
 
 

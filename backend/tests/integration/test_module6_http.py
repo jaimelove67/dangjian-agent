@@ -219,9 +219,8 @@ async def test_school_admin_http_configuration_identity_conflicts_and_safe_respo
         {"parent_id": c["branch"].id},
         status=422,
     )
-    # 开户只允许平台系统管理员（见 ADMINISTRATION.md「系统→创建账号」）。学校管理员在
-    # 治理页点"新增用户"会被服务端拒绝，用例把这条 HTTP 边界固定下来。
-    await call(
+    # 学校管理员可在本校范围内新增业务账号；跨租户开户仍由平台管理员承担。
+    created_response = await call(
         c,
         admin,
         "POST",
@@ -233,10 +232,10 @@ async def test_school_admin_http_configuration_identity_conflicts_and_safe_respo
             "role": "department_admin",
             "org_unit_id": department["id"],
         },
-        status=403,
+        status=201,
     )
+    assert created_response.json()["data"]["role"] == "department_admin"
     # 既有账号的角色/组织一致性校验与读取仍属学校管理员（IDENTITY_MANAGE）职责。
-    # 账号由平台管理员开户，这里直接建库准备被测数据。
     user = User(
         id=str(uuid.uuid4()),
         tenant_id=c["school"].id,
@@ -267,9 +266,124 @@ async def test_school_admin_http_configuration_identity_conflicts_and_safe_respo
     )
 
 
+async def test_school_admin_creates_account_with_profile_and_can_rebind_or_unlink(
+    http_case,
+):
+    c, admin = http_case, http_case["admin"]
+    async with c["maker"]() as db:
+        profiles = [
+            MemberProfile(
+                id=str(uuid.uuid4()),
+                tenant_id=c["school"].id,
+                name=f"待关联人员{index}",
+                org_name=c["branch"].name,
+                org_unit_id=c["branch"].id,
+                current_stage="applicant",
+                stage_joined_on=date(2026, 1, 1),
+                is_active=True,
+            )
+            for index in range(3)
+        ]
+        foreign = MemberProfile(
+            id=str(uuid.uuid4()),
+            tenant_id=c["other_school"].id,
+            name="外校人员",
+            org_name="外校支部",
+            org_unit_id=None,
+            current_stage="applicant",
+            stage_joined_on=date(2026, 1, 1),
+            is_active=True,
+        )
+        with bypass_tenant_filter():
+            db.add_all([*profiles, foreign])
+            await db.commit()
+
+    username = "school_created_" + uuid.uuid4().hex
+    created_response = await call(
+        c,
+        admin,
+        "POST",
+        "/admin/users",
+        {
+            "username": username,
+            "name": "学校管理员开户人员",
+            "password": "Isolated_Test_2026!",
+            "role": "member",
+            "org_unit_id": c["branch"].id,
+            "member_id": profiles[0].id,
+        },
+        status=201,
+    )
+    created = created_response.json()["data"]
+    async with c["maker"]() as db:
+        assert (await db.get(MemberProfile, profiles[0].id)).user_id == created["id"]
+
+    rebound = await call(
+        c,
+        admin,
+        "PUT",
+        f"/admin/users/{created['id']}/member-profile",
+        {"profile_id": profiles[2].id, "reason": "调整本人档案关联"},
+    )
+    assert rebound["member_profile_id"] == profiles[2].id
+    async with c["maker"]() as db:
+        assert (await db.get(MemberProfile, profiles[0].id)).user_id is None
+        assert (await db.get(MemberProfile, profiles[2].id)).user_id == created["id"]
+
+    unlinked = await call(
+        c,
+        admin,
+        "PUT",
+        f"/admin/users/{created['id']}/member-profile",
+        {"profile_id": None, "reason": "账号不再关联本人档案"},
+    )
+    assert unlinked["member_profile_id"] is None
+    async with c["maker"]() as db:
+        assert (await db.get(MemberProfile, profiles[2].id)).user_id is None
+
+    # 管理账号的本人档案可以独立于管理组织，并可从本人档案读取。
+    await call(
+        c,
+        admin,
+        "PUT",
+        f"/admin/users/{admin.id}/member-profile",
+        {"profile_id": profiles[1].id, "reason": "学校管理员关联本人档案"},
+    )
+    archive = await call(c, admin, "GET", "/member/self/archive")
+    assert archive["profile"]["id"] == profiles[1].id
+
+    await call(
+        c,
+        admin,
+        "PUT",
+        f"/admin/users/{created['id']}/member-profile",
+        {"profile_id": profiles[1].id, "reason": "重复关联应拒绝"},
+        status=409,
+    )
+    await call(
+        c,
+        admin,
+        "POST",
+        "/admin/users",
+        {
+            "username": "cross_" + uuid.uuid4().hex[:16],
+            "name": "跨校人员",
+            "password": "Isolated_Test_2026!",
+            "role": "member",
+            "org_unit_id": c["branch"].id,
+            "member_id": foreign.id,
+        },
+        status=404,
+    )
+    users = await call(c, admin, "GET", "/admin/users")
+    rows = {row["id"]: row for row in users["items"]}
+    assert rows[admin.id]["member_profile_name"] == profiles[1].name
+    assert rows[created["id"]]["member_profile_name"] == ""
+
+
 async def test_same_signed_token_observes_role_user_and_ancestor_revocation(http_case):
     c, admin = http_case, http_case["admin"]
-    # 开户限平台系统管理员，这里直接建库准备待撤销的学校管理员账号。
+    # 直接建库准备待撤销的学校管理员账号，避免额外依赖开户接口。
     actor = User(
         id=str(uuid.uuid4()),
         tenant_id=c["school"].id,
@@ -1244,7 +1358,8 @@ async def test_audit_export_package_is_self_documenting_and_capped(http_case, mo
                     await db.execute(
                         select(AuditLog).where(
                             AuditLog.tenant_id == c["school"].id,
-                            AuditLog.action == "export", AuditLog.resource_type == "audit_log"
+                            AuditLog.action == "export",
+                            AuditLog.resource_type == "audit_log",
                         )
                     )
                 )

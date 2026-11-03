@@ -1288,8 +1288,11 @@ export function Profile() {
   const [error, setError] = useState(null);
   const [edit, setEdit] = useState(false);
   const student = session.user.role === "member";
+  const managerArchive = !["member", "applicant", "system_admin"].includes(
+    session.user.role,
+  );
   useEffect(() => {
-    if (IS_LIVE && ["member", "applicant"].includes(session.user.role))
+    if (IS_LIVE && session.user.role !== "system_admin")
       backend.self().then(setArchive).catch(setError);
   }, [session.user.role]);
   const finished = Object.values(data.learning).filter(
@@ -1385,6 +1388,31 @@ export function Profile() {
               note="本学年累计"
             />
           </div>
+          {managerArchive && (
+            <section className="profile-section">
+              <PanelTitle title="本人党员档案" />
+              {archive?.profile ? (
+                <dl className="detail-list">
+                  <dt>档案姓名</dt>
+                  <dd>{archive.profile.name}</dd>
+                  <dt>所属支部</dt>
+                  <dd>{archive.profile.org_name || "未登记"}</dd>
+                  <dt>当前阶段</dt>
+                  <dd>
+                    {archive.profile.current_stage ||
+                      archive.profile.stage ||
+                      "未登记"}
+                  </dd>
+                  <dt>档案编号</dt>
+                  <dd>{archive.profile.id}</dd>
+                </dl>
+              ) : (
+                <p className="muted">
+                  当前账号尚未关联本人党员档案，请联系学校管理员在账号管理中关联。
+                </p>
+              )}
+            </section>
+          )}
           <section className="profile-section">
             <PanelTitle
               title="最近学习"

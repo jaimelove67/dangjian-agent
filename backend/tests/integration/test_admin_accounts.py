@@ -20,7 +20,8 @@ from app.db.session import get_db
 from app.main import http_exception_handler, validation_exception_handler
 from app.models.account_security import LoginSession, PasswordChange, PasswordRequest
 from app.models.audit import AuditLog
-from app.models.org import OrgUnit
+from app.models.member import MemberProfile
+from app.models.org import OrgLeaderTerm, OrgUnit
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 
@@ -90,6 +91,8 @@ def workspace(monkeypatch):
             LoginSession.__table__,
             PasswordRequest.__table__,
             PasswordChange.__table__,
+            MemberProfile.__table__,
+            OrgLeaderTerm.__table__,
         ],
     )
     with Session(engine, expire_on_commit=False) as session:
@@ -199,21 +202,29 @@ def test_account_endpoints_require_authentication(workspace, path):
     assert workspace.session.scalar(select(func.count(User.id))) == 1
 
 
-@pytest.mark.parametrize("role", [role for role in UserRole if role != UserRole.SYSTEM_ADMIN])
+@pytest.mark.parametrize(
+    "role",
+    [role for role in UserRole if role not in {UserRole.SYSTEM_ADMIN, UserRole.SCHOOL_ADMIN}],
+)
 def test_other_roles_cannot_create_accounts_even_with_an_old_admin_token(workspace, role):
     workspace.actor.role = role
     workspace.session.commit()
     assert create(workspace).status_code == 403
-    if role != UserRole.SCHOOL_ADMIN:
-        assert (
-            workspace.client.get("/api/v1/admin/org-units", headers=workspace.headers).status_code
-            == 403
-        )
+    assert (
+        workspace.client.get("/api/v1/admin/org-units", headers=workspace.headers).status_code
+        == 403
+    )
+    assert (
+        workspace.client.get(
+            "/api/v1/admin/member-candidates", headers=workspace.headers
+        ).status_code
+        == 403
+    )
     assert workspace.session.scalar(select(func.count(User.id))) == 1
     assert workspace.session.scalar(select(func.count(AuditLog.id))) == 0
 
 
-def test_school_admin_can_read_only_own_account_organization_options(workspace):
+def test_school_admin_can_create_and_read_only_own_school_accounts(workspace):
     workspace.actor.role = UserRole.SCHOOL_ADMIN
     workspace.actor.org_unit_id = "school-a"
     workspace.session.get(OrgUnit, "department-a").parent_id = "school-a"
@@ -232,13 +243,27 @@ def test_school_admin_can_read_only_own_account_organization_options(workspace):
         ).status_code
         == 403
     )
-    assert create(workspace).status_code == 403
     assert (
         workspace.client.get(
             "/api/v1/admin/member-candidates", headers=workspace.headers
         ).status_code
+        == 200
+    )
+    assert create(workspace).status_code == 201
+    assert (
+        create(
+            workspace, username="platform-account", role="system_admin", org_unit_id=None
+        ).status_code
         == 403
     )
+    assert create(workspace, username="foreign-org", org_unit_id="branch-b").status_code == 403
+    cross_tenant = workspace.client.post(
+        "/api/v1/admin/users?tenant_id=account-tenant-b",
+        headers=workspace.headers,
+        json=payload(username="cross-tenant"),
+    )
+    assert cross_tenant.status_code == 403
+    assert workspace.session.scalar(select(func.count(User.id))) == 2
 
 
 def test_created_account_is_hashed_audited_and_can_log_in(workspace):

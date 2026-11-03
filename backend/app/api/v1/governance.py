@@ -28,6 +28,7 @@ from app.models.user import User
 from app.schemas.common import APIResponse
 from app.schemas.governance import (
     JobCreate,
+    MemberProfileLink,
     OrgCreate,
     OrgLeaderCreate,
     OrgLeaderReplace,
@@ -261,10 +262,19 @@ async def users(
     user: User = Depends(identity_admin),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict[str, Any]]:
-    return response(
-        request,
-        {"items": [public_record(row) for row in await IdentityService(db, user).users(tenant_id)]},
-    )
+    service = IdentityService(db, user)
+    rows = await service.users(tenant_id)
+    tenant = await service.tenant(tenant_id)
+    profiles = await service.linked_profiles(str(tenant.id), [str(row.id) for row in rows])
+    items = []
+    for row in rows:
+        data = public_record(row)
+        profile = profiles.get(str(row.id))
+        data["member_profile_id"] = str(profile.id) if profile else None
+        data["member_profile_name"] = profile.name if profile else ""
+        data["member_profile_org"] = profile.org_name if profile else ""
+        items.append(data)
+    return response(request, {"items": items})
 
 
 @router.patch("/admin/users/{record_id}")
@@ -281,6 +291,50 @@ async def update_user(
     # 审计只标注"密码被重置"，绝不落明文或哈希。
     extra = {"password_reset": True} if values.get("password") else None
     return await changed(db, request, user, row, "update", "user", extra=extra)
+
+
+@router.put("/admin/users/{record_id}/member-profile")
+async def link_user_member_profile(
+    record_id: str,
+    body: MemberProfileLink,
+    request: Request,
+    tenant_id: str | None = Query(None, max_length=36),
+    user: User = Depends(identity_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict[str, Any]]:
+    """由平台/学校管理员为账号关联或解除本人党员档案。"""
+    service = IdentityService(db, user)
+    try:
+        row = await service.bind_member_profile(tenant_id, record_id, body.profile_id)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "党员档案关联冲突，请刷新后重试") from None
+    tenant = await service.tenant(tenant_id)
+    profile = (await service.linked_profiles(str(tenant.id), [str(row.id)])).get(str(row.id))
+    data = public_record(row)
+    data["member_profile_id"] = str(profile.id) if profile else None
+    data["member_profile_name"] = profile.name if profile else ""
+    data["member_profile_org"] = profile.org_name if profile else ""
+    try:
+        await audit_operation(
+            db,
+            request,
+            user,
+            action="link_member_profile",
+            resource_type="user",
+            resource_id=str(row.id),
+            data_level="sensitive",
+            new_value={
+                "member_profile_id": data["member_profile_id"],
+                "member_profile_name": data["member_profile_name"],
+                "reason": body.reason,
+            },
+        )
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "党员档案关联冲突，请刷新后重试") from None
+    return response(request, data)
 
 
 @router.get("/admin/governance")

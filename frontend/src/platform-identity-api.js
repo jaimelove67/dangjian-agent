@@ -17,6 +17,13 @@ export const platformIdentityApi = {
   updateTenant: (id, body) =>
     request(`/admin/tenants/${key(id)}`, json("PATCH", body)),
   users: (tenantId) => request("/admin/users" + query({ tenant_id: tenantId })),
+  memberCandidates: (tenantId) =>
+    request("/admin/member-candidates" + query({ tenant_id: tenantId })),
+  linkMemberProfile: (tenantId, userId, body) =>
+    request(
+      `/admin/users/${key(userId)}/member-profile` + query({ tenant_id: tenantId }),
+      json("PUT", body),
+    ),
   orgs: (tenantId) =>
     request("/admin/org-units" + query({ tenant_id: tenantId })),
   createUser: (tenantId, body) =>
@@ -42,12 +49,10 @@ export const ADMIN_ROLES = [
   "organizer",
 ];
 export const ACCOUNT_ROLES = [...ADMIN_ROLES, "member", "applicant"];
-export function accountRolesForTenant(tenant, { create = false } = {}) {
+export function accountRolesForTenant(tenant) {
   if (tenant?.tenant_type === "platform") return ["system_admin"];
   if (tenant?.tenant_type !== "school") return [];
-  return (create ? ADMIN_ROLES : ACCOUNT_ROLES).filter(
-    (role) => role !== "system_admin",
-  );
+  return ACCOUNT_ROLES.filter((role) => role !== "system_admin");
 }
 export function accountOrgTypes(role) {
   return role === "system_admin"
