@@ -36,6 +36,7 @@ from app.models.member import (
     MemberVote,
 )
 from app.models.user import User, UserRole
+from app.rules.application_form_checklist import APPLICATION_FORM_CHECKLIST
 from app.rules.data_sensitivity import (
     annotate_level,
     cloud_allowed,
@@ -46,6 +47,8 @@ from app.rules.data_sensitivity import (
     vote_level,
 )
 from app.rules.member_league import age_on
+from app.rules.member_outcomes import PROBATION_OUTCOME_REASONS
+from app.rules.member_secondary import SECONDARY_REVIEW_NODES
 from app.rules.member_stages import (
     MIN_TRAINING_DAYS,
     MIN_TRAINING_HOURS,
@@ -56,6 +59,10 @@ from app.rules.member_stages import (
     load_stage_rules,
     political_review_blocker,
     training_blocker,
+)
+from app.rules.political_review import (
+    POLITICAL_REVIEW_ASPECTS,
+    POLITICAL_REVIEW_NEGATIVE_CATEGORIES,
 )
 from app.schemas.member_ext import (
     ArchiveCheckRun,
@@ -93,11 +100,13 @@ PROCEDURE_MIN_STAGE: dict[str, MemberStage] = {
     "branch_committee_review": MemberStage.CANDIDATE,
     "upper_pre_review": MemberStage.CANDIDATE,
     "application_form": MemberStage.CANDIDATE,
+    "publicity": MemberStage.CANDIDATE,
     "upper_talk": MemberStage.PROBATIONARY,
     "branch_vote": MemberStage.CANDIDATE,
     "probation_outcome": MemberStage.PROBATIONARY,
     "higher_record": MemberStage.PROBATIONARY,
     "party_group": MemberStage.PROBATIONARY,
+    "secondary_review": MemberStage.ACTIVIST,
 }
 PROCEDURE_TITLES: dict[str, str] = {
     "contact": "培养联系人",
@@ -105,11 +114,13 @@ PROCEDURE_TITLES: dict[str, str] = {
     "branch_committee_review": "支委会审查",
     "upper_pre_review": "上级党委预审",
     "application_form": "入党志愿书",
+    "publicity": "公示",
     "upper_talk": "上级党委派人谈话",
     "branch_vote": "支部大会票决",
     "probation_outcome": "预备党员转正结果",
     "higher_record": "再上一级党委组织部门备案",
     "party_group": "编入党支部和党小组",
+    "secondary_review": "二级党组织审议与组织员签字",
 }
 PROCEDURE_STATUSES: dict[str, set[str]] = {
     "contact": {"assigned"},
@@ -117,16 +128,20 @@ PROCEDURE_STATUSES: dict[str, set[str]] = {
     "branch_committee_review": {"in_progress", "passed", "failed"},
     "upper_pre_review": {"in_progress", "passed", "supplement", "failed"},
     "application_form": {"draft", "submitted", "reviewed"},
+    "publicity": {"completed"},
     "upper_talk": {"completed"},
     "branch_vote": {"passed", "not_passed"},
     "probation_outcome": {"qualified", "extended", "disqualified"},
     "higher_record": {"recorded"},
     "party_group": {"assigned"},
+    "secondary_review": {"completed"},
 }
 PROCEDURE_REQUIREMENT = (
-    "接收预备党员前应完成培养联系人、入党介绍人、支委会审查、上级党委预审和入党志愿书登记；"
-    "上级党委派人谈话应在上级审批前完成。预备党员转正前应登记支部大会票决和转正结果；"
-    "延长预备期作为独立记录，取消预备党员资格为终态。系统只登记事实，不替代组织程序。"
+    "接收预备党员前应完成培养联系人、2名不同入党介绍人、支委会审查、上级党委预审和入党志愿书登记；"
+    "公示应登记起止日期并按5个工作日核对。上级党委派人谈话应在上级审批前完成。"
+    "预备党员转正前应登记支部大会票决和转正结果；二级党组织审议与专职组织员签字"
+    "按学校节点单独登记。延长预备期作为独立记录，取消预备党员资格为终态。"
+    "系统只登记事实，不替代组织程序。"
 )
 #: 登记权限按程序分组：支部程序由支部日常登记，上级程序由学校/院系办理；
 #: 平台管理员不介入学校党务，其他角色即使具备阶段流转权限也不能代登记。
@@ -143,12 +158,14 @@ PROCEDURE_GROUP: dict[str, str] = {
     "introducer": "branch",
     "branch_committee_review": "branch",
     "application_form": "branch",
+    "publicity": "branch",
     "upper_pre_review": "upper",
     "upper_talk": "upper",
     "branch_vote": "branch",
     "probation_outcome": "branch",
     "higher_record": "upper",
     "party_group": "branch",
+    "secondary_review": "upper",
 }
 
 #: 支部大会票决事项。接收预备党员与转正分别登记，避免把两种决议混成一条。
@@ -199,6 +216,28 @@ def _load_reminder_rules() -> dict[str, Any]:
     return data.get("reminder_rules") or {}
 
 
+def _load_school_rules() -> dict[str, int]:
+    """校本硬门禁配置；0 表示不启用，按档案 year 判断新老批次。"""
+    try:
+        with open(BATCH_RULES_PATH, encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+    except OSError:
+        data = {}
+    rules = data.get("school_rules") or {}
+
+    def year(value: Any) -> int:
+        if isinstance(value, int) and not isinstance(value, bool) and 2000 <= value <= 2100:
+            return value
+        return 0
+
+    return {
+        "secondary_review_hard_gate_from_year": year(
+            rules.get("secondary_review_hard_gate_from_year")
+        ),
+        "publicity_hard_gate_from_year": year(rules.get("publicity_hard_gate_from_year")),
+    }
+
+
 class MemberDevelopment:
     """在请求事务内完成发展业务，提交由 API 层统一管理。"""
 
@@ -247,9 +286,13 @@ class MemberDevelopment:
         if material_type != "入党申请书":
             return
         if document_date is None:
-            raise HTTPException(422, "入党申请书须填写落款日期，用于核验申请时年满18周岁和申请满6个月")
+            raise HTTPException(
+                422, "入党申请书须填写落款日期，用于核验申请时年满18周岁和申请满6个月"
+            )
         if profile.birth_date is None:
-            raise HTTPException(422, "档案缺少出生年月，无法核验入党申请书落款时是否年满18周岁；请先补录档案")
+            raise HTTPException(
+                422, "档案缺少出生年月，无法核验入党申请书落款时是否年满18周岁；请先补录档案"
+            )
         if document_date < profile.birth_date:
             raise HTTPException(422, "入党申请书落款日期不能早于出生年月，请核对档案")
         age = age_on(profile.birth_date, document_date)
@@ -664,6 +707,364 @@ class MemberDevelopment:
             items[index] = masked
         return items
 
+    async def policy_checks(
+        self,
+        profile_id: str,
+        materials: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """校本时限核对：返回可自动核算的提示，不把人工判断伪装成系统结论。
+
+        核对谈话、公示、季度汇报、半年考察、转正申请和上级预审等已经登记的事实；
+        没有登记起止日期的项目明确返回待登记或待核对，不用其他日期倒推。
+        """
+        if materials is None:
+            materials = await self.list_materials(profile_id)
+        profile = await self.profile(profile_id)
+        publicity = await self._current_procedure(profile_id, "publicity")
+
+        def material_date(item: dict[str, Any], *, use_submit_fallback: bool = True) -> date | None:
+            value = item.get("document_date")
+            if not value and use_submit_fallback:
+                value = item.get("submit_date")
+            if isinstance(value, datetime):
+                return value.date()
+            if isinstance(value, date):
+                return value
+            if isinstance(value, str) and value:
+                try:
+                    return date.fromisoformat(value[:10])
+                except ValueError:
+                    return None
+            return None
+
+        approved = [
+            item
+            for item in materials
+            if item.get("review_status") == "approved" and not item.get("legacy_material")
+        ]
+        application_dates = [
+            value
+            for item in approved
+            if item.get("material_type") == "入党申请书"
+            if (value := material_date(item, use_submit_fallback=False)) is not None
+        ]
+        talk_dates = [
+            value
+            for item in approved
+            if item.get("material_type") == "党组织谈话记录"
+            if (value := material_date(item)) is not None
+        ]
+        application_on = min(application_dates) if application_dates else None
+        if application_on is not None:
+            after_application = [value for value in talk_dates if value >= application_on]
+            talk_on = (
+                min(after_application)
+                if after_application
+                else (min(talk_dates) if talk_dates else None)
+            )
+        else:
+            talk_on = min(talk_dates) if talk_dates else None
+        deadline = add_months(application_on, 1) if application_on else None
+        if application_on is None:
+            talk_check = {
+                "status": "unknown",
+                "label": "待补录",
+                "message": "未登记已核验入党申请书的落款日期，无法核算 1 个月谈话时限。",
+            }
+        elif talk_on is None:
+            talk_check = {
+                "status": "pending",
+                "label": "待补录",
+                "message": f"应在 {deadline.isoformat()} 前完成谈话并归档记录。",
+            }
+        elif talk_on < application_on:
+            talk_check = {
+                "status": "invalid",
+                "label": "待核对",
+                "message": f"谈话日期 {talk_on.isoformat()} 早于申请日期 {application_on.isoformat()}，请核对材料。",
+            }
+        elif talk_on > deadline:
+            talk_check = {
+                "status": "overdue",
+                "label": "已超期",
+                "message": (
+                    f"谈话日期 {talk_on.isoformat()} 晚于应完成日期 {deadline.isoformat()}；"
+                    "细则要求收到申请书后 1 个月内派人谈话。"
+                ),
+            }
+        else:
+            talk_check = {
+                "status": "ok",
+                "label": "符合",
+                "message": f"谈话日期 {talk_on.isoformat()}，在 {deadline.isoformat()} 前完成。",
+            }
+        publicity_details = (publicity.details or {}) if publicity else {}
+        try:
+            publicity_days = int(publicity_details.get("working_days") or 0)
+        except (TypeError, ValueError):
+            publicity_days = 0
+        publicity_hard_gate = self._school_gate_enabled(profile, "publicity_hard_gate_from_year")
+        if publicity is None:
+            publicity_check = {
+                "status": "pending",
+                "label": "待登记",
+                "hard_gate": publicity_hard_gate,
+                "message": (
+                    "细则要求公示 5 个工作日；请在“发展程序”中登记公示起止日期，"
+                    "系统按周一至周五核算，不替代“公示情况报告”原件。"
+                ),
+            }
+        elif publicity_days < 5:
+            publicity_check = {
+                "status": "invalid",
+                "label": "待核对",
+                "hard_gate": publicity_hard_gate,
+                "message": f"已登记公示 {publicity_days} 个工作日，未满 5 个工作日，请核对起止日期。",
+            }
+        else:
+            publicity_check = {
+                "status": "ok",
+                "label": "符合",
+                "hard_gate": publicity_hard_gate,
+                "message": (
+                    f"公示期 {publicity_details.get('start_on', '未登记')} 至 "
+                    f"{publicity_details.get('end_on', '未登记')}，"
+                    f"共 {publicity_days} 个工作日。"
+                ),
+            }
+
+        def latest_material_on(types: set[str]) -> date | None:
+            dates = [
+                value
+                for item in approved
+                if item.get("material_type") in types
+                if (value := material_date(item)) is not None
+            ]
+            return max(dates) if dates else None
+
+        stage = profile.current_stage
+        today = date.today()
+        report_latest = latest_material_on({"思想汇报"})
+        report_due = (report_latest or profile.stage_joined_on) + timedelta(days=90)
+        if stage not in {"activist", "candidate", "probationary"}:
+            quarterly_check = {
+                "status": "not_applicable",
+                "label": "不适用",
+                "message": "",
+            }
+        elif report_latest is None:
+            quarterly_check = {
+                "status": "pending",
+                "label": "待登记",
+                "message": f"本阶段尚未登记思想汇报；应在 {report_due.isoformat()} 前完成首次季度汇报。",
+            }
+        elif today > report_due:
+            quarterly_check = {
+                "status": "overdue",
+                "label": "已超期",
+                "message": f"最近一次思想汇报为 {report_latest.isoformat()}，下一季度汇报应在 {report_due.isoformat()} 前完成。",
+            }
+        else:
+            quarterly_check = {
+                "status": "ok",
+                "label": "符合",
+                "message": f"最近一次思想汇报为 {report_latest.isoformat()}，下一季度汇报应在 {report_due.isoformat()} 前完成。",
+            }
+
+        review_types = {"预备期考察记录"} if stage == "probationary" else {"培养考察记录"}
+        review_latest = latest_material_on(review_types)
+        review_due = (review_latest or profile.stage_joined_on) + timedelta(days=180)
+        if stage not in {"activist", "candidate", "probationary"}:
+            semi_annual_check = {
+                "status": "not_applicable",
+                "label": "不适用",
+                "message": "",
+            }
+        elif review_latest is None:
+            semi_annual_check = {
+                "status": "pending",
+                "label": "待登记",
+                "message": f"本阶段尚未登记培养考察记录；应在 {review_due.isoformat()} 前完成首次半年考察。",
+            }
+        elif today > review_due:
+            semi_annual_check = {
+                "status": "overdue",
+                "label": "已超期",
+                "message": f"最近一次培养考察记录为 {review_latest.isoformat()}，下一次半年考察应在 {review_due.isoformat()} 前完成。",
+            }
+        else:
+            semi_annual_check = {
+                "status": "ok",
+                "label": "符合",
+                "message": f"最近一次培养考察记录为 {review_latest.isoformat()}，下一次半年考察应在 {review_due.isoformat()} 前完成。",
+            }
+
+        transfer_application = latest_material_on({"转正申请书"})
+        transfer_due = profile.stage_joined_on + timedelta(days=365)
+        transfer_apply_by = transfer_due - timedelta(days=7)
+        if stage != "probationary":
+            transfer_check = {
+                "status": "not_applicable",
+                "label": "不适用",
+                "message": "",
+            }
+        elif transfer_application is None:
+            transfer_check = {
+                "status": "pending",
+                "label": "待提交",
+                "message": f"预备期满前一周提出转正申请，应在 {transfer_apply_by.isoformat()} 前完成。",
+            }
+        elif transfer_application > transfer_apply_by:
+            transfer_check = {
+                "status": "overdue",
+                "label": "已超期",
+                "message": f"转正申请日期 {transfer_application.isoformat()} 晚于应提出日期 {transfer_apply_by.isoformat()}。",
+            }
+        else:
+            transfer_check = {
+                "status": "ok",
+                "label": "符合",
+                "message": f"转正申请日期 {transfer_application.isoformat()}，不晚于 {transfer_apply_by.isoformat()}。",
+            }
+
+        pre_review = await self._current_procedure(profile_id, "upper_pre_review")
+        pre_review_details = (pre_review.details or {}) if pre_review else {}
+        submitted_raw = pre_review_details.get("submitted_on")
+        submitted_on: date | None = None
+        if isinstance(submitted_raw, str) and submitted_raw:
+            try:
+                submitted_on = date.fromisoformat(submitted_raw[:10])
+            except ValueError:
+                submitted_on = None
+        if stage != "candidate":
+            pre_review_check = {
+                "status": "not_applicable",
+                "label": "不适用",
+                "message": "",
+            }
+        elif pre_review is None:
+            pre_review_check = {
+                "status": "pending",
+                "label": "待登记",
+                "message": "尚未登记上级党委预审；请先登记报送日期和预审结论。",
+            }
+        elif submitted_on is None:
+            pre_review_check = {
+                "status": "unknown",
+                "label": "待补录",
+                "message": "预审记录缺少报送日期，无法核算 1 个月时限；请补录后核对。",
+            }
+        else:
+            pre_due = add_months(submitted_on, 1)
+            if pre_review.occurred_on > pre_due:
+                pre_review_check = {
+                    "status": "overdue",
+                    "label": "已超期",
+                    "message": f"预审日期 {pre_review.occurred_on.isoformat()} 晚于应完成日期 {pre_due.isoformat()}。",
+                }
+            else:
+                pre_review_check = {
+                    "status": "ok",
+                    "label": "符合",
+                    "message": f"预审日期 {pre_review.occurred_on.isoformat()}，在 {pre_due.isoformat()} 前完成。",
+                }
+
+        application_form = await self._current_procedure(profile_id, "application_form")
+        form_checklist = (
+            (application_form.details or {}).get("checklist", []) if application_form else []
+        )
+        if not isinstance(form_checklist, list):
+            form_checklist = []
+        if stage != "candidate":
+            form_check = {
+                "status": "not_applicable",
+                "label": "不适用",
+                "message": "",
+            }
+        elif application_form is None:
+            form_check = {
+                "status": "pending",
+                "label": "待登记",
+                "message": "尚未登记入党志愿书；请填写后逐项核对 19 项规范。",
+            }
+        elif application_form.status == "draft":
+            form_check = {
+                "status": "pending",
+                "label": "填写中",
+                "message": f"志愿书正在填写；已勾选 {len(form_checklist)}/{len(APPLICATION_FORM_CHECKLIST)} 项。",
+            }
+        elif len(form_checklist) < len(APPLICATION_FORM_CHECKLIST):
+            form_check = {
+                "status": "pending",
+                "label": "待核对",
+                "message": f"志愿书核对清单已勾选 {len(form_checklist)}/{len(APPLICATION_FORM_CHECKLIST)} 项。",
+            }
+        else:
+            form_check = {
+                "status": "ok",
+                "label": "符合",
+                "message": f"志愿书核对清单已勾选 {len(APPLICATION_FORM_CHECKLIST)} 项。",
+            }
+
+        secondary_items = [
+            row for row in await self._procedure_rows(profile_id) if row.kind == "secondary_review"
+        ]
+        secondary_nodes = {(row.details or {}).get("node") for row in secondary_items}
+        if stage == "activist":
+            required_nodes = ("candidate_determination",)
+        elif stage == "candidate":
+            required_nodes = (
+                "candidate_determination",
+                "pre_reception",
+                "reception",
+            )
+        elif stage == "probationary":
+            required_nodes = ("conversion",)
+        else:
+            required_nodes = ()
+        secondary_hard_gate = self._school_gate_enabled(
+            profile, "secondary_review_hard_gate_from_year"
+        )
+        if not required_nodes:
+            secondary_check = {
+                "status": "not_applicable",
+                "label": "不适用",
+                "hard_gate": False,
+                "message": "",
+            }
+        else:
+            missing_nodes = [
+                SECONDARY_REVIEW_NODES[node]["label"]
+                for node in required_nodes
+                if node not in secondary_nodes
+            ]
+            if missing_nodes:
+                secondary_check = {
+                    "status": "pending",
+                    "label": "待登记",
+                    "hard_gate": secondary_hard_gate,
+                    "message": "待登记二级党组织审议与组织员签字："
+                    + "、".join(str(label) for label in missing_nodes),
+                }
+            else:
+                secondary_check = {
+                    "status": "ok",
+                    "label": "符合",
+                    "hard_gate": secondary_hard_gate,
+                    "message": "本阶段要求的二级党组织审议与组织员签字已登记。",
+                }
+
+        return {
+            "talk_within_one_month": talk_check,
+            "publicity_five_workdays": publicity_check,
+            "quarterly_report": quarterly_check,
+            "semi_annual_review": semi_annual_check,
+            "transfer_application": transfer_check,
+            "upper_pre_review_within_one_month": pre_review_check,
+            "application_form_checklist": form_check,
+            "secondary_review": secondary_check,
+        }
+
     async def review_material(self, material_id: str, body: MaterialReview) -> MemberMaterial:
         material = (
             await self.db.execute(
@@ -844,6 +1245,14 @@ class MemberDevelopment:
                     422,
                     "培养联系人未登记，请先在“发展程序”中登记培养联系人",
                 )
+            procedures = await self._procedure_rows(str(profile.id))
+            if self._school_gate_enabled(
+                profile, "secondary_review_hard_gate_from_year"
+            ) and "candidate_determination" not in self._secondary_nodes(procedures):
+                raise HTTPException(
+                    422,
+                    "本校硬控批次确定发展对象前须登记二级党组织会议审议和专职组织员签字",
+                )
         if (
             profile.current_stage == MemberStage.CANDIDATE.value
             and body.target_stage == MemberStage.PROBATIONARY.value
@@ -854,11 +1263,15 @@ class MemberDevelopment:
                     422,
                     "培养联系人未登记，请先在“发展程序”中登记培养联系人",
                 )
-            introducer = await self._current_procedure(str(profile.id), "introducer")
-            if introducer is None:
+            introducers = [
+                row
+                for row in await self._procedure_rows(str(profile.id))
+                if row.kind == "introducer"
+            ]
+            if len({self._introducer_key(row) for row in introducers}) < 2:
                 raise HTTPException(
                     422,
-                    "入党介绍人未登记，请先在“发展程序”中登记入党介绍人",
+                    "入党介绍人须登记2名不同正式党员，请先在“发展程序”中补齐入党介绍人",
                 )
             branch_review = await self._current_procedure(
                 str(profile.id), "branch_committee_review"
@@ -874,9 +1287,7 @@ class MemberDevelopment:
                     422,
                     "上级党委预审未通过或未登记，请先在“发展程序”中登记预审结论",
                 )
-            application_form = await self._current_procedure(
-                str(profile.id), "application_form"
-            )
+            application_form = await self._current_procedure(str(profile.id), "application_form")
             if application_form is None or application_form.status not in {
                 "submitted",
                 "reviewed",
@@ -884,6 +1295,29 @@ class MemberDevelopment:
                 raise HTTPException(
                     422,
                     "入党志愿书未提交或未登记，请先在“发展程序”中登记入党志愿书",
+                )
+            procedures = await self._procedure_rows(str(profile.id))
+            if self._school_gate_enabled(profile, "secondary_review_hard_gate_from_year"):
+                required_nodes = {
+                    "candidate_determination": "确定发展对象",
+                    "pre_reception": "接收预备党员前支委会审查",
+                    "reception": "接收预备党员支部大会",
+                }
+                nodes = self._secondary_nodes(procedures)
+                missing_nodes = [
+                    label for code, label in required_nodes.items() if code not in nodes
+                ]
+                if missing_nodes:
+                    raise HTTPException(
+                        422,
+                        "本校硬控批次缺少二级党组织审议与组织员签字：" + "、".join(missing_nodes),
+                    )
+            if self._school_gate_enabled(
+                profile, "publicity_hard_gate_from_year"
+            ) and not self._publicity_ready(procedures):
+                raise HTTPException(
+                    422,
+                    "本校硬控批次接收预备党员前须登记公示起止日期并满5个工作日",
                 )
 
         # 预备党员转正与取消资格：只核对组织已经登记的票决和结论事实，不按票数
@@ -918,6 +1352,14 @@ class MemberDevelopment:
                 )
             if vote.status != "passed":
                 raise HTTPException(422, "支部大会转正票决未通过，不能办理按期转正")
+            procedures = await self._procedure_rows(str(profile.id))
+            if self._school_gate_enabled(
+                profile, "secondary_review_hard_gate_from_year"
+            ) and "conversion" not in self._secondary_nodes(procedures):
+                raise HTTPException(
+                    422,
+                    "本校硬控批次预备党员转正前须登记二级党组织会议审议和专职组织员签字",
+                )
 
         if (
             profile.current_stage == MemberStage.PROBATIONARY.value
@@ -954,11 +1396,10 @@ class MemberDevelopment:
         profile.current_stage = body.target_stage
         profile.stage_joined_on = body.decision_date
         await self.db.flush()
-        if (
-            from_stage == MemberStage.PROBATIONARY.value
-            and body.target_stage
-            in {MemberStage.MEMBER.value, MemberStage.DISQUALIFIED.value}
-        ):
+        if from_stage == MemberStage.PROBATIONARY.value and body.target_stage in {
+            MemberStage.MEMBER.value,
+            MemberStage.DISQUALIFIED.value,
+        }:
             # 转正或取消资格后，原预备期到期 / 材料提醒不再适用；18/19/20 的
             # 任务提醒继续保留，直到备案、编组或宣誓实际办结。
             for reminder_kind in (
@@ -1055,6 +1496,29 @@ class MemberDevelopment:
                 raise HTTPException(422, "个人提交材料不能作为政审结论的依据材料")
             if material.material_type != "政治审查材料":
                 raise HTTPException(422, "关联材料类型须为政治审查材料")
+        unknown_checks = set(body.content_checks) - set(POLITICAL_REVIEW_ASPECTS)
+        if unknown_checks:
+            raise HTTPException(422, "政审内容核对项无效")
+        content_checks = {
+            code: bool(body.content_checks.get(code, False)) for code in POLITICAL_REVIEW_ASPECTS
+        }
+        if body.status in {"passed", "failed"} and not all(content_checks.values()):
+            raise HTTPException(
+                422,
+                "形成政审结论前须核对四项内容：" + "、".join(POLITICAL_REVIEW_ASPECTS.values()),
+            )
+        invalid_negative = set(body.negative_categories) - set(POLITICAL_REVIEW_NEGATIVE_CATEGORIES)
+        if invalid_negative:
+            raise HTTPException(422, "政审不合格情形分类无效")
+        negative_categories = [
+            code
+            for code in POLITICAL_REVIEW_NEGATIVE_CATEGORIES
+            if code in set(body.negative_categories)
+        ]
+        checklist = {
+            "content_checks": content_checks,
+            "negative_categories": negative_categories,
+        }
         latest = await self.db.scalar(
             select(func.max(MemberPoliticalReview.revision)).where(
                 MemberPoliticalReview.tenant_id == self.tenant_id,
@@ -1076,6 +1540,7 @@ class MemberDevelopment:
             note=body.note,
             reason=body.reason,
             material_id=body.material_id,
+            checklist=checklist,
             data_level="sensitive",
             revision=(latest or 0) + 1,
         )
@@ -1214,10 +1679,9 @@ class MemberDevelopment:
         items = []
         for record in records:
             data = row_data(record)
-            data["meets_requirement"] = (
-                (record.days or 0) >= MIN_TRAINING_DAYS
-                or (record.hours or 0) >= MIN_TRAINING_HOURS
-            )
+            data["meets_requirement"] = (record.days or 0) >= MIN_TRAINING_DAYS or (
+                record.hours or 0
+            ) >= MIN_TRAINING_HOURS
             data.update(annotate_level(record.data_level or "internal"))
             items.append(data)
         satisfied = any(item["meets_requirement"] for item in items)
@@ -1230,11 +1694,7 @@ class MemberDevelopment:
         notice = (
             "已登记集中培训达到 3 天 / 24 学时要求"
             if satisfied
-            else (
-                "集中培训未达 3 天或 24 学时，请补充培训记录"
-                if items
-                else "尚未登记集中培训"
-            )
+            else ("集中培训未达 3 天或 24 学时，请补充培训记录" if items else "尚未登记集中培训")
         )
         return {
             "items": items,
@@ -1319,9 +1779,7 @@ class MemberDevelopment:
             data = row_data(record)
             level = record.data_level or "internal"
             data.update(annotate_level(level))
-            masked, redacted = redact_third_party(
-                data, level=level, viewer=viewer_level(self.user)
-            )
+            masked, redacted = redact_third_party(data, level=level, viewer=viewer_level(self.user))
             masked["redacted_fields"] = redacted
             items.append(masked)
 
@@ -1334,15 +1792,31 @@ class MemberDevelopment:
 
         contacts = group("contact")
         introducers = group("introducer")
-        introducer_current = introducers[:2]
+        introducer_current: list[dict[str, Any]] = []
+        introducer_keys: set[str] = set()
+        for row in introducers:
+            key = self._introducer_key(row)
+            if key in introducer_keys:
+                continue
+            introducer_keys.add(key)
+            introducer_current.append(row)
+            if len(introducer_current) >= 2:
+                break
         branch_items = group("branch_committee_review")
         pre_review_items = group("upper_pre_review")
         form_items = group("application_form")
+        publicity_items = group("publicity")
         talk_items = group("upper_talk")
         vote_items = group("branch_vote")
         outcome_items = group("probation_outcome")
         higher_record_items = group("higher_record")
         party_group_items = group("party_group")
+        secondary_items = group("secondary_review")
+        secondary_by_node: dict[str, dict[str, Any]] = {}
+        for item in secondary_items:
+            node = (item.get("details") or {}).get("node")
+            if node and node not in secondary_by_node:
+                secondary_by_node[node] = item
 
         return {
             "contacts": {
@@ -1355,12 +1829,12 @@ class MemberDevelopment:
                 "items": introducers,
                 "current": introducer_current,
                 "count": len(introducer_current),
-                "satisfied": bool(introducer_current),
+                "satisfied": len(introducer_current) >= 2,
                 "notice": (
                     "尚未登记入党介绍人"
                     if not introducer_current
                     else (
-                        "已登记1名入党介绍人；细则一般由两名正式党员担任"
+                        "已登记1名入党介绍人；接收预备党员前须登记2名"
                         if len(introducer_current) < 2
                         else "已登记2名入党介绍人"
                     )
@@ -1390,6 +1864,13 @@ class MemberDevelopment:
                 {"submitted": "入党志愿书已提交", "reviewed": "入党志愿书已审核"},
                 "尚未登记入党志愿书",
                 {"draft": "入党志愿书正在填写"},
+            ),
+            "publicity": self._procedure_group(
+                publicity_items,
+                publicity_items[0] if publicity_items else None,
+                {"completed": "公示已满5个工作日"},
+                "尚未登记公示起止日期",
+                {},
             ),
             "upper_talk": self._procedure_group(
                 talk_items,
@@ -1430,6 +1911,17 @@ class MemberDevelopment:
                 "尚未登记编入党支部和党小组",
                 {},
             ),
+            "secondary_review": {
+                "items": secondary_items,
+                "current": secondary_items[0] if secondary_items else None,
+                "by_node": secondary_by_node,
+                "satisfied": bool(secondary_items),
+                "notice": (
+                    f"已登记 {len(secondary_by_node)} 个二级审议节点"
+                    if secondary_items
+                    else "尚未登记二级党组织审议与组织员签字"
+                ),
+            },
             "requirement": PROCEDURE_REQUIREMENT,
             **annotate_level("internal"),
         }
@@ -1478,6 +1970,19 @@ class MemberDevelopment:
         return value
 
     @staticmethod
+    def _working_days(start_on: date, end_on: date) -> int:
+        """按周一至周五计算公示工作日；法定节假日由组织人员按通知核对。"""
+        if end_on < start_on:
+            return 0
+        count = 0
+        cursor = start_on
+        while cursor <= end_on:
+            if cursor.weekday() < 5:
+                count += 1
+            cursor += timedelta(days=1)
+        return count
+
+    @staticmethod
     def _procedure_int(
         details: dict[str, Any],
         key: str,
@@ -1500,6 +2005,48 @@ class MemberDevelopment:
         if value < 0 or value > maximum:
             raise HTTPException(422, f"{label}须为 0 至 {maximum} 的整数")
         return value
+
+    @staticmethod
+    def _introducer_key(row: MemberProcedure | dict[str, Any]) -> str:
+        details = (
+            row.details or {} if isinstance(row, MemberProcedure) else (row.get("details") or {})
+        )
+        linked = str(details.get("linked_profile_id") or "").strip()
+        if linked:
+            return f"profile:{linked}"
+        return "external:{name}|{org}".format(
+            name=str(details.get("external_name") or "").strip(),
+            org=str(details.get("external_org") or "").strip(),
+        )
+
+    @staticmethod
+    def _school_gate_enabled(profile: MemberProfile, key: str) -> bool:
+        threshold = _load_school_rules().get(key, 0)
+        return bool(threshold and profile.year and profile.year >= threshold)
+
+    @staticmethod
+    def _secondary_nodes(procedures: list[MemberProcedure]) -> set[str]:
+        nodes: set[str] = set()
+        for row in procedures:
+            if row.kind != "secondary_review":
+                continue
+            node = str((row.details or {}).get("node") or "").strip()
+            if node:
+                nodes.add(node)
+        return nodes
+
+    @staticmethod
+    def _publicity_ready(procedures: list[MemberProcedure]) -> bool:
+        for row in procedures:
+            if row.kind != "publicity" or row.status != "completed":
+                continue
+            try:
+                days = int((row.details or {}).get("working_days") or 0)
+            except (TypeError, ValueError):
+                days = 0
+            if days >= 5:
+                return True
+        return False
 
     @staticmethod
     def _procedure_effective_until(row: MemberProcedure | None) -> date | None:
@@ -1639,16 +2186,55 @@ class MemberDevelopment:
                     "external_title": external_title,
                     "verified_on": verified_on.isoformat() if verified_on else "",
                 }
+            if kind == "introducer":
+                existing_introducers = [
+                    row
+                    for row in await self._procedure_rows(str(profile.id))
+                    if row.kind == "introducer"
+                ]
+                duplicate = any(
+                    (linked_id and (row.details or {}).get("linked_profile_id") == linked_id)
+                    or (
+                        not linked_id
+                        and (row.details or {}).get("external_name") == external_name
+                        and (row.details or {}).get("external_org") == external_org
+                    )
+                    for row in existing_introducers
+                )
+                if duplicate:
+                    raise HTTPException(422, "不能重复登记同一名入党介绍人")
             status = "assigned" if kind == "contact" else "confirmed"
+        elif kind == "publicity":
+            if status and status != "completed":
+                raise HTTPException(422, "公示状态无效")
+            start_on = self._procedure_date(details, "start_on", "公示开始日期", required=True)
+            end_on = occurred_on
+            assert start_on is not None
+            if end_on < start_on:
+                raise HTTPException(422, "公示结束日期不能早于开始日期")
+            working_days = self._working_days(start_on, end_on)
+            if working_days < 5:
+                raise HTTPException(
+                    422,
+                    f"公示须满5个工作日，当前为{working_days}个工作日；请核对公示起止日期",
+                )
+            details = {
+                "start_on": start_on.isoformat(),
+                "end_on": end_on.isoformat(),
+                "working_days": working_days,
+            }
+            status = "completed"
+            if not summary:
+                summary = (
+                    f"公示期{start_on.isoformat()}至{end_on.isoformat()}，共{working_days}个工作日"
+                )
         elif kind == "branch_committee_review":
             if status not in PROCEDURE_STATUSES[kind]:
                 raise HTTPException(422, "支委会审查结论无效")
             if status in {"passed", "failed"} and not summary:
                 raise HTTPException(422, "支委会审查形成结论时须填写审查意见")
             details = {
-                "attendees": self._procedure_text(
-                    details, "attendees", "参加人员", max_length=500
-                )
+                "attendees": self._procedure_text(details, "attendees", "参加人员", max_length=500)
             }
         elif kind == "upper_pre_review":
             if status not in PROCEDURE_STATUSES[kind]:
@@ -1657,9 +2243,16 @@ class MemberDevelopment:
                 details, "upper_org", "上级党组织", required=True, max_length=200
             )
             reply_no = self._procedure_text(details, "reply_no", "批复文号", max_length=64)
+            submitted_on = self._procedure_date(details, "submitted_on", "报送日期")
+            if submitted_on and submitted_on > occurred_on:
+                raise HTTPException(422, "报送日期不能晚于预审日期")
             if status in {"passed", "supplement", "failed"} and not summary:
                 raise HTTPException(422, "上级党委预审形成结论时须填写预审意见")
-            details = {"upper_org": upper_org, "reply_no": reply_no}
+            details = {
+                "upper_org": upper_org,
+                "reply_no": reply_no,
+                "submitted_on": submitted_on.isoformat() if submitted_on else "",
+            }
         elif kind == "application_form":
             if status not in PROCEDURE_STATUSES[kind]:
                 raise HTTPException(422, "入党志愿书状态无效")
@@ -1669,9 +2262,18 @@ class MemberDevelopment:
                 raise HTTPException(422, "审核日期不能早于填写日期")
             if status == "reviewed" and (not form_no or not reviewed_on):
                 raise HTTPException(422, "志愿书审核通过时须填写编号和审核日期")
+            raw_checklist = details.get("checklist") or []
+            if not isinstance(raw_checklist, list):
+                raise HTTPException(422, "志愿书核对清单格式无效")
+            checklist_codes = {code for code, _ in APPLICATION_FORM_CHECKLIST}
+            selected = {str(code) for code in raw_checklist}
+            if selected - checklist_codes:
+                raise HTTPException(422, "志愿书核对清单包含无效项")
+            checklist = [code for code, _ in APPLICATION_FORM_CHECKLIST if code in selected]
             details = {
                 "form_no": form_no,
                 "reviewed_on": reviewed_on.isoformat() if reviewed_on else "",
+                "checklist": checklist,
             }
         elif kind == "upper_talk":
             if status and status != "completed":
@@ -1694,10 +2296,7 @@ class MemberDevelopment:
             )
             if meeting_for not in BRANCH_VOTE_MEETING_FOR:
                 raise HTTPException(422, "票决事项无效")
-            if (
-                stage == MemberStage.CANDIDATE
-                and meeting_for != "reception"
-            ):
+            if stage == MemberStage.CANDIDATE and meeting_for != "reception":
                 raise HTTPException(
                     422,
                     "发展对象阶段只能登记接收预备党员票决；转正或取消资格票决须在预备党员阶段登记",
@@ -1728,10 +2327,22 @@ class MemberDevelopment:
                 raise HTTPException(422, "预备党员转正结果无效")
             if not summary:
                 raise HTTPException(422, "请填写组织形成的转正结论")
+            category_code = ""
+            category_label = ""
+            if status in PROBATION_OUTCOME_REASONS:
+                allowed = PROBATION_OUTCOME_REASONS[status]
+                category_code = self._procedure_text(
+                    details, "reason_category", "情形分类", required=True, max_length=40
+                )
+                if category_code not in allowed:
+                    raise HTTPException(422, "情形分类与转正结果不一致或无效")
+                category_label = allowed[category_code]
             previous = await self._current_procedure(str(profile.id), kind)
             previous_until = self._procedure_effective_until(previous)
             effective_until: date | None = None
             if status == "extended":
+                if previous is not None and previous.status == "extended":
+                    raise HTTPException(422, "延长预备期只能办理一次")
                 effective_until = self._procedure_date(
                     details,
                     "effective_until",
@@ -1741,11 +2352,15 @@ class MemberDevelopment:
                 )
                 if effective_until is None or effective_until <= occurred_on:
                     raise HTTPException(422, "延长预备期截止日期须晚于本次决定日期")
-                if previous_until and effective_until <= previous_until:
-                    raise HTTPException(422, "新的延长预备期截止日期须晚于上一次期限")
-                base_until = previous_until or (
-                    profile.stage_joined_on + timedelta(days=365)
-                )
+                base_until = profile.stage_joined_on + timedelta(days=365)
+                min_until = add_months(base_until, 6)
+                max_until = add_months(base_until, 12)
+                if effective_until < min_until or effective_until > max_until:
+                    raise HTTPException(
+                        422,
+                        f"延长预备期须为6个月至1年：最早可至 {min_until.isoformat()}，"
+                        f"最晚不超过 {max_until.isoformat()}",
+                    )
                 if effective_until <= base_until:
                     raise HTTPException(
                         422,
@@ -1756,11 +2371,10 @@ class MemberDevelopment:
                     422,
                     f"延长预备期未满，最早可于 {previous_until.isoformat()} 后登记按期转正",
                 )
-            details = (
-                {"effective_until": effective_until.isoformat()}
-                if effective_until
-                else {}
-            )
+            details = {"effective_until": effective_until.isoformat()} if effective_until else {}
+            if category_code:
+                details["reason_category"] = category_code
+                details["reason_label"] = category_label
         elif kind == "higher_record":
             if status and status != "recorded":
                 raise HTTPException(422, "再上一级备案状态无效")
@@ -1773,9 +2387,7 @@ class MemberDevelopment:
         elif kind == "party_group":
             if status and status != "assigned":
                 raise HTTPException(422, "编入党支部和党小组状态无效")
-            party_branch = self._procedure_text(
-                details, "party_branch", "党支部", max_length=200
-            )
+            party_branch = self._procedure_text(details, "party_branch", "党支部", max_length=200)
             party_group = self._procedure_text(
                 details, "party_group", "党小组", required=True, max_length=200
             )
@@ -1785,6 +2397,39 @@ class MemberDevelopment:
                 "assigned_on": occurred_on.isoformat(),
             }
             status = "assigned"
+        elif kind == "secondary_review":
+            if status and status != "completed":
+                raise HTTPException(422, "二级党组织审议状态无效")
+            node = self._procedure_text(details, "node", "审议节点", required=True, max_length=40)
+            spec = SECONDARY_REVIEW_NODES.get(node)
+            if spec is None:
+                raise HTTPException(422, "审议节点无效")
+            node_min_stage = spec["min_stage"]
+            assert isinstance(node_min_stage, MemberStage)
+            node_min_rank = self.rules.development_rank(node_min_stage)
+            if rank is None or node_min_rank is None or rank < node_min_rank:
+                raise HTTPException(
+                    422,
+                    f"{spec['label']}应在{stage_label(node_min_stage.value)}阶段及以后登记",
+                )
+            organizer_name = self._procedure_text(
+                details, "organizer_name", "专职组织员姓名", required=True, max_length=50
+            )
+            meeting_on = occurred_on
+            signed_on = self._procedure_date(details, "signed_on", "组织员签字日期", required=True)
+            assert signed_on is not None
+            if signed_on < meeting_on:
+                raise HTTPException(422, "组织员签字日期不能早于二级党组织会议日期")
+            if not summary:
+                raise HTTPException(422, "请填写二级党组织审议意见")
+            details = {
+                "node": node,
+                "node_label": spec["label"],
+                "meeting_on": meeting_on.isoformat(),
+                "organizer_name": organizer_name,
+                "signed_on": signed_on.isoformat(),
+            }
+            status = "completed"
         else:
             raise HTTPException(422, "发展程序类型无效")
 
@@ -1832,9 +2477,7 @@ class MemberDevelopment:
                 str(profile.id), "higher_record", "已登记再上一级党委组织部门备案"
             )
         elif kind == "party_group":
-            await self._close_reminders(
-                str(profile.id), "party_group", "已登记编入党支部和党小组"
-            )
+            await self._close_reminders(str(profile.id), "party_group", "已登记编入党支部和党小组")
         elif kind == "probation_outcome":
             # 转正结果变化后，原预备期到期和材料提醒不再适用；延长预备期的
             # 新到期提醒由下一次流程看板/扫描按 effective_until 重新生成。
@@ -1932,8 +2575,9 @@ class MemberDevelopment:
             result.append(("higher_record", due_on))
         if "party_group" not in latest:
             result.append(("party_group", due_on))
-        # 宣誓没有结构化登记，使用提醒办结作为人工确认；重复扫描不会重开已办结提醒。
-        result.append(("oath", due_on))
+        # 细则要求在批准为预备党员后三个月内宣誓；宣誓没有结构化登记，使用提醒办结
+        # 作为人工确认，重复扫描不会重开已办结提醒。
+        result.append(("oath", profile.stage_joined_on + timedelta(days=90)))
         return result
 
     async def sync_reminders(
@@ -1948,19 +2592,32 @@ class MemberDevelopment:
             *self._due_reminders(profile, procedures),
             *self._task_reminders(profile, procedures),
         ]
-        existing_keys = set(
+        existing_rows = (
             (
                 await self.db.execute(
-                    select(MemberReminder.kind, MemberReminder.due_on).where(
+                    select(MemberReminder).where(
                         MemberReminder.tenant_id == self.tenant_id,
                         MemberReminder.profile_id == str(profile.id),
                         MemberReminder.is_deleted.is_(False),
                     )
                 )
-            ).all()
+            )
+            .scalars()
+            .all()
         )
+        existing_keys = {(row.kind, row.due_on) for row in existing_rows}
+        open_oaths = [row for row in existing_rows if row.kind == "oath" and row.status == "open"]
+        primary_oath = open_oaths[0] if open_oaths else None
+        for duplicate in open_oaths[1:]:
+            duplicate.status = "closed"
+            duplicate.note = "已按最新宣誓期限合并，保留一条待办"
         for kind, due_on in planned:
             if (kind, due_on) in existing_keys:
+                continue
+            if kind == "oath" and primary_oath is not None:
+                primary_oath.due_on = due_on
+                primary_oath = None
+                existing_keys.add((kind, due_on))
                 continue
             reminder = MemberReminder(
                 tenant_id=self.tenant_id,
@@ -2025,9 +2682,7 @@ class MemberDevelopment:
             MemberProfile.is_active.is_(True),
             MemberProfile.relation_status != "transferred_out",
         ]
-        total = (
-            await self.db.scalar(select(func.count(MemberProfile.id)).where(*conditions))
-        ) or 0
+        total = (await self.db.scalar(select(func.count(MemberProfile.id)).where(*conditions))) or 0
         profiles = (
             (
                 await self.db.execute(
@@ -2137,9 +2792,7 @@ class MemberDevelopment:
                 training_ready[row.profile_id] = True
 
         for profile in profiles:
-            await self.sync_reminders(
-                profile, procedures_by_profile.get(str(profile.id), [])
-            )
+            await self.sync_reminders(profile, procedures_by_profile.get(str(profile.id), []))
         await self.db.flush()
 
         reminder_rows = (
@@ -2203,7 +2856,11 @@ class MemberDevelopment:
             MemberStage.REJECTED,
         ]
         return [
-            {"stage": stage.value, "label": STAGE_LABELS[stage], "count": counts.get(stage.value, 0)}
+            {
+                "stage": stage.value,
+                "label": STAGE_LABELS[stage],
+                "count": counts.get(stage.value, 0),
+            }
             for stage in stages
         ]
 
@@ -2246,13 +2903,22 @@ class MemberDevelopment:
                     if name not in approved_materials:
                         add_missing(name)
 
-        if stage == "activist" and "contact" not in latest:
-            add_missing("培养联系人")
+        hard_secondary = self._school_gate_enabled(profile, "secondary_review_hard_gate_from_year")
+        hard_publicity = self._school_gate_enabled(profile, "publicity_hard_gate_from_year")
+        secondary_nodes = self._secondary_nodes(procedures)
+        if stage == "activist":
+            if "contact" not in latest:
+                add_missing("培养联系人")
+            if hard_secondary and "candidate_determination" not in secondary_nodes:
+                add_missing("二级审议：确定发展对象")
         if stage == "candidate":
             if "contact" not in latest:
                 add_missing("培养联系人")
-            if "introducer" not in latest:
-                add_missing("入党介绍人")
+            if (
+                len({self._introducer_key(row) for row in procedures if row.kind == "introducer"})
+                < 2
+            ):
+                add_missing("入党介绍人2名")
             branch_review = latest.get("branch_committee_review")
             if branch_review is None or branch_review.status != "passed":
                 add_missing("支委会审查通过")
@@ -2269,6 +2935,16 @@ class MemberDevelopment:
                 add_missing("政治审查合格结论")
             if not training_ready:
                 add_missing("集中培训不少于3天或24学时")
+            if hard_secondary:
+                for code, label in (
+                    ("candidate_determination", "二级审议：确定发展对象"),
+                    ("pre_reception", "二级审议：接收前支委会审查"),
+                    ("reception", "二级审议：接收支部大会"),
+                ):
+                    if code not in secondary_nodes:
+                        add_missing(label)
+            if hard_publicity and not self._publicity_ready(procedures):
+                add_missing("公示5个工作日")
         if stage == "probationary":
             conversion_vote = next(
                 (
@@ -2310,6 +2986,8 @@ class MemberDevelopment:
                 add_missing("编入党支部和党小组")
             if "higher_record" not in latest:
                 add_missing("再上一级党委组织部门备案")
+            if hard_secondary and "conversion" not in secondary_nodes:
+                add_missing("二级审议：转正支部大会")
             if any(row.kind == "oath" for row in reminders):
                 add_missing("入党宣誓")
 

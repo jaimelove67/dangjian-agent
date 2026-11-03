@@ -203,12 +203,14 @@ export function emptyProcedureState() {
     branch_committee_review: { items: [], current: null, satisfied: false, notice: "尚未登记支委会审查" },
     upper_pre_review: { items: [], current: null, satisfied: false, notice: "尚未登记上级党委预审" },
     application_form: { items: [], current: null, satisfied: false, notice: "尚未登记入党志愿书" },
+    publicity: { items: [], current: null, satisfied: false, notice: "尚未登记公示起止日期" },
     upper_talk: { items: [], current: null, satisfied: false, notice: "尚未登记上级党委派人谈话" },
     branch_vote: { items: [], current: null, satisfied: false, notice: "尚未登记支部大会票决" },
     probation_outcome: { items: [], current: null, satisfied: false, notice: "尚未登记预备党员转正结果" },
     higher_record: { items: [], current: null, satisfied: false, notice: "尚未登记再上一级党委组织部门备案" },
     party_group: { items: [], current: null, satisfied: false, notice: "尚未登记编入党支部和党小组" },
-    requirement: "接收预备党员前应完成培养联系人、入党介绍人、支委会审查、上级党委预审和入党志愿书登记；上级党委派人谈话应在上级审批前完成。预备党员转正前应登记支部大会票决和转正结果；延长预备期作为独立记录，取消预备党员资格为终态。系统只登记事实，不替代组织程序。",
+    secondary_review: { items: [], current: null, by_node: {}, satisfied: false, notice: "尚未登记二级党组织审议与组织员签字" },
+    requirement: "接收预备党员前应完成培养联系人、2名不同入党介绍人、支委会审查、上级党委预审和入党志愿书登记；公示应登记起止日期并按5个工作日核对。上级党委派人谈话应在上级审批前完成；二级党组织审议与专职组织员签字按学校节点单独登记。预备党员转正前应登记支部大会票决和转正结果；延长预备期作为独立记录，取消预备党员资格为终态。系统只登记事实，不替代组织程序。",
     data_level: "internal",
     data_level_label: "内部",
     cloud_allowed: false,
@@ -229,8 +231,8 @@ function summarizeProcedure(key, items) {
       items,
       current: latest,
       count: latest.length,
-      satisfied: latest.length > 0,
-      notice: latest.length === 0 ? "尚未登记入党介绍人" : latest.length < 2 ? "已登记1名入党介绍人；细则一般由两名正式党员担任" : "已登记2名入党介绍人",
+      satisfied: latest.length >= 2,
+      notice: latest.length === 0 ? "尚未登记入党介绍人" : latest.length < 2 ? "已登记1名入党介绍人；接收预备党员前须登记2名" : "已登记2名入党介绍人",
     };
   }
   if (key === "branch_committee_review") {
@@ -258,6 +260,19 @@ function summarizeProcedure(key, items) {
       current,
       satisfied: ["submitted", "reviewed"].includes(status),
       notice: !current ? "尚未登记入党志愿书" : status === "reviewed" ? "入党志愿书已审核" : status === "submitted" ? "入党志愿书已提交" : "入党志愿书正在填写",
+    };
+  }
+  if (key === "publicity") {
+    const status = current?.status;
+    return {
+      items,
+      current,
+      satisfied: status === "completed",
+      notice: !current
+        ? "尚未登记公示起止日期"
+        : status === "completed"
+          ? `公示已满 ${current?.details?.working_days || 5} 个工作日`
+          : "公示状态待核对",
     };
   }
   if (key === "upper_talk") {
@@ -307,6 +322,22 @@ function summarizeProcedure(key, items) {
       current,
       satisfied: current?.status === "assigned",
       notice: current ? "已编入党支部和党小组" : "尚未登记编入党支部和党小组",
+    };
+  }
+  if (key === "secondary_review") {
+    const byNode = {};
+    for (const item of items) {
+      const node = item?.details?.node;
+      if (node && !byNode[node]) byNode[node] = item;
+    }
+    return {
+      items,
+      current,
+      by_node: byNode,
+      satisfied: items.length > 0,
+      notice: items.length
+        ? `已登记 ${Object.keys(byNode).length} 个二级审议节点`
+        : "尚未登记二级党组织审议与组织员签字",
     };
   }
   return { items, current, satisfied: false, notice: "程序状态待核对" };
@@ -384,7 +415,7 @@ export function buildDemoFlowBoard(
       addMissing("培养联系人");
     if (code === "candidate") {
       if (!procedures.contacts?.satisfied) addMissing("培养联系人");
-      if (!procedures.introducers?.satisfied) addMissing("入党介绍人");
+      if (!procedures.introducers?.satisfied) addMissing("入党介绍人2名");
       if (!procedures.branch_committee_review?.satisfied)
         addMissing("支委会审查通过");
       if (!procedures.upper_pre_review?.satisfied)

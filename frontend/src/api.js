@@ -210,6 +210,16 @@ export const backend = {
         question: questionText(payload.question),
       }),
     }),
+  qaAttachment: (file, cloudOcr = false) => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("cloud_ocr", cloudOcr ? "true" : "false");
+    return request("/qa/attachments", {
+      method: "POST",
+      body,
+      timeout: 120000,
+    });
+  },
   qaSessions: (page = 1, pageSize = 100) =>
     request(`/qa/sessions?page=${page}&page_size=${pageSize}`),
   knowledge: () => request("/knowledge-docs?page=1&page_size=100"),

@@ -401,7 +401,11 @@ async def test_application_age_and_six_month_gate(member_url):
             client,
             "POST",
             f"/member-full/profiles/{profile['id']}/materials",
-            {"material_type": "党组织谈话记录", "submit_date": today.isoformat(), "reason": "登记材料"},
+            {
+                "material_type": "党组织谈话记录",
+                "submit_date": today.isoformat(),
+                "reason": "登记材料",
+            },
         )
         await ok(
             client,
@@ -444,7 +448,11 @@ async def test_application_age_and_six_month_gate(member_url):
             client,
             "POST",
             f"/member-full/profiles/{historical['id']}/materials",
-            {"material_type": "党组织谈话记录", "submit_date": today.isoformat(), "reason": "登记材料"},
+            {
+                "material_type": "党组织谈话记录",
+                "submit_date": today.isoformat(),
+                "reason": "登记材料",
+            },
         )
         await ok(
             client,
@@ -479,6 +487,7 @@ async def test_political_review_and_training_are_hard_gates(member_url):
     today = date.today()
     async with client_for(member_url, actor()) as (client, _):
         senior = await new_profile(client, "正式党员联系人", stage="member")
+        senior2 = await new_profile(client, "第二正式党员", stage="member")
         profile = await new_profile(
             client,
             "政审培训对象",
@@ -490,7 +499,11 @@ async def test_political_review_and_training_are_hard_gates(member_url):
                 client,
                 "POST",
                 f"/member-full/profiles/{profile['id']}/materials",
-                {"material_type": material_type, "submit_date": today.isoformat(), "reason": "登记材料"},
+                {
+                    "material_type": material_type,
+                    "submit_date": today.isoformat(),
+                    "reason": "登记材料",
+                },
             )
             await ok(
                 client,
@@ -520,6 +533,13 @@ async def test_political_review_and_training_are_hard_gates(member_url):
                 "reviewed_on": today.isoformat(),
                 "scope": "本人及直系亲属",
                 "conclusion": "政治审查合格",
+                "content_checks": {
+                    "party_line": True,
+                    "political_history": True,
+                    "law_and_ethics": True,
+                    "relatives": True,
+                },
+                "negative_categories": [],
                 "note": "支委会审查形成结论",
                 "reason": "登记政审结论",
             },
@@ -578,7 +598,7 @@ async def test_political_review_and_training_are_hard_gates(member_url):
                 f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
             )
             assert blocked.status_code == 422
-            assert "入党介绍人未登记" in blocked.text
+            assert "入党介绍人须登记2名" in blocked.text
 
             introducer = await ok(
                 branch_client,
@@ -592,6 +612,24 @@ async def test_political_review_and_training_are_hard_gates(member_url):
                 },
             )
             assert introducer["details"]["linked_name"] == senior["name"]
+
+            blocked = await branch_client.post(
+                f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
+            )
+            assert blocked.status_code == 422
+            assert "入党介绍人须登记2名" in blocked.text
+
+            await ok(
+                branch_client,
+                "POST",
+                f"/member-full/profiles/{profile['id']}/procedures",
+                {
+                    "kind": "introducer",
+                    "occurred_on": today.isoformat(),
+                    "reason": "确定第二入党介绍人",
+                    "details": {"linked_profile_id": senior2["id"]},
+                },
+            )
 
             blocked = await branch_client.post(
                 f"/api/v1/member-full/profiles/{profile['id']}/transition", json=body
@@ -684,11 +722,14 @@ async def test_political_review_and_training_are_hard_gates(member_url):
         assert detail["political_reviews"]["satisfied"] is True
         assert detail["trainings"]["satisfied"] is True
         assert detail["procedures"]["contacts"]["satisfied"] is True
-        assert detail["procedures"]["introducers"]["count"] == 1
+        assert detail["procedures"]["introducers"]["count"] == 2
+        assert detail["procedures"]["introducers"]["satisfied"] is True
         assert detail["procedures"]["branch_committee_review"]["satisfied"] is True
         assert detail["procedures"]["upper_pre_review"]["satisfied"] is True
         assert detail["procedures"]["application_form"]["satisfied"] is True
         assert detail["procedures"]["upper_talk"]["satisfied"] is True
+        assert "talk_within_one_month" in detail["policy_checks"]
+        assert detail["policy_checks"]["publicity_five_workdays"]["status"] == "pending"
 
 
 @pytest.mark.asyncio
@@ -785,9 +826,7 @@ async def test_probationary_conversion_flow_board_and_terminal_disqualification(
             assert converted["current_stage"] == "member"
 
         board = await ok(client, "GET", "/member-full/flow-board")
-        converted_item = next(
-            item for item in board["items"] if item["id"] == profile["id"]
-        )
+        converted_item = next(item for item in board["items"] if item["id"] == profile["id"])
         assert converted_item["current_stage"] == "member"
 
         disqualified = await new_profile(
@@ -827,6 +866,7 @@ async def test_probationary_conversion_flow_board_and_terminal_disqualification(
                     "status": "disqualified",
                     "summary": "支部大会决定取消预备党员资格",
                     "reason": "支部大会决议",
+                    "details": {"reason_category": "no_progress"},
                 },
             )
             terminal = await ok(
@@ -859,14 +899,11 @@ async def test_probationary_conversion_flow_board_and_terminal_disqualification(
             stage_joined_on=(today - timedelta(days=30)).isoformat(),
         )
         board = await ok(client, "GET", "/member-full/flow-board")
-        pending_item = next(
-            item for item in board["items"] if item["id"] == pending["id"]
-        )
+        pending_item = next(item for item in board["items"] if item["id"] == pending["id"])
         kinds = {reminder["kind"] for reminder in pending_item["reminders"]}
         assert {"higher_record", "party_group", "oath"} <= kinds
         assert any(
-            row["stage"] == "disqualified" and row["count"] >= 1
-            for row in board["stage_summary"]
+            row["stage"] == "disqualified" and row["count"] >= 1 for row in board["stage_summary"]
         )
 
         # 院系管理员具备阶段流转权限，但不能代登记支部大会票决。

@@ -164,6 +164,8 @@ class MemberPoliticalReview(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # 可关联已归档的政治审查材料；原件仍走材料密级出口
     material_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # 政审四项内容核对与八类不合格情形；只登记核对事实，不自动形成结论
+    checklist: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # 组织结论属敏感级；原始政审材料仍按 classified 管理，二者不混用
     data_level: Mapped[str] = mapped_column(String(20), nullable=False, default="sensitive")
     # 操作版本：每次登记新增一条，编号只增不减
@@ -597,6 +599,10 @@ class MemberLeagueRecommendation(Base):
     # 推荐团组织名称文本：可能是院系团委、校团委或校外团组织，未必在本系统组织树里
     league_org: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     recommended_on: Mapped[date] = mapped_column(Date, nullable=False)
+    # 推优表决：应到会有表决权人数、同意票数；同意票须超过应到会人数半数。
+    # 历史记录没有票数时保留 0，不追溯改写。
+    eligible_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    agree_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # 登记时按推荐日期核验年龄 / 团龄的结论快照；历史记录不回改。
     eligibility_note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")

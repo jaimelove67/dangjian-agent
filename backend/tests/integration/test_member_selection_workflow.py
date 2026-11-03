@@ -469,6 +469,8 @@ async def test_league_recommendation_enforces_age_and_tenure_without_blocking_se
                 "profile_id": profile["id"],
                 "league_org": "某某学院团委",
                 "recommended_on": date.today().isoformat(),
+                "eligible_count": 10,
+                "agree_count": 6,
                 "note": "团支书反映该同志在校表现积极，团支部大会推荐入党",
                 "reason": "登记团组织推优材料",
             },
@@ -480,6 +482,23 @@ async def test_league_recommendation_enforces_age_and_tenure_without_blocking_se
         assert "年满18周岁" in created["age_notice"]
         assert "不阻断" in created["age_notice"]
         assert created["data_level"] == "sensitive"
+        assert created["eligible_count"] == 10
+        assert created["agree_count"] == 6
+
+        response = await client.post(
+            "/api/v1/member-full/league-recommendations",
+            json={
+                "profile_id": profile["id"],
+                "league_org": "某某学院团委",
+                "recommended_on": date.today().isoformat(),
+                "eligible_count": 10,
+                "agree_count": 5,
+                "note": "",
+                "reason": "票数未过半数",
+            },
+        )
+        assert response.status_code == 422
+        assert "半数" in response.text
 
         # 档案缺出生年月 / 入团时间：不默认通过，提示先补录
         missing = await new_profile(client, "档案缺项")
@@ -489,6 +508,8 @@ async def test_league_recommendation_enforces_age_and_tenure_without_blocking_se
                 "profile_id": missing["id"],
                 "league_org": "某某学院团委",
                 "recommended_on": date.today().isoformat(),
+                "eligible_count": 10,
+                "agree_count": 6,
                 "note": "",
                 "reason": "档案缺项",
             },
@@ -509,6 +530,8 @@ async def test_league_recommendation_enforces_age_and_tenure_without_blocking_se
                 "profile_id": underage["id"],
                 "league_org": "某某学院团委",
                 "recommended_on": date.today().isoformat(),
+                "eligible_count": 10,
+                "agree_count": 6,
                 "note": "",
                 "reason": "年龄不足",
             },
@@ -529,6 +552,8 @@ async def test_league_recommendation_enforces_age_and_tenure_without_blocking_se
                 "profile_id": short_tenure["id"],
                 "league_org": "某某学院团委",
                 "recommended_on": date.today().isoformat(),
+                "eligible_count": 10,
+                "agree_count": 6,
                 "note": "",
                 "reason": "团龄不足",
             },
@@ -543,6 +568,8 @@ async def test_league_recommendation_enforces_age_and_tenure_without_blocking_se
                 "profile_id": profile["id"],
                 "league_org": "某某学院团委",
                 "recommended_on": (date.today() + timedelta(days=1)).isoformat(),
+                "eligible_count": 10,
+                "agree_count": 6,
                 "note": "",
                 "reason": "未来日期",
             },

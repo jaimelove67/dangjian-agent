@@ -6,7 +6,7 @@ import logging
 import re
 from dataclasses import asdict
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import (
     APIRouter,
@@ -54,6 +54,7 @@ from app.services.qa_attachment_service import (
     store_attachment,
 )
 from app.services.qa_personal_context import build_personal_context
+from app.services.qa_scope_context import build_scope_context
 from app.services.qa_record_io import build_qa_records
 from app.services.qa_record_service import (
     MAX_EXPORT_ROWS,
@@ -72,6 +73,10 @@ logger = logging.getLogger(__name__)
 _PERSONAL_IDENTITY_QUERY = re.compile(
     r"(我是谁|我叫什么|我的(姓名|名字|组织|支部|阶段|档案|基本信息|入党时间|转正时间|党龄)"
     r"|我是什么阶段|我在哪个支部|我属于哪个支部)"
+)
+_PERSONAL_QUERY_HINT = re.compile(
+    r"((我的|本人)(档案|材料|阶段|支部|组织|流程|进度|发展|入党|转正|思想汇报|"
+    r"培养|政审|公示|介绍人|联系人|缺什么|还缺|下一步|到哪一步))"
 )
 
 # 问答需要基本的查询权限
@@ -170,6 +175,12 @@ class QuestionResponse(BaseModel):
     """问答响应"""
 
     answer: str = Field(..., description="生成的答案")
+    answer_kind: Literal["grounded", "grounded_personal", "personal", "advisory", "refused"] = (
+        Field(
+            "advisory",
+            description=("回答类型：制度依据 / 制度依据+本人情况 / 仅本人资料 / 办理参考 / 拒答"),
+        )
+    )
     citations: list[CitationSchema] = Field(..., description="引用列表")
     retrieved_count: int = Field(..., description="检索到的片段数量")
     used_count: int = Field(..., description="用于生成答案的片段数量")
@@ -215,12 +226,24 @@ class QASessionItem(QuestionResponse):
             for item in (getattr(record, "personal_sources", None) or [])
             if isinstance(item, dict) and item.get("id")
         ]
+        answer_kind = (
+            "refused"
+            if record.refused
+            else "grounded_personal"
+            if citations and personal_sources
+            else "grounded"
+            if citations
+            else "personal"
+            if personal_sources
+            else "advisory"
+        )
         return cls(
             id=str(record.id),
             question=record.question,
             data_level=DataLevel(record.data_level),
             created_at=record.created_at,
             answer=record.answer,
+            answer_kind=answer_kind,
             citations=citations,
             retrieved_count=record.retrieved_count,
             used_count=record.used_count,
@@ -453,28 +476,36 @@ async def ask_question(
         if body.include_expired is not None
         else not tenant_config.get(tenant_id, "exclude_expired_by_default")
     )
-    # 附件：只按当前用户自己的编号取回（过期就明确要求重传），正文进提示词材料块
-    attachments = await load_attachments(
-        CacheService(redis_manager.client),
-        tenant_id=tenant_id,
-        user_id=str(user.id),
-        attachment_ids=body.attachment_ids,
+    # 附件：只按当前用户自己的编号取回（过期就明确要求重传），正文进提示词材料块。
+    # 没有附件时不要触碰 Redis，保证未启用缓存的部署和纯问答测试也能工作。
+    attachments = (
+        await load_attachments(
+            CacheService(redis_manager.client),
+            tenant_id=tenant_id,
+            user_id=str(user.id),
+            attachment_ids=body.attachment_ids,
+        )
+        if body.attachment_ids
+        else []
     )
-    personal = (
-        await build_personal_context(db, user) if body.include_personal else None
-    )
+    personal = await build_personal_context(db, user) if body.include_personal else None
+    scope = await build_scope_context(db, user) if body.include_personal else None
     personal_used = bool(personal and personal.has_content)
-    personal_only = bool(
-        personal_used and _PERSONAL_IDENTITY_QUERY.search(body.question.strip())
-    )
+    scope_used = bool(scope and scope.has_content)
+    context_used = personal_used or scope_used
+    personal_only = bool(personal_used and _PERSONAL_IDENTITY_QUERY.search(body.question.strip()))
     if personal_used and personal is not None:
         data_level = max([data_level, personal.data_level], key=DATA_LEVEL_ORDER.index)
+    if scope_used and scope is not None:
+        data_level = max([data_level, scope.data_level], key=DATA_LEVEL_ORDER.index)
     material_parts: list[str] = []
     attachment_text = material_block(attachments)
     if attachment_text:
         material_parts.append(attachment_text)
     if personal_used and personal is not None:
         material_parts.append(personal.text)
+    if scope_used and scope is not None:
+        material_parts.append(scope.text)
     # 创建 RAG 服务
     rag_service = RAGService(
         db,
@@ -496,6 +527,8 @@ async def ask_question(
     # 转换响应
     citations = [CitationSchema(**asdict(c)) for c in rag_response.citations]
     warnings = list(rag_response.warnings) + attachment_warnings(attachments)
+    if not body.include_personal and _PERSONAL_QUERY_HINT.search(body.question):
+        warnings.append("这个问题涉及本人情况；如需结合本人档案或材料回答，请开启“参考我的资料”。")
     if attachments:
         warnings.append(
             f"本次回答同时参考了你上传的 {len(attachments)} 份材料；材料内容不作为制度依据。"
@@ -503,20 +536,38 @@ async def ask_question(
     if personal_used and personal is not None:
         warnings.extend(personal.warnings)
         warnings.append(
-            "本次回答参考了你的本人档案、基本信息采集表或个人材料；"
+            "本次回答参考了你的本人档案、基本信息采集表、材料清单或发展流程；"
             "个人资料仅作本人情况参考，不作为制度依据。"
         )
-    elif body.include_personal:
+    if scope_used and scope is not None:
+        warnings.extend(scope.warnings)
         warnings.append(
-            "当前账号没有可参考的本人档案或个人材料，本次仅依据制度库回答。"
+            "本次回答同时参考了当前账号授权范围内的组织统计；不含其他党员个人材料正文。"
         )
-    personal_sources = (
-        [PersonalSourceSchema(**item) for item in personal.sources]
-        if personal_used and personal is not None
-        else []
+    if body.include_personal and not context_used:
+        warnings.append("当前账号没有可参考的本人档案或授权范围统计，本次仅依据制度库回答。")
+    personal_sources = [
+        PersonalSourceSchema(**item)
+        for source_group in (
+            personal.sources if personal_used and personal is not None else [],
+            scope.sources if scope_used and scope is not None else [],
+        )
+        for item in source_group
+    ]
+    answer_kind = (
+        "refused"
+        if rag_response.refused
+        else "grounded_personal"
+        if citations and context_used
+        else "grounded"
+        if citations
+        else "personal"
+        if context_used
+        else "advisory"
     )
     response = QuestionResponse(
         answer=rag_response.answer,
+        answer_kind=answer_kind,
         citations=citations,
         retrieved_count=rag_response.retrieved_count,
         used_count=rag_response.used_count,
@@ -533,6 +584,9 @@ async def ask_question(
     )
     try:
         # 历史是可降级能力；SAVEPOINT 防止写历史失败破坏问答审计所在事务。
+        # answer_kind 是响应期派生字段，不落库；历史回看时由引用/拒答状态重新推导。
+        history_response = response.model_dump(mode="json")
+        history_response.pop("answer_kind", None)
         async with db.begin_nested():
             await create_session(
                 db,
@@ -540,7 +594,7 @@ async def ask_question(
                 user_id=str(user.id),
                 question=body.question,
                 data_level=data_level.value,
-                response=response.model_dump(mode="json"),
+                response=history_response,
             )
     except SQLAlchemyError as exc:
         logger.warning(

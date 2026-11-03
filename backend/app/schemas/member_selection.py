@@ -81,6 +81,8 @@ class LeagueRecommendationCreate(SelectionInput):
     profile_id: str = Field(min_length=1, max_length=36)
     league_org: Label
     recommended_on: date
+    eligible_count: int = Field(ge=1, le=100000)
+    agree_count: int = Field(ge=0, le=100000)
     note: Text = ""
     reason: Reason
 
