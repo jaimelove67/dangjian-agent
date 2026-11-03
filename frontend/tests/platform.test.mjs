@@ -251,6 +251,12 @@ test("platform can edit personal accounts while administrator creation retains i
     accountRolesForTenant(context.tenant, { create: true }).includes("member"),
     false,
   );
+  assert.ok(
+    accountRolesForTenant(context.tenant, {
+      create: true,
+      includePersonal: true,
+    }).includes("member"),
+  );
   for (const role of ["member", "applicant"]) {
     const account = {
       ...data.accounts.find((a) => a.role === role),

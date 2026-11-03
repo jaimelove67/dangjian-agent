@@ -901,7 +901,10 @@ export function PlatformAccounts() {
     (o) =>
       o.is_active !== false && accountOrgTypes(formRole).includes(o.org_type),
   );
-  const roles = accountRolesForTenant(selectedTenant, { create: !selected });
+  const roles = accountRolesForTenant(selectedTenant, {
+    create: !selected,
+    includePersonal: schoolScoped,
+  });
   const editingSelf = selected?.id === session.user.id;
   const personalOrgLocked =
     selected?.member_profile_id &&

@@ -49,10 +49,14 @@ export const ADMIN_ROLES = [
   "organizer",
 ];
 export const ACCOUNT_ROLES = [...ADMIN_ROLES, "member", "applicant"];
-export function accountRolesForTenant(tenant) {
+export function accountRolesForTenant(
+  tenant,
+  { create = false, includePersonal = false } = {},
+) {
   if (tenant?.tenant_type === "platform") return ["system_admin"];
   if (tenant?.tenant_type !== "school") return [];
-  return ACCOUNT_ROLES.filter((role) => role !== "system_admin");
+  const roles = create && !includePersonal ? ADMIN_ROLES : ACCOUNT_ROLES;
+  return roles.filter((role) => role !== "system_admin");
 }
 export function accountOrgTypes(role) {
   return role === "system_admin"
