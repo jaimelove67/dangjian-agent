@@ -247,3 +247,9 @@ democratic_review:
   unqualified_notice: 拟评定不合格的，组织处置须按党章党规由党组织研究决定，系统不自动生成处置意见
   # 评议结果对本人反馈的口径提示（本人只能看自己的评议结果）。
   feedback_notice: 评定意见应向本人反馈；本人只能在"本人档案"查看自己的评议结果
+
+# 学校校本规则：按发展批次（档案 year）启用硬门禁。
+# 0 表示不启用；2027 表示 2027 年及以后批次硬控。
+school_rules:
+  secondary_review_hard_gate_from_year: 2027
+  publicity_hard_gate_from_year: 2027

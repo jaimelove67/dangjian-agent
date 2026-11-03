@@ -185,7 +185,9 @@ async def profile_detail(
 ) -> APIResponse[dict]:
     profile = await service.profile(profile_id)
     data = profile_payload(profile)
-    data["materials"] = await service.list_materials(profile_id)
+    materials = await service.list_materials(profile_id)
+    data["materials"] = materials
+    data["policy_checks"] = await service.policy_checks(profile_id, materials=materials)
     data["stage_history"] = await service.stage_history(profile_id)
     data["cultivation"] = await service.cultivation(profile_id)
     data["political_reviews"] = await service.political_reviews(profile_id)

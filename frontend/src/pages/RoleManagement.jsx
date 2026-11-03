@@ -42,6 +42,16 @@ import { STAGES } from "../data";
 import { STAGE_LABELS } from "../contracts";
 import { leagueEligibility, todayIso } from "../league-eligibility";
 import {
+  PROBATION_DISQUALIFICATION_REASONS,
+  PROBATION_EXTENSION_REASONS,
+} from "../member-outcomes";
+import {
+  POLITICAL_REVIEW_ASPECTS,
+  POLITICAL_REVIEW_NEGATIVE_CATEGORIES,
+} from "../political-review";
+import { APPLICATION_FORM_CHECKLIST } from "../application-form-checklist";
+import { SECONDARY_REVIEW_NODES } from "../member-secondary";
+import {
   PageHeader,
   PanelTitle,
   Tabs,
@@ -757,9 +767,99 @@ function DevelopmentWizard({
   nextAction,
   steps,
   shortcuts,
+  policyChecks = {},
   onShortcut,
 }) {
   const stageIndex = Math.max(0, DEVELOPMENT_STEP_GROUPS.indexOf(stage));
+  const policyRows = [];
+  if (stageIndex <= 3 && policyChecks.talk_within_one_month) {
+    policyRows.push({
+      title: "1个月内谈话",
+      ...policyChecks.talk_within_one_month,
+    });
+  }
+  if (
+    stageIndex >= 1 &&
+    stageIndex <= 3 &&
+    policyChecks.quarterly_report &&
+    policyChecks.quarterly_report.status !== "not_applicable"
+  ) {
+    policyRows.push({
+      title: "每季度思想汇报",
+      ...policyChecks.quarterly_report,
+    });
+  }
+  if (
+    stageIndex >= 1 &&
+    stageIndex <= 3 &&
+    policyChecks.semi_annual_review &&
+    policyChecks.semi_annual_review.status !== "not_applicable"
+  ) {
+    policyRows.push({
+      title: "每半年考察",
+      ...policyChecks.semi_annual_review,
+    });
+  }
+  if (stageIndex >= 2 && stageIndex <= 3 && policyChecks.publicity_five_workdays) {
+    policyRows.push({
+      title: `公示5个工作日${
+        policyChecks.publicity_five_workdays.hard_gate ? "（硬控）" : ""
+      }`,
+      ...policyChecks.publicity_five_workdays,
+    });
+  }
+  if (
+    stageIndex === 2 &&
+    policyChecks.upper_pre_review_within_one_month &&
+    policyChecks.upper_pre_review_within_one_month.status !== "not_applicable"
+  ) {
+    policyRows.push({
+      title: "预审1个月内",
+      ...policyChecks.upper_pre_review_within_one_month,
+    });
+  }
+  if (
+    stageIndex === 2 &&
+    policyChecks.application_form_checklist &&
+    policyChecks.application_form_checklist.status !== "not_applicable"
+  ) {
+    policyRows.push({
+      title: "志愿书19项核对",
+      ...policyChecks.application_form_checklist,
+    });
+  }
+  if (
+    stageIndex >= 1 &&
+    stageIndex <= 3 &&
+    policyChecks.secondary_review &&
+    policyChecks.secondary_review.status !== "not_applicable"
+  ) {
+    policyRows.push({
+      title: `二级审议与组织员签字${
+        policyChecks.secondary_review.hard_gate ? "（硬控）" : ""
+      }`,
+      ...policyChecks.secondary_review,
+    });
+  }
+  if (
+    stageIndex === 3 &&
+    policyChecks.transfer_application &&
+    policyChecks.transfer_application.status !== "not_applicable"
+  ) {
+    policyRows.push({
+      title: "转正申请提前一周",
+      ...policyChecks.transfer_application,
+    });
+  }
+  const policyTone = (status) =>
+    ({
+      ok: "green",
+      overdue: "red",
+      invalid: "red",
+      pending: "orange",
+      unknown: "orange",
+      manual: "blue",
+    })[status] || "blue";
   return (
     <div className="development-wizard">
       <div className="development-wizard-summary">
@@ -799,6 +899,19 @@ function DevelopmentWizard({
               {shortcut.label}
               <ArrowRight size={13} />
             </button>
+          ))}
+        </div>
+      )}
+      {policyRows.length > 0 && (
+        <div className="development-policy-checks">
+          {policyRows.map((row) => (
+            <div className="development-policy-check" key={row.title}>
+              <div>
+                <span>{row.title}</span>
+                <Badge tone={policyTone(row.status)}>{row.label}</Badge>
+              </div>
+              <p>{row.message}</p>
+            </div>
           ))}
         </div>
       )}
@@ -863,6 +976,7 @@ const REMINDER_LABELS = {
   meeting_discussion_advance: "会议讨论临近",
 };
 function FlowBoard({ board, loading, error, canResolve, onSelect, onResolve, onRefresh }) {
+  const [backfillFilter, setBackfillFilter] = useState("all");
   const summary = board?.stage_summary || [];
   const visibleStages = summary.filter(
     (stage) =>
@@ -900,11 +1014,47 @@ function FlowBoard({ board, loading, error, canResolve, onSelect, onResolve, onR
               </span>
             ))}
           </div>
+          <div className="flow-summary">
+            <span>补录筛选</span>
+            <button
+              type="button"
+              className={backfillFilter === "all" ? "button primary" : "button secondary"}
+              onClick={() => setBackfillFilter("all")}
+            >
+              全部
+            </button>
+            <button
+              type="button"
+              className={
+                backfillFilter === "secondary" ? "button primary" : "button secondary"
+              }
+              onClick={() => setBackfillFilter("secondary")}
+            >
+              待补二级审议
+            </button>
+            <button
+              type="button"
+              className={
+                backfillFilter === "publicity" ? "button primary" : "button secondary"
+              }
+              onClick={() => setBackfillFilter("publicity")}
+            >
+              待补公示
+            </button>
+          </div>
           <div className="flow-board">
             {visibleStages.map((stage) => {
               const items = (board.items || []).filter(
-                (item) => item.current_stage === stage.stage,
+                (item) =>
+                  item.current_stage === stage.stage &&
+                  (backfillFilter === "all" ||
+                    (item.missing || []).some((gap) =>
+                      backfillFilter === "secondary"
+                        ? gap.includes("二级审议")
+                        : gap.includes("公示5个工作日"),
+                    )),
               );
+              if (backfillFilter !== "all" && items.length === 0) return null;
               return (
                 <section className="flow-column" key={stage.stage}>
                   <header>
@@ -1054,11 +1204,13 @@ function DevelopmentProcedurePanel({
   const branch = state.branch_committee_review || {};
   const preReview = state.upper_pre_review || {};
   const form = state.application_form || {};
+  const publicity = state.publicity || {};
   const talk = state.upper_talk || {};
   const branchVote = state.branch_vote || {};
   const outcome = state.probation_outcome || {};
   const higherRecord = state.higher_record || {};
   const partyGroup = state.party_group || {};
+  const secondaryReview = state.secondary_review || {};
   const introducerItems = Array.isArray(introducers.current)
     ? introducers.current
     : [];
@@ -1066,7 +1218,7 @@ function DevelopmentProcedurePanel({
     <>
       <div className="inline-note">
         {state.requirement ||
-          "接收预备党员前应完成培养联系人、入党介绍人、支委会审查、上级党委预审和入党志愿书登记；上级党委派人谈话应在上级审批前完成。系统只登记事实，不替代组织程序。"}
+          "接收预备党员前应完成培养联系人、2名不同入党介绍人、支委会审查、上级党委预审和入党志愿书登记；公示应登记起止日期并按5个工作日核对。上级党委派人谈话应在上级审批前完成；二级党组织审议与专职组织员签字按学校节点单独登记。系统只登记事实，不替代组织程序。"}
       </div>
       <div className="procedure-grid">
         <div className="development-gate-card">
@@ -1143,7 +1295,7 @@ function DevelopmentProcedurePanel({
               </p>
             ))}
             <p>
-              入党介绍人一般由两名正式党员担任；优先关联本校正式党员档案，外部正式党员须人工核验。
+              接收预备党员前须登记2名入党介绍人；优先关联本校正式党员档案，外部正式党员须人工核验。
             </p>
           </div>
           {canRegisterBranch && (
@@ -1154,6 +1306,41 @@ function DevelopmentProcedurePanel({
               onClick={() => onRegister("introducer")}
             >
               登记入党介绍人
+            </button>
+          )}
+        </div>
+
+        <div className="development-gate-card">
+          <span className="metric-icon blue">
+            <Clock size={22} />
+          </span>
+          <div>
+            <h3>
+              公示{" "}
+              <Badge tone={procedureTone(publicity)}>
+                {procedureStatusLabel(publicity)}
+              </Badge>
+            </h3>
+            <p>{publicity.notice || "尚未登记公示起止日期"}</p>
+            {publicity.current && (
+              <p>
+                公示期：{publicity.current.details?.start_on || "未登记"} 至{" "}
+                {publicity.current.details?.end_on || "未登记"}；工作日：
+                {publicity.current.details?.working_days || "未登记"}
+              </p>
+            )}
+            <p>
+              细则要求公示5个工作日；系统按周一至周五核算，法定节假日和公示原件仍由人工核对。
+            </p>
+          </div>
+          {canRegisterBranch && (
+            <button
+              type="button"
+              className="button secondary"
+              disabled={disabled}
+              onClick={() => onRegister("publicity")}
+            >
+              登记公示
             </button>
           )}
         </div>
@@ -1207,6 +1394,7 @@ function DevelopmentProcedurePanel({
             <p>{preReview.notice || "尚未登记上级党委预审"}</p>
             {preReview.current && (
               <p>
+                报送日期：{preReview.current.details?.submitted_on || "未登记"}；
                 预审日期：{preReview.current.occurred_on || "未登记"}；上级党组织：
                 {preReview.current.details?.upper_org || "未登记"}；批复文号：
                 {preReview.current.details?.reply_no || "未登记"}；预审意见：
@@ -1245,7 +1433,8 @@ function DevelopmentProcedurePanel({
               <p>
                 填写日期：{form.current.occurred_on || "未登记"}；志愿书编号：
                 {form.current.details?.form_no || "未登记"}；审核日期：
-                {form.current.details?.reviewed_on || "未登记"}
+                {form.current.details?.reviewed_on || "未登记"}；19项核对：
+                {form.current.details?.checklist?.length || 0}/19
               </p>
             )}
             <p>
@@ -1368,6 +1557,9 @@ function DevelopmentProcedurePanel({
                     <p>
                       决定日期：{outcome.current.occurred_on || "未登记"}；
                       结论：{outcome.current.summary || "未填写"}
+                      {outcome.current.details?.reason_label
+                        ? `；情形：${outcome.current.details.reason_label}`
+                        : ""}
                       {outcome.current.details?.effective_until
                         ? `；延长至 ${outcome.current.details.effective_until}`
                         : ""}
@@ -1470,6 +1662,47 @@ function DevelopmentProcedurePanel({
                   onClick={() => onRegister("party_group")}
                 >
                   登记编组
+                </button>
+              )}
+            </div>
+
+            <div className="development-gate-card">
+              <span className="metric-icon blue">
+                <ShieldCheck size={22} />
+              </span>
+              <div>
+                <h3>
+                  二级党组织审议{" "}
+                  <Badge tone={secondaryReview.satisfied ? "green" : "blue"}>
+                    {secondaryReview.satisfied ? "已登记" : "待登记"}
+                  </Badge>
+                </h3>
+                <p>{secondaryReview.notice || "尚未登记二级党组织审议与组织员签字"}</p>
+                {secondaryReview.current && (
+                  <p>
+                    节点：{secondaryReview.current.details?.node_label || "未登记"}；
+                    会议日期：
+                    {secondaryReview.current.details?.meeting_on ||
+                      secondaryReview.current.occurred_on ||
+                      "未登记"}
+                    ；组织员：
+                    {secondaryReview.current.details?.organizer_name || "未登记"}；
+                    签字日期：
+                    {secondaryReview.current.details?.signed_on || "未登记"}
+                  </p>
+                )}
+                <p>
+                  按学校节点登记二级党组织会议审议和专职组织员审核签字；系统只登记事实，不替代会议和签字。
+                </p>
+              </div>
+              {canRegisterUpper && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={disabled}
+                  onClick={() => onRegister("secondary_review")}
+                >
+                  登记二级审议
                 </button>
               )}
             </div>
@@ -1601,6 +1834,7 @@ export function DevelopmentWorkbench() {
     requirement: "集中培训不少于 3 天或 24 学时",
   };
   const procedureState = detail?.procedures || emptyProcedureState();
+  const policyChecks = detail?.policy_checks || {};
   const flowBoardData = IS_LIVE
     ? board
     : buildDemoFlowBoard(
@@ -1623,10 +1857,16 @@ export function DevelopmentWorkbench() {
     procedureState.branch_vote?.current?.details?.meeting_for === "conversion";
   const procedureGaps = [
     !procedureState.contacts.satisfied && "培养联系人",
-    !procedureState.introducers.satisfied && "入党介绍人",
+    !procedureState.introducers.satisfied && "入党介绍人2名",
     !procedureState.branch_committee_review.satisfied && "支委会审查",
     !procedureState.upper_pre_review.satisfied && "上级党委预审",
     !procedureState.application_form.satisfied && "入党志愿书",
+    policyChecks.secondary_review?.hard_gate &&
+      policyChecks.secondary_review.status !== "ok" &&
+      "二级审议/组织员签字",
+    policyChecks.publicity_five_workdays?.hard_gate &&
+      policyChecks.publicity_five_workdays.status !== "ok" &&
+      "公示5个工作日",
   ].filter(Boolean);
   const approvedMaterialTypes = new Set(
     developmentMaterials
@@ -1671,6 +1911,12 @@ export function DevelopmentWorkbench() {
       "群众评议材料",
       "党课培训证明",
     ].forEach(addMaterialShortcut);
+    addProcedureShortcut(
+      "secondary_review",
+      "去登记二级审议",
+      canRegisterUpperProcedure &&
+        policyChecks.secondary_review?.status === "pending",
+    );
   }
   if (stage === "发展对象") {
     addProcedureShortcut(
@@ -1689,6 +1935,11 @@ export function DevelopmentWorkbench() {
       canRegisterBranchProcedure && !procedureState.branch_committee_review?.satisfied,
     );
     addProcedureShortcut(
+      "publicity",
+      "去登记公示",
+      canRegisterBranchProcedure && !procedureState.publicity?.satisfied,
+    );
+    addProcedureShortcut(
       "upper_pre_review",
       "去登记上级党委预审",
       canRegisterUpperProcedure && !procedureState.upper_pre_review?.satisfied,
@@ -1702,6 +1953,12 @@ export function DevelopmentWorkbench() {
     if (!trainingState.satisfied) addGateShortcut("training", "去登记集中培训");
     ["政治审查材料", "公示情况报告", "支部大会决议"].forEach(
       addMaterialShortcut,
+    );
+    addProcedureShortcut(
+      "secondary_review",
+      "去登记二级审议",
+      canRegisterUpperProcedure &&
+        policyChecks.secondary_review?.status === "pending",
     );
   }
   if (stage === "预备党员") {
@@ -1718,6 +1975,12 @@ export function DevelopmentWorkbench() {
     );
     ["转正申请书", "预备期考察记录", "支部大会决议"].forEach(
       addMaterialShortcut,
+    );
+    addProcedureShortcut(
+      "secondary_review",
+      "去登记二级审议",
+      canRegisterUpperProcedure &&
+        policyChecks.secondary_review?.status === "pending",
     );
   }
   function openTransitionShortcut(shortcut) {
@@ -1913,11 +2176,19 @@ export function DevelopmentWorkbench() {
           });
       } else if (modal === "political") {
         const status = f.get("status");
+        const content_checks = Object.fromEntries(
+          POLITICAL_REVIEW_ASPECTS.map(([code]) => [
+            code,
+            Boolean(f.get(`content_check_${code}`)),
+          ]),
+        );
         const body = {
           status,
           reviewed_on: f.get("reviewed_on"),
           scope: f.get("scope").trim(),
           conclusion: f.get("conclusion").trim(),
+          content_checks,
+          negative_categories: f.getAll("negative_categories"),
           note: f.get("note").trim(),
           material_id: f.get("material_id") || null,
           reason,
@@ -1927,6 +2198,8 @@ export function DevelopmentWorkbench() {
           throw new Error("政审日期不能晚于今天。");
         if (status !== "in_progress" && !body.conclusion)
           throw new Error("作出政审结论时须填写结论内容。");
+        if (status !== "in_progress" && !Object.values(content_checks).every(Boolean))
+          throw new Error("形成政审结论前须核对四项内容。");
         if (IS_LIVE) {
           await roleApi.addPoliticalReview(member.id, body);
           w.reload();
@@ -1934,6 +2207,10 @@ export function DevelopmentWorkbench() {
           const record = {
             ...body,
             id: crypto.randomUUID(),
+            checklist: {
+              content_checks: body.content_checks,
+              negative_categories: body.negative_categories,
+            },
             status_label:
               { in_progress: "审查中", passed: "合格", failed: "不合格" }[status] ||
               "状态待核对",
@@ -2059,6 +2336,11 @@ export function DevelopmentWorkbench() {
           details.linked_name = linked?.name || "";
           details.linked_org = linked?.organization || linked?.org_name || "";
           details.external = !linkedId;
+        } else if (kind === "publicity") {
+          details.start_on = f.get("start_on") || "";
+          if (!details.start_on) throw new Error("请填写公示开始日期。");
+          if (details.start_on > occurred_on)
+            throw new Error("公示结束日期不能早于开始日期。");
         } else if (kind === "branch_committee_review") {
           details.attendees = f.get("attendees").trim();
           if (status !== "in_progress" && !summary)
@@ -2066,12 +2348,16 @@ export function DevelopmentWorkbench() {
         } else if (kind === "upper_pre_review") {
           details.upper_org = f.get("upper_org").trim();
           details.reply_no = f.get("reply_no").trim();
+          details.submitted_on = f.get("submitted_on") || "";
           if (!details.upper_org) throw new Error("请填写上级党组织。");
+          if (details.submitted_on && details.submitted_on > occurred_on)
+            throw new Error("报送日期不能晚于预审日期。");
           if (status !== "in_progress" && !summary)
             throw new Error("作出预审结论时须填写预审意见。");
         } else if (kind === "application_form") {
           details.form_no = f.get("form_no").trim();
           details.reviewed_on = f.get("reviewed_on") || "";
+          details.checklist = f.getAll("application_form_checklist");
           if (details.reviewed_on && details.reviewed_on < occurred_on)
             throw new Error("审核日期不能早于填写日期。");
           if (status === "reviewed" && (!details.form_no || !details.reviewed_on))
@@ -2108,6 +2394,12 @@ export function DevelopmentWorkbench() {
         } else if (kind === "probation_outcome") {
           details.effective_until =
             status === "extended" ? f.get("effective_until") || "" : "";
+          details.reason_category = f.get("reason_category") || "";
+          if (
+            ["extended", "disqualified"].includes(status) &&
+            !details.reason_category
+          )
+            throw new Error("延长预备期或取消资格时须选择情形分类。");
           if (status === "extended" && !details.effective_until)
             throw new Error("延长预备期须填写截止日期。");
           if (details.effective_until && details.effective_until <= occurred_on)
@@ -2122,6 +2414,17 @@ export function DevelopmentWorkbench() {
           details.party_group = f.get("party_group").trim();
           details.assigned_on = occurred_on;
           if (!details.party_group) throw new Error("请填写党小组。");
+        } else if (kind === "secondary_review") {
+          details.node = f.get("node") || "";
+          details.organizer_name = f.get("organizer_name").trim();
+          details.signed_on = f.get("signed_on") || "";
+          if (!details.node) throw new Error("请选择二级党组织审议节点。");
+          if (!details.organizer_name)
+            throw new Error("请填写专职组织员姓名。");
+          if (!details.signed_on) throw new Error("请填写组织员签字日期。");
+          if (details.signed_on < occurred_on)
+            throw new Error("组织员签字日期不能早于会议日期。");
+          if (!summary) throw new Error("请填写二级党组织审议意见。");
         }
         const body = {
           kind,
@@ -2746,6 +3049,27 @@ export function DevelopmentWorkbench() {
                               : ""}
                           </p>
                         )}
+                        {politicalState.current?.checklist?.content_checks && (
+                          <p>
+                            四项内容核对：
+                            {
+                              Object.values(
+                                politicalState.current.checklist.content_checks,
+                              ).filter(Boolean).length
+                            }
+                            /4；不合格情形：
+                            {(politicalState.current.checklist.negative_categories || [])
+                              .map(
+                                (code) =>
+                                  (
+                                    POLITICAL_REVIEW_NEGATIVE_CATEGORIES.find(
+                                      ([value]) => value === code,
+                                    ) || []
+                                  )[1] || code,
+                              )
+                              .join("、") || "未勾选"}
+                          </p>
+                        )}
                         {politicalState.current &&
                           (politicalState.current.conclusion_restricted ||
                             !canReadPoliticalConclusion) && (
@@ -2876,6 +3200,7 @@ export function DevelopmentWorkbench() {
                       nextAction={wizardNextAction}
                       steps={wizardSteps}
                       shortcuts={transitionShortcuts}
+                      policyChecks={policyChecks}
                       onShortcut={openTransitionShortcut}
                     />
                   )}
@@ -3130,6 +3455,37 @@ export function DevelopmentWorkbench() {
                       maxLength={200}
                       placeholder="例如：本人及直系亲属、主要社会关系"
                     />
+                  </Field>
+                  <Field label="政审四项内容" full>
+                    <div className="political-check-grid">
+                      {POLITICAL_REVIEW_ASPECTS.map(([code, label]) => (
+                        <label key={code}>
+                          <input
+                            type="checkbox"
+                            name={`content_check_${code}`}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <small>作出合格 / 不合格结论前须逐项核对四项内容。</small>
+                  </Field>
+                  <Field label="发现的不合格情形" full>
+                    <div className="political-check-grid">
+                      {POLITICAL_REVIEW_NEGATIVE_CATEGORIES.map(
+                        ([code, label]) => (
+                          <label key={code}>
+                            <input
+                              type="checkbox"
+                              name="negative_categories"
+                              value={code}
+                            />
+                            <span>{label}</span>
+                          </label>
+                        ),
+                      )}
+                    </div>
+                    <small>可多选；未发现则不选。系统只登记情形，不据勾选自动判定合格或不合格。</small>
                   </Field>
                   <Field label="结论内容" full>
                     <textarea
@@ -3433,6 +3789,32 @@ export function DevelopmentWorkbench() {
                     <textarea name="note" rows={2} maxLength={2000} />
                   </Field>
                 </>
+              ) : modal.kind === "publicity" ? (
+                <>
+                  <Field label="公示开始日期" required>
+                    <input
+                      name="start_on"
+                      type="date"
+                      required
+                      max={todayIso()}
+                    />
+                  </Field>
+                  <Field label="公示结束日期" required>
+                    <input
+                      name="occurred_on"
+                      type="date"
+                      required
+                      max={todayIso()}
+                      defaultValue={todayIso()}
+                    />
+                  </Field>
+                  <Field label="公示情况说明" full>
+                    <textarea name="summary" rows={3} maxLength={4000} />
+                  </Field>
+                  <div className="inline-note field full">
+                    公示须满5个工作日；系统按周一至周五核算，法定节假日和公示原件仍由人工核对。登记公示不替代支部大会和上级审批。
+                  </div>
+                </>
               ) : modal.kind === "branch_committee_review" ? (
                 <>
                   <Field label="审查日期" required>
@@ -3464,6 +3846,9 @@ export function DevelopmentWorkbench() {
                 </>
               ) : modal.kind === "upper_pre_review" ? (
                 <>
+                  <Field label="报送日期">
+                    <input name="submitted_on" type="date" max={todayIso()} />
+                  </Field>
                   <Field label="预审日期" required>
                     <input
                       name="occurred_on"
@@ -3515,6 +3900,21 @@ export function DevelopmentWorkbench() {
                   </Field>
                   <Field label="志愿书编号">
                     <input name="form_no" maxLength={64} />
+                  </Field>
+                  <Field label="19项填写规范核对" full>
+                    <div className="political-check-grid">
+                      {APPLICATION_FORM_CHECKLIST.map(([code, label]) => (
+                        <label key={code}>
+                          <input
+                            type="checkbox"
+                            name="application_form_checklist"
+                            value={code}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <small>逐项核对并勾选；清单只作提示和留痕，填写规范仍以原件为准。</small>
                   </Field>
                   <Field label="审核日期">
                     <input
@@ -3597,9 +3997,31 @@ export function DevelopmentWorkbench() {
                       <option value="disqualified">取消预备党员资格</option>
                     </select>
                   </Field>
+                  <Field label="情形分类">
+                    <select name="reason_category" defaultValue="">
+                      <option value="">按期转正无需选择</option>
+                      <optgroup label="延长预备期（四类）">
+                        {PROBATION_EXTENSION_REASONS.map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="取消预备党员资格（九种）">
+                        {PROBATION_DISQUALIFICATION_REASONS.map(
+                          ([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ),
+                        )}
+                      </optgroup>
+                    </select>
+                    <small>延长预备期或取消资格时必选；按实际情形选择，系统不据分类自动作出组织结论。</small>
+                  </Field>
                   <Field label="延长预备期至">
                     <input name="effective_until" type="date" />
-                    <small>仅“延长预备期”必填；须晚于决定日期，且晚于上一次延长截止日期。</small>
+                    <small>仅“延长预备期”必填；须为6个月至1年，且只能办理一次。</small>
                   </Field>
                   <Field label="组织结论" required full>
                     <textarea name="summary" rows={4} required maxLength={4000} />
@@ -3659,6 +4081,44 @@ export function DevelopmentWorkbench() {
                   </Field>
                   <div className="inline-note field full">
                     编入党支部和党小组由支部办理；系统只做轻量登记，不建立独立模块。
+                  </div>
+                </>
+              ) : modal.kind === "secondary_review" ? (
+                <>
+                  <Field label="审议节点" required>
+                    <select name="node" defaultValue="candidate_determination">
+                      {SECONDARY_REVIEW_NODES.map(([value, label, stageLabel]) => (
+                        <option value={value} key={value}>
+                          {label}（{stageLabel}阶段）
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="二级党组织会议日期" required>
+                    <input
+                      name="occurred_on"
+                      type="date"
+                      required
+                      max={todayIso()}
+                      defaultValue={todayIso()}
+                    />
+                  </Field>
+                  <Field label="专职组织员姓名" required>
+                    <input name="organizer_name" maxLength={50} required />
+                  </Field>
+                  <Field label="组织员签字日期" required>
+                    <input
+                      name="signed_on"
+                      type="date"
+                      required
+                      max={todayIso()}
+                    />
+                  </Field>
+                  <Field label="审议意见" required full>
+                    <textarea name="summary" rows={3} maxLength={4000} required />
+                  </Field>
+                  <div className="inline-note field full">
+                    系统只登记二级党组织会议审议和专职组织员签字事实，不生成会议结论，也不代替签字。
                   </div>
                 </>
               ) : (

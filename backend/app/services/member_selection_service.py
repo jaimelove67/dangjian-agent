@@ -545,6 +545,10 @@ class MemberSelectionService:
         self._require_org(profile.org_unit_id)
         if body.recommended_on > date.today():
             raise HTTPException(422, "推荐日期不能晚于今天")
+        if body.agree_count > body.eligible_count:
+            raise HTTPException(422, "同意票数不能大于应到会有表决权人数")
+        if body.agree_count * 2 <= body.eligible_count:
+            raise HTTPException(422, "同意票须超过应到会有表决权人数的半数")
         eligible, eligibility_note = league_eligibility(
             profile.birth_date,
             profile.league_joined_on,
@@ -561,6 +565,8 @@ class MemberSelectionService:
             stage=profile.current_stage,
             league_org=body.league_org,
             recommended_on=body.recommended_on,
+            eligible_count=body.eligible_count,
+            agree_count=body.agree_count,
             eligibility_note=eligibility_note,
             note=body.note,
             data_level=selection_level().value,
@@ -596,6 +602,9 @@ class MemberSelectionService:
             "org_name": row.org_name,
             "league_org": row.league_org,
             "recommended_on": row.recommended_on,
+            "eligible_count": getattr(row, "eligible_count", 0) or 0,
+            "agree_count": getattr(row, "agree_count", 0) or 0,
+            "vote_note": "同意票须超过应到会有表决权人数的半数",
             "eligibility_note": getattr(row, "eligibility_note", "") or "",
             "note": row.note,
             "revoked_on": row.revoked_on,

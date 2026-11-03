@@ -17,7 +17,8 @@ from app.models.qa_session import QASession
 from app.models.user import User, UserRole
 from app.rag.retrieval.base import RetrievalResult
 from app.rag.retrieval.hybrid import HybridRetriever
-from app.schemas.qa import REFUSAL_ANSWER
+from app.services.qa_personal_context import PersonalContext
+from app.services.qa_scope_context import build_scope_context
 
 
 @pytest.fixture
@@ -80,8 +81,11 @@ def test_followup_is_rewritten_before_real_retrieval(qa_client, monkeypatch):
     )
     assert response.status_code == 200
     assert retrieve.await_args.args[0] == "积极分子培养期需要多久？"
-    assert generate.await_args.kwargs["task_type"].value == "rewrite"
-    assert "积极分子需要培养多久" in generate.await_args.kwargs["prompt"]
+    rewrite_calls = [
+        call for call in generate.await_args_list if call.kwargs["task_type"].value == "rewrite"
+    ]
+    assert rewrite_calls
+    assert "积极分子需要培养多久" in rewrite_calls[0].kwargs["prompt"]
 
 
 def test_sensitive_history_is_blocked_before_rewrite_model(qa_client, monkeypatch):
@@ -97,16 +101,17 @@ def test_sensitive_history_is_blocked_before_rewrite_model(qa_client, monkeypatc
     retrieve.assert_not_awaited()
 
 
-def test_low_evidence_refuses_before_generation(qa_client):
+def test_low_evidence_returns_advisory_without_citations(qa_client):
     client, retrieve, generate = qa_client
     retrieve.return_value = [chunk(0.1)]
     response = client.post("/api/v1/qa", json={"question": "申请需要什么材料？"})
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["answer"] == REFUSAL_ANSWER
-    assert data["refused"] is True
+    assert data["answer_kind"] == "advisory"
+    assert data["refused"] is False
     assert data["citations"] == []
-    generate.assert_not_awaited()
+    assert "办理参考" in data["answer"] or "未检索到" in data["answer"]
+    assert generate.await_count >= 1
 
 
 def test_admin_question_uses_content_level_not_role_clearance(qa_client):
@@ -130,7 +135,8 @@ def test_answer_is_stamped_with_version_fingerprint_and_citation_revision(qa_cli
     response = client.post("/api/v1/qa", json={"question": "申请需要什么材料？"})
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["versions"]["prompt"] == {"qa": "v1", "rewrite": "v1"}
+    assert data["versions"]["prompt"]["qa"] == "v1"
+    assert data["versions"]["prompt"]["rewrite"] == "v1"
     assert data["versions"]["workflow"] == {"WF-03": "wf-03/1", "WF-04": "wf-04/1"}
     # 同一个会话也承载审计写入，这里只看问答记录本身
     record = next(item for item in saved if isinstance(item, QASession))
@@ -210,10 +216,56 @@ def test_valid_citation_is_locatable_and_client_cannot_downgrade(qa_client):
     assert response.status_code == 200
     data = response.json()["data"]
     assert generate.await_args.kwargs["data_level"] == DataLevel.INTERNAL
+    assert data["answer_kind"] == "grounded"
     assert data["has_sufficient_evidence"]
     assert data["citations"][0]["doc_id"] == "DOC-QA-1"
     assert data["citations"][0]["index"] == 1
     assert data["disclaimer"]
+
+
+@pytest.mark.asyncio
+async def test_scope_context_is_not_built_for_self_service_roles():
+    user = User(
+        id="self-user",
+        username="self-user",
+        name="普通党员",
+        tenant_id="qa-tenant",
+        role=UserRole.MEMBER,
+        is_active=True,
+    )
+    context = await build_scope_context(SimpleNamespace(), user)
+    assert context.has_content is False
+
+
+def test_personal_identity_answer_uses_personal_context_without_retrieval(qa_client, monkeypatch):
+    client, retrieve, generate = qa_client
+
+    async def personal_context(*_args, **_kwargs):
+        return PersonalContext(
+            text="[本人档案]\n姓名：测试用户\n当前阶段：入党积极分子",
+            sources=[
+                {
+                    "id": "profile-1",
+                    "kind": "profile",
+                    "title": "本人档案",
+                }
+            ],
+            has_profile=True,
+            data_level=DataLevel.INTERNAL,
+        )
+
+    monkeypatch.setattr("app.api.v1.qa.build_personal_context", personal_context)
+    generate.return_value = SimpleNamespace(content="你是测试用户，当前为入党积极分子。")
+    response = client.post(
+        "/api/v1/qa",
+        json={"question": "我是谁", "include_personal": True},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["answer_kind"] == "personal"
+    assert data["citations"] == []
+    assert data["personal_sources"][0]["title"] == "本人档案"
+    retrieve.assert_not_awaited()
 
 
 @pytest.mark.parametrize("level,expected", [("classified", 403), ("typo", 422)])

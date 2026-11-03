@@ -111,6 +111,20 @@ def member_data():
                 batch_no=None,
             )
         )
+        db.add(
+            MemberProfile(
+                id="senior2",
+                tenant_id="review-a",
+                org_unit_id="branch-a",
+                org_name="branch-a",
+                name="第二正式党员",
+                current_stage="member",
+                stage_joined_on=date.today(),
+                birth_date=date(1986, 1, 1),
+                year=None,
+                batch_no=None,
+            )
+        )
         db.commit()
         yield service, db
     engine.dispose()
@@ -374,6 +388,19 @@ async def test_receiving_probationary_requires_political_review_and_training(mem
         await service.transition("gate", body)
     assert "政治审查结论未登记" in error.value.detail
 
+    with pytest.raises(HTTPException) as error:
+        await service.add_political_review(
+            "gate",
+            PoliticalReviewCreate(
+                status="passed",
+                reviewed_on=date.today(),
+                scope="本人及直系亲属",
+                conclusion="政治审查合格",
+                reason="未核对四项内容",
+            ),
+        )
+    assert "四项内容" in error.value.detail
+
     review = await service.add_political_review(
         "gate",
         PoliticalReviewCreate(
@@ -381,10 +408,17 @@ async def test_receiving_probationary_requires_political_review_and_training(mem
             reviewed_on=date.today(),
             scope="本人及直系亲属",
             conclusion="政治审查合格",
+            content_checks={
+                "party_line": True,
+                "political_history": True,
+                "law_and_ethics": True,
+                "relatives": True,
+            },
             reason="登记政审结论",
         ),
     )
     assert review.reason == "登记政审结论"
+    assert review.checklist["content_checks"]["party_line"] is True
     with pytest.raises(HTTPException) as error:
         await service.transition("gate", body)
     assert "集中培训未登记" in error.value.detail
@@ -419,7 +453,7 @@ async def test_receiving_probationary_requires_political_review_and_training(mem
 
     with pytest.raises(HTTPException) as error:
         await service.transition("gate", body)
-    assert "入党介绍人未登记" in error.value.detail
+    assert "入党介绍人须登记2名" in error.value.detail
 
     introducer = await service.add_procedure(
         "gate",
@@ -431,6 +465,32 @@ async def test_receiving_probationary_requires_political_review_and_training(mem
         ),
     )
     assert introducer.details["linked_name"] == "正式党员联系人"
+
+    with pytest.raises(HTTPException) as error:
+        await service.transition("gate", body)
+    assert "入党介绍人须登记2名" in error.value.detail
+
+    with pytest.raises(HTTPException) as error:
+        await service.add_procedure(
+            "gate",
+            ProcedureCreate(
+                kind="introducer",
+                occurred_on=date.today(),
+                reason="重复登记同一名介绍人",
+                details={"linked_profile_id": "senior"},
+            ),
+        )
+    assert "不能重复登记" in error.value.detail
+
+    await service.add_procedure(
+        "gate",
+        ProcedureCreate(
+            kind="introducer",
+            occurred_on=date.today(),
+            reason="确定第二入党介绍人",
+            details={"linked_profile_id": "senior2"},
+        ),
+    )
 
     with pytest.raises(HTTPException) as error:
         await service.transition("gate", body)
@@ -809,7 +869,21 @@ async def test_extended_probation_blocks_early_conversion_and_shortening(member_
             )
         )
     db.commit()
-    until = date.today() + timedelta(days=30)
+    until = date.today() + timedelta(days=180)
+    with pytest.raises(HTTPException) as error:
+        await service.add_procedure(
+            "extend",
+            ProcedureCreate(
+                kind="probation_outcome",
+                occurred_on=date.today(),
+                status="extended",
+                summary="延长预备期半年",
+                reason="组织决定",
+                details={"effective_until": until.isoformat()},
+            ),
+        )
+    assert "情形分类" in error.value.detail
+
     await service.add_procedure(
         "extend",
         ProcedureCreate(
@@ -818,7 +892,10 @@ async def test_extended_probation_blocks_early_conversion_and_shortening(member_
             status="extended",
             summary="延长预备期半年",
             reason="组织决定",
-            details={"effective_until": until.isoformat()},
+            details={
+                "effective_until": until.isoformat(),
+                "reason_category": "weak_progress",
+            },
         ),
     )
     with pytest.raises(HTTPException) as error:
@@ -851,12 +928,434 @@ async def test_extended_probation_blocks_early_conversion_and_shortening(member_
                 kind="probation_outcome",
                 occurred_on=date.today(),
                 status="extended",
-                summary="缩短延长预备期",
+                summary="再次延长预备期",
                 reason="错误登记",
-                details={"effective_until": (until - timedelta(days=1)).isoformat()},
+                details={
+                    "effective_until": (until + timedelta(days=30)).isoformat(),
+                    "reason_category": "weak_progress",
+                },
             ),
         )
-    assert "新的延长预备期截止日期" in error.value.detail
+    assert "只能办理一次" in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_extended_probation_requires_six_to_twelve_months(member_data):
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="extend-window",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="延长期限对象",
+            current_stage="probationary",
+            stage_joined_on=date.today() - timedelta(days=400),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    db.commit()
+    for days in (30, 400):
+        with pytest.raises(HTTPException) as error:
+            await service.add_procedure(
+                "extend-window",
+                ProcedureCreate(
+                    kind="probation_outcome",
+                    occurred_on=date.today(),
+                    status="extended",
+                    summary="延长预备期",
+                    reason="组织决定",
+                    details={
+                        "effective_until": (date.today() + timedelta(days=days)).isoformat(),
+                        "reason_category": "weak_progress",
+                    },
+                ),
+            )
+        assert "6个月至1年" in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_policy_checks_flag_one_month_talk_deadline(member_data):
+    service, db = member_data
+    for profile_id, application_days, talk_days in (
+        ("policy-overdue", 60, 20),
+        ("policy-ok", 20, 5),
+    ):
+        db.add(
+            MemberProfile(
+                id=profile_id,
+                tenant_id="review-a",
+                org_unit_id="branch-a",
+                org_name="branch-a",
+                name=profile_id,
+                current_stage="activist",
+                stage_joined_on=date.today() - timedelta(days=10),
+                birth_date=date(1990, 1, 1),
+                year=2026,
+                batch_no="B1",
+            )
+        )
+        db.add(
+            MemberMaterial(
+                tenant_id="review-a",
+                profile_id=profile_id,
+                org_unit_id="branch-a",
+                stage="applicant",
+                material_type="入党申请书",
+                review_status="approved",
+                document_date=date.today() - timedelta(days=application_days),
+            )
+        )
+        db.add(
+            MemberMaterial(
+                tenant_id="review-a",
+                profile_id=profile_id,
+                org_unit_id="branch-a",
+                stage="applicant",
+                material_type="党组织谈话记录",
+                review_status="approved",
+                document_date=date.today() - timedelta(days=talk_days),
+            )
+        )
+    db.commit()
+
+    overdue = await service.policy_checks("policy-overdue")
+    assert overdue["talk_within_one_month"]["status"] == "overdue"
+    assert "1 个月" in overdue["talk_within_one_month"]["message"]
+    assert overdue["publicity_five_workdays"]["status"] == "pending"
+
+    ok = await service.policy_checks("policy-ok")
+    assert ok["talk_within_one_month"]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_publicity_requires_five_working_days(member_data):
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="publicity",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="公示对象",
+            current_stage="candidate",
+            stage_joined_on=date.today() - timedelta(days=10),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        await service.add_procedure(
+            "publicity",
+            ProcedureCreate(
+                kind="publicity",
+                occurred_on=date(2026, 10, 8),
+                reason="登记公示",
+                details={"start_on": "2026-10-05"},
+            ),
+        )
+    assert "5个工作日" in error.value.detail
+
+    record = await service.add_procedure(
+        "publicity",
+        ProcedureCreate(
+            kind="publicity",
+            occurred_on=date(2026, 10, 9),
+            reason="登记公示",
+            details={"start_on": "2026-10-05"},
+        ),
+    )
+    assert record.status == "completed"
+    assert record.details["working_days"] == 5
+    checks = await service.policy_checks("publicity")
+    assert checks["publicity_five_workdays"]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_policy_checks_cover_reports_transfer_and_pre_review(member_data):
+    service, db = member_data
+    today = date.today()
+    db.add(
+        MemberProfile(
+            id="policy-timeline",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="时限核对对象",
+            current_stage="probationary",
+            stage_joined_on=today - timedelta(days=365),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    for material_type, days_ago in (
+        ("思想汇报", 100),
+        ("预备期考察记录", 200),
+        ("转正申请书", 10),
+    ):
+        db.add(
+            MemberMaterial(
+                tenant_id="review-a",
+                profile_id="policy-timeline",
+                org_unit_id="branch-a",
+                stage="probationary",
+                material_type=material_type,
+                review_status="approved",
+                document_date=today - timedelta(days=days_ago),
+            )
+        )
+    db.add(
+        MemberProfile(
+            id="policy-pre",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="预审时限对象",
+            current_stage="candidate",
+            stage_joined_on=today - timedelta(days=100),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    db.commit()
+
+    checks = await service.policy_checks("policy-timeline")
+    assert checks["quarterly_report"]["status"] == "overdue"
+    assert checks["semi_annual_review"]["status"] == "overdue"
+    assert checks["transfer_application"]["status"] == "ok"
+
+    upper = service_for(db, UserRole.DEPARTMENT_ADMIN, user_id="policy-upper")
+    with pytest.raises(HTTPException) as error:
+        await upper.add_procedure(
+            "policy-pre",
+            ProcedureCreate(
+                kind="upper_pre_review",
+                occurred_on=today - timedelta(days=20),
+                status="passed",
+                summary="预审通过",
+                reason="登记预审",
+                details={
+                    "upper_org": "校党委",
+                    "submitted_on": (today - timedelta(days=10)).isoformat(),
+                },
+            ),
+        )
+    assert "报送日期" in error.value.detail
+
+    await upper.add_procedure(
+        "policy-pre",
+        ProcedureCreate(
+            kind="upper_pre_review",
+            occurred_on=today - timedelta(days=5),
+            status="passed",
+            summary="预审通过",
+            reason="登记预审",
+            details={
+                "upper_org": "校党委",
+                "submitted_on": (today - timedelta(days=40)).isoformat(),
+            },
+        ),
+    )
+    pre_checks = await service.policy_checks("policy-pre")
+    assert pre_checks["upper_pre_review_within_one_month"]["status"] == "overdue"
+
+
+@pytest.mark.asyncio
+async def test_school_hard_gate_only_applies_to_configured_batch_year(member_data):
+    service, db = member_data
+    for profile_id, year in (("hard-2027", 2027), ("soft-2026", 2026)):
+        db.add(
+            MemberProfile(
+                id=profile_id,
+                tenant_id="review-a",
+                org_unit_id="branch-a",
+                org_name="branch-a",
+                name=profile_id,
+                current_stage="candidate",
+                stage_joined_on=date.today() - timedelta(days=10),
+                birth_date=date(1990, 1, 1),
+                year=year,
+                batch_no="B1",
+            )
+        )
+    db.commit()
+    hard = await service.policy_checks("hard-2027")
+    assert hard["secondary_review"]["hard_gate"] is True
+    assert hard["publicity_five_workdays"]["hard_gate"] is True
+    soft = await service.policy_checks("soft-2026")
+    assert soft["secondary_review"]["hard_gate"] is False
+    assert soft["publicity_five_workdays"]["hard_gate"] is False
+
+
+@pytest.mark.asyncio
+async def test_hard_gate_blocks_2027_batch_until_secondary_review(member_data):
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="hard-activist",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="2027硬控对象",
+            current_stage="activist",
+            stage_joined_on=date.today() - timedelta(days=400),
+            birth_date=date(1990, 1, 1),
+            year=2027,
+            batch_no="B2027",
+        )
+    )
+    for material_type in ("思想汇报", "培养考察记录", "群众评议材料", "党课培训证明"):
+        db.add(
+            MemberMaterial(
+                tenant_id="review-a",
+                profile_id="hard-activist",
+                org_unit_id="branch-a",
+                stage="activist",
+                material_type=material_type,
+                review_status="approved",
+            )
+        )
+    db.commit()
+    await service.add_procedure(
+        "hard-activist",
+        ProcedureCreate(
+            kind="contact",
+            occurred_on=date.today(),
+            reason="指定培养联系人",
+            details={"linked_profile_id": "senior"},
+        ),
+    )
+    body = TransitionRequest(
+        target_stage="candidate",
+        decision_date=date.today(),
+        basis="支委会研究",
+        opinion="同意列为发展对象",
+    )
+    with pytest.raises(HTTPException) as error:
+        await service.transition("hard-activist", body)
+    assert "二级党组织" in error.value.detail
+
+    upper = service_for(db, UserRole.DEPARTMENT_ADMIN, user_id="hard-upper")
+    await upper.add_procedure(
+        "hard-activist",
+        ProcedureCreate(
+            kind="secondary_review",
+            occurred_on=date.today() - timedelta(days=2),
+            status="completed",
+            summary="二级党组织会议审议通过",
+            reason="登记会议与签字",
+            details={
+                "node": "candidate_determination",
+                "organizer_name": "组织员甲",
+                "signed_on": (date.today() - timedelta(days=1)).isoformat(),
+            },
+        ),
+    )
+    profile = await service.transition("hard-activist", body)
+    assert profile.current_stage == "candidate"
+
+
+@pytest.mark.asyncio
+async def test_secondary_review_records_node_and_organizer_signature(member_data):
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="secondary",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="二级审议对象",
+            current_stage="activist",
+            stage_joined_on=date.today() - timedelta(days=100),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    db.commit()
+    upper = service_for(db, UserRole.DEPARTMENT_ADMIN, user_id="secondary-upper")
+    record = await upper.add_procedure(
+        "secondary",
+        ProcedureCreate(
+            kind="secondary_review",
+            occurred_on=date.today() - timedelta(days=2),
+            status="completed",
+            summary="二级党组织会议审议通过",
+            reason="登记会议与签字",
+            details={
+                "node": "candidate_determination",
+                "organizer_name": "组织员甲",
+                "signed_on": (date.today() - timedelta(days=1)).isoformat(),
+            },
+        ),
+    )
+    assert record.details["node"] == "candidate_determination"
+    assert record.details["organizer_name"] == "组织员甲"
+    checks = await upper.policy_checks("secondary")
+    assert checks["secondary_review"]["status"] == "ok"
+
+    with pytest.raises(HTTPException) as error:
+        await upper.add_procedure(
+            "secondary",
+            ProcedureCreate(
+                kind="secondary_review",
+                occurred_on=date.today(),
+                status="completed",
+                summary="错误节点",
+                reason="节点阶段不符",
+                details={
+                    "node": "conversion",
+                    "organizer_name": "组织员甲",
+                    "signed_on": date.today().isoformat(),
+                },
+            ),
+        )
+    assert "阶段" in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_application_form_checklist_is_stored_and_checked(member_data):
+    from app.rules.application_form_checklist import APPLICATION_FORM_CHECKLIST
+
+    service, db = member_data
+    db.add(
+        MemberProfile(
+            id="form-check",
+            tenant_id="review-a",
+            org_unit_id="branch-a",
+            org_name="branch-a",
+            name="志愿书核对对象",
+            current_stage="candidate",
+            stage_joined_on=date.today() - timedelta(days=10),
+            birth_date=date(1990, 1, 1),
+            year=2026,
+            batch_no="B1",
+        )
+    )
+    db.commit()
+    record = await service.add_procedure(
+        "form-check",
+        ProcedureCreate(
+            kind="application_form",
+            occurred_on=date.today(),
+            status="reviewed",
+            reason="登记志愿书",
+            details={
+                "form_no": "2026-001",
+                "reviewed_on": date.today().isoformat(),
+                "checklist": [code for code, _ in APPLICATION_FORM_CHECKLIST],
+            },
+        ),
+    )
+    assert len(record.details["checklist"]) == 19
+    checks = await service.policy_checks("form-check")
+    assert checks["application_form_checklist"]["status"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -885,6 +1384,7 @@ async def test_cancelling_probationary_membership_is_terminal(member_data):
             status="disqualified",
             summary="支部大会决定取消预备党员资格",
             reason="组织决定",
+            details={"reason_category": "no_progress"},
         ),
     )
     with pytest.raises(HTTPException) as error:
@@ -1044,6 +1544,8 @@ async def test_flow_board_scopes_profiles_and_closes_task_reminders(member_data)
     target = next(item for item in board["items"] if item["id"] == "flow-target")
     kinds = {reminder["kind"] for reminder in target["reminders"]}
     assert {"higher_record", "party_group", "oath"} <= kinds
+    oath = next(reminder for reminder in target["reminders"] if reminder["kind"] == "oath")
+    assert oath["due_on"] == (date.today() - timedelta(days=30) + timedelta(days=90)).isoformat()
 
     await service.add_procedure(
         "flow-target",

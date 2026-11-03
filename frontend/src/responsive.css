@@ -1374,12 +1374,12 @@
   .ai-heading-brand > svg {
     width: 24px;
   }
-  .ai-page-heading > .button {
+  .ai-heading-actions .button {
     font-size: 9px;
     padding: 6px 9px;
     min-height: 31px;
   }
-  .ai-page-heading > .button svg {
+  .ai-heading-actions .button svg {
     width: 14px;
   }
   .ai-body {
@@ -1400,6 +1400,16 @@
   .ai-greeting p {
     font-size: 9px;
     line-height: 1.8;
+  }
+  .ai-usage-steps,
+  .qa-guide-grid {
+    grid-template-columns: 1fr;
+  }
+  .ai-heading-actions {
+    gap: 5px;
+  }
+  .ai-quick-prompts {
+    gap: 5px;
   }
   .ai-service-grid {
     gap: 10px;

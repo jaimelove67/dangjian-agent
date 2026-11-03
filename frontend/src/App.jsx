@@ -28,6 +28,7 @@ import {
   UserCircle,
   MagnifyingGlass,
   ShieldCheck,
+  Question,
   X,
 } from "@phosphor-icons/react";
 import { StoreProvider, useStore } from "./store";
@@ -45,6 +46,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { RoleHome } from "./pages/RoleHome";
 import { AccountSettings } from "./pages/AccountSettings";
 import { PasswordDialog } from "./components/PasswordSecurity";
+import { HelpCenter, RoleOnboarding } from "./components/ProjectGuide";
 import {
   canChangeOwnPassword,
   demoPasswordService,
@@ -502,6 +504,7 @@ function Shell() {
   const [notification, setNotification] = useState(false);
   const [rolePicker, setRolePicker] = useState(false);
   const [passwordDialog, setPasswordDialog] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const school = session.user.role === "school_admin";
   const selfService = isSelfService(session.user);
   const notificationRead = data.notificationReadBy?.[session.user.id] ?? false;
@@ -655,6 +658,14 @@ function Shell() {
               切换角色
             </button>
           )}
+          <button
+            className="icon-button top-icon"
+            aria-label="使用指南"
+            title="使用指南"
+            onClick={() => setGuideOpen(true)}
+          >
+            <Question size={21} />
+          </button>
           <div className="notification-wrap">
             <button
               className="icon-button top-icon"
@@ -727,6 +738,15 @@ function Shell() {
               >
                 <UserCircle size={17} />
                 {selfService ? "个人档案" : "个人中心"}
+              </button>
+              <button
+                onClick={(e) => {
+                  setGuideOpen(true);
+                  e.currentTarget.closest("details").open = false;
+                }}
+              >
+                <Question size={17} />
+                使用指南
               </button>
               {canChangeOwnPassword(session.user) && (
                 <button
@@ -893,6 +913,9 @@ function Shell() {
           key={`${session.user.id}:${route}:${JSON.stringify(routeParams)}`}
         >
           <Suspense fallback={<Loading />}>
+            {route === "dashboard" && (
+              <RoleOnboarding onOpenGuide={() => setGuideOpen(true)} />
+            )}
             {!NAV.some((n) => n.id === route) || !can(selected) ? (
               <div className="permission-empty">
                 <ShieldCheck size={48} />
@@ -1103,6 +1126,9 @@ function Shell() {
             请选择已开通的工作身份。切换后，可办理事项以该账号的角色和授权范围为准。
           </div>
         </Modal>
+      )}
+      {guideOpen && (
+        <HelpCenter route={route} onClose={() => setGuideOpen(false)} />
       )}
     </div>
   );

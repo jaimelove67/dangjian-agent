@@ -92,6 +92,9 @@ class PoliticalReviewCreate(MemberInput):
     conclusion: str = Field(default="", max_length=4000)
     note: str = Field(default="", max_length=2000)
     material_id: str | None = Field(default=None, max_length=36)
+    # 政审四项内容核对结果与八类不合格情形；键值由服务层校验。
+    content_checks: dict[str, bool] = Field(default_factory=dict)
+    negative_categories: list[str] = Field(default_factory=list)
     reason: Reason
 
     @field_validator("reviewed_on")
@@ -141,11 +144,13 @@ class ProcedureCreate(MemberInput):
         "branch_committee_review",
         "upper_pre_review",
         "application_form",
+        "publicity",
         "upper_talk",
         "branch_vote",
         "probation_outcome",
         "higher_record",
         "party_group",
+        "secondary_review",
     ]
     occurred_on: date
     status: str = Field(default="", max_length=20)

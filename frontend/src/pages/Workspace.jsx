@@ -120,6 +120,56 @@ const commonQuestions = [
   "分析本学期党员参与活动情况",
   "如何做好党员教育管理工作？",
 ];
+function answerKindMeta(message) {
+  const kind =
+    message.answerKind ||
+    (message.refused
+      ? "refused"
+      : message.citations?.length
+        ? "grounded"
+        : message.personalSources?.length
+          ? "personal"
+          : "advisory");
+  return (
+    {
+      grounded: {
+        kind,
+        label: "制度依据",
+        tone: "green",
+        next: "建议点开引用核对原文；涉及本校口径时，以学校正式文件和组织意见为准。",
+      },
+      grounded_personal: {
+        kind,
+        label: "制度依据 + 本人情况",
+        tone: "blue",
+        next: "已结合本人资料；请核对引用原文和本人记录，敏感材料未参与本次回答。",
+      },
+      personal: {
+        kind,
+        label: "本人资料",
+        tone: "blue",
+        next: "本次只依据本人资料整理；如需政策依据，可以继续追问对应的制度问题。",
+      },
+      advisory: {
+        kind,
+        label: "办理参考",
+        tone: "orange",
+        next: "补充文件名称、文号或正式文件后再问，可以提高依据完整度；办理参考不构成政策依据。",
+      },
+      refused: {
+        kind,
+        label: "未找到依据",
+        tone: "red",
+        next: "可以换一种问法、补充文号或上传正式文件，也可以向组织部门确认具体口径。",
+      },
+    }[kind] || {
+      kind,
+      label: "回答",
+      tone: "blue",
+      next: "请结合正式文件和组织意见核对。",
+    }
+  );
+}
 function demoAnswer(q) {
   if (/方案|起草|模板|生成/.test(q))
     return {
@@ -188,6 +238,7 @@ function conversationFromRecords(conversationKey, records) {
       sessionId: r.session_id,
       content: r.answer,
       citations: r.citations || [],
+      answerKind: r.answer_kind || "",
       disclaimer: r.disclaimer,
       refused: r.refused,
       hasSufficientEvidence: r.has_sufficient_evidence,
@@ -242,6 +293,7 @@ export function Assistant() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [history, setHistory] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [citation, setCitation] = useState(null);
   const [sessionId, setSessionId] = useState(null);
   const [started, setStarted] = useState(false);
@@ -252,10 +304,13 @@ export function Assistant() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(null);
   const [restoring, setRestoring] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+  const [uploading, setUploading] = useState(false);
   const [conversationId, setConversationId] = useState(() =>
     crypto.randomUUID(),
   );
   const inputRef = useRef(null);
+  const attachmentRef = useRef(null);
   const endRef = useRef(null);
   function appendMessage(msg) {
     if (IS_LIVE) setLiveMessages((prev) => [...prev, msg]);
@@ -371,6 +426,9 @@ export function Assistant() {
             question: q,
             include_personal: includePersonal,
             ...(sessionId ? { session_id: sessionId } : {}),
+            ...(attachments.length
+              ? { attachment_ids: attachments.map((item) => item.id) }
+              : {}),
           })
         : demoAnswer(q);
       setSessionId(answer.session_id || sessionId);
@@ -384,6 +442,7 @@ export function Assistant() {
         conversationId,
         sessionId: answer.session_id,
         content: answer.answer,
+        answerKind: answer.answer_kind || "",
         citations: answer.citations || [],
         disclaimer: answer.disclaimer,
         refused: answer.refused,
@@ -392,6 +451,7 @@ export function Assistant() {
         personalSources: answer.personal_sources || [],
         createdAt: Date.now(),
       });
+      setAttachments([]);
     } catch (err) {
       setError(err);
       setInput(q);
@@ -402,6 +462,21 @@ export function Assistant() {
   function choose(prompt) {
     setInput(prompt);
     inputRef.current?.focus();
+  }
+  async function uploadAttachment(file) {
+    if (!file || uploading) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const item = await backend.qaAttachment(file);
+      setAttachments((prev) => [...prev, item]);
+      notify(`已上传：${item.file_name}`);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setUploading(false);
+      if (attachmentRef.current) attachmentRef.current.value = "";
+    }
   }
   function newConversation() {
     setConversationId(crypto.randomUUID());
@@ -422,16 +497,25 @@ export function Assistant() {
             让党务工作更智能、更高效
           </span>
         </div>
-        <button
-          className="button secondary"
-          onClick={() => {
-            setHistory(true);
-            loadHistory();
-          }}
-        >
-          <ClockCounterClockwise size={17} />
-          历史记录
-        </button>
+        <div className="ai-heading-actions">
+          <button
+            className="button secondary"
+            onClick={() => setGuideOpen(true)}
+          >
+            <Question size={17} />
+            使用指南
+          </button>
+          <button
+            className="button secondary"
+            onClick={() => {
+              setHistory(true);
+              loadHistory();
+            }}
+          >
+            <ClockCounterClockwise size={17} />
+            历史记录
+          </button>
+        </div>
       </div>
       <div className={`ai-body ${messages.length ? "has-messages" : ""}`}>
         {!messages.length ? (
@@ -441,6 +525,23 @@ export function Assistant() {
               <div>
                 <h2>您好，有什么可以帮您？</h2>
                 <p>从制度解读到材料起草，我会陪您把党务工作做细、做实。</p>
+              </div>
+            </div>
+            <div className="ai-usage-steps">
+              <div>
+                <span>1</span>
+                <strong>问制度</strong>
+                <p>尽量带上文件名称、文号或具体环节。</p>
+              </div>
+              <div>
+                <span>2</span>
+                <strong>问本人</strong>
+                <p>涉及本人档案时，开启“参考我的资料”。</p>
+              </div>
+              <div>
+                <span>3</span>
+                <strong>看结果</strong>
+                <p>先看回答标签，再点引用核对原文。</p>
               </div>
             </div>
             <div className="ai-services-layout">
@@ -480,7 +581,9 @@ export function Assistant() {
           </>
         ) : (
           <div className="chat-messages">
-            {messages.map((m) => (
+            {messages.map((m) => {
+              const kindMeta = answerKindMeta(m);
+              return (
               <div key={m.id} className={`message ${m.role}`}>
                 <div className="message-avatar">
                   {m.role === "assistant" ? (
@@ -492,14 +595,9 @@ export function Assistant() {
                 <div className="message-content">
                   <div className="message-label">
                     {m.role === "assistant" ? "党建智能体" : "您"}
-                    {m.role === "assistant" && m.refused && (
-                      <Badge tone="red">未找到依据</Badge>
+                    {m.role === "assistant" && (
+                      <Badge tone={kindMeta.tone}>{kindMeta.label}</Badge>
                     )}
-                    {m.role === "assistant" &&
-                      !m.refused &&
-                      !m.citations?.length && (
-                        <Badge tone="orange">办理参考</Badge>
-                      )}
                   </div>
                   <div className="message-text">{m.content}</div>
                   {m.citations?.length > 0 && (
@@ -516,7 +614,7 @@ export function Assistant() {
                   )}
                   {m.personalSources?.length > 0 && (
                     <div className="personal-sources">
-                      <span>参考本人资料</span>
+                      <span>本次参考资料</span>
                       {m.personalSources.map((item) => (
                         <small key={`${item.kind}-${item.id}`}>
                           {item.title}
@@ -533,9 +631,16 @@ export function Assistant() {
                       {w}
                     </p>
                   ))}
+                  {m.role === "assistant" && kindMeta.next && (
+                    <p className="answer-next-step">
+                      <Info size={14} />
+                      {kindMeta.next}
+                    </p>
+                  )}
                 </div>
               </div>
-            ))}
+              );
+            })}
             {busy && (
               <div className="ai-typing">
                 <CircleNotch className="spin" size={17} />
@@ -548,6 +653,34 @@ export function Assistant() {
       </div>
       <div className="ai-composer-area">
         {error && <ErrorBox error={error} />}
+        <div className="ai-quick-prompts">
+          <span>可以这样问</span>
+          <button
+            type="button"
+            onClick={() => choose("发展对象转预备党员需要哪些材料？")}
+          >
+            查制度
+          </button>
+          {IS_LIVE && (
+            <button
+              type="button"
+              onClick={() => {
+                setIncludePersonal(true);
+                choose("我现在还缺哪些材料？");
+              }}
+            >
+              问我的情况
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() =>
+              choose("支部党员大会、支委会、党小组会和党课的频次要求是什么？")
+            }
+          >
+            问三会一课
+          </button>
+        </div>
         <form className="ai-composer" onSubmit={send}>
           {IS_LIVE && (
             <label className="ai-personal-scope">
@@ -557,8 +690,46 @@ export function Assistant() {
                 onChange={(event) => setIncludePersonal(event.target.checked)}
               />
               <span>参考我的资料</span>
-              <small>本人档案、基本信息采集表和个人材料，仅本人可见</small>
+              <small>本人档案、材料和发展记录；管理角色另含授权范围统计</small>
             </label>
+          )}
+          {IS_LIVE && (
+            <div className="ai-attachment-row">
+              <button
+                type="button"
+                className="ai-attach-button"
+                disabled={uploading}
+                onClick={() => attachmentRef.current?.click()}
+              >
+                <UploadSimple size={14} />
+                {uploading ? "正在解析材料…" : "上传材料"}
+              </button>
+              <input
+                ref={attachmentRef}
+                type="file"
+                accept=".txt,.md,.pdf,.docx"
+                hidden
+                onChange={(event) =>
+                  uploadAttachment(event.target.files?.[0])
+                }
+              />
+              {attachments.map((item) => (
+                <span className="ai-attachment-chip" key={item.id}>
+                  {item.file_name}
+                  <button
+                    type="button"
+                    aria-label={`移除 ${item.file_name}`}
+                    onClick={() =>
+                      setAttachments((prev) =>
+                        prev.filter((entry) => entry.id !== item.id),
+                      )
+                    }
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
           )}
           <textarea
             ref={inputRef}
@@ -601,6 +772,66 @@ export function Assistant() {
           </span>
         </div>
       </div>
+      {guideOpen && (
+        <Modal
+          title="党建智能体使用指南"
+          wide
+          flat
+          onClose={() => setGuideOpen(false)}
+        >
+          <div className="qa-guide">
+            <section>
+              <h3>怎么问更准</h3>
+              <ol>
+                <li>问制度：尽量带上文件名称、文号或具体环节，例如“预备党员转正需要哪些程序”。</li>
+                <li>问本人：涉及本人档案、材料、阶段时，先开启“参考我的资料”。</li>
+                <li>问材料：上传正式文件或本人材料，再结合问题提问；材料只作背景，不占引用编号。</li>
+                <li>看结果：先看“制度依据 / 办理参考 / 未找到依据”等标签，再点引用核对原文。</li>
+              </ol>
+            </section>
+            <section>
+              <h3>回答标签怎么看</h3>
+              <div className="qa-guide-grid">
+                <div>
+                  <Badge tone="green">制度依据</Badge>
+                  <p>检索到现行制度原文，结论带引用编号，可点开核对。</p>
+                </div>
+                <div>
+                  <Badge tone="blue">制度依据 + 本人情况</Badge>
+                  <p>制度依据之外，还参考了当前账号本人的档案或流程记录。</p>
+                </div>
+                <div>
+                  <Badge tone="blue">本人资料</Badge>
+                  <p>只回答“我是谁、我的阶段、我的支部”等本人事实，不作为制度依据。</p>
+                </div>
+                <div>
+                  <Badge tone="orange">办理参考</Badge>
+                  <p>知识库没有可引用依据，只给通用思路，不附引用，不能当政策依据。</p>
+                </div>
+                <div>
+                  <Badge tone="red">未找到依据</Badge>
+                  <p>涉密、引用核验不通过或来源不权威，系统拒绝给出结论。</p>
+                </div>
+              </div>
+            </section>
+            <section>
+              <h3>本人资料边界</h3>
+              <p>
+                只读取当前登录账号绑定的本人档案、材料清单、阶段流转、发展程序和待办提醒；不读取其他党员材料。身份证号、手机号等会脱敏，政治审查结论、支部大会票决等敏感详情不进入问答上下文。
+              </p>
+            </section>
+            <section>
+              <h3>关于“最新”</h3>
+              <p>
+                系统不会凭模型记忆声称最新。最新制度、通知和学习主题需要管理员审核入库并带生效日期；没有入库时会提示暂无最新依据，不编造文号或条款。
+              </p>
+            </section>
+            <div className="inline-note">
+              一句话：问制度带文号，问自己开开关，看答案先看标签，再看引用。
+            </div>
+          </div>
+        </Modal>
+      )}
       {history && (
         <Modal title="会话记录" wide flat onClose={() => setHistory(false)}>
           {IS_LIVE ? (
