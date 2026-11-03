@@ -1,6 +1,6 @@
 """党员基本信息采集表的字段校验与流转前置条件。"""
 
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 
 from app.models.member import MemberProfile
@@ -11,7 +11,9 @@ from app.services.member_info_service import (
     can_review,
     merge_payload,
     new_collection,
+    normalize_collection_status,
     person_category,
+    serialize_summary,
     validate_complete,
     validate_self,
 )
@@ -38,9 +40,7 @@ def payload(**overrides):
 
 
 def test_self_validation_requires_contact_and_conditional_addresses():
-    errors = validate_self(
-        payload(mobile="123", address="", floating=True, floating_province="")
-    )
+    errors = validate_self(payload(mobile="123", address="", floating=True, floating_province=""))
     assert "mobile" in errors
     assert "address" in errors
     assert "floating_province" in errors
@@ -64,9 +64,7 @@ def test_complete_validation_checks_dates_and_branch_fields():
     assert "supplement_reason" in errors
     assert "transfer_branch" in errors
 
-    probationary = SimpleNamespace(
-        current_stage="probationary", birth_date=date(2000, 1, 1)
-    )
+    probationary = SimpleNamespace(current_stage="probationary", birth_date=date(2000, 1, 1))
     assert "full_member_on" in validate_complete(payload(), probationary)
 
 
@@ -97,6 +95,30 @@ def test_new_collection_masks_id_and_never_copies_full_number():
     assert collection.id_card_masked == "110101********1234"
     assert "110101199001011234" not in str(collection.payload)
     assert person_category("member") == "正式党员"
+
+
+def test_legacy_and_unknown_collection_statuses_do_not_break_summary():
+    assert normalize_collection_status("approved") == "archived"
+    assert normalize_collection_status("other") == "unknown"
+    assert normalize_collection_status(None) == "draft"
+    summary = serialize_summary(
+        SimpleNamespace(
+            id="collection-1",
+            profile_id="profile-1",
+            member_name="测试党员",
+            member_stage="member",
+            member_stage_label="正式党员",
+            org_unit_id="org-1",
+            org_name="测试支部",
+            department="测试学院",
+            status="approved",
+            version=1,
+            submitted_at=None,
+            updated_at=datetime(2026, 1, 1),
+            return_reason="",
+        )
+    )
+    assert summary.status == "archived"
 
 
 def test_review_and_branch_edit_are_bound_to_current_stage():

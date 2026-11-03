@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -18,6 +18,7 @@ from app.core.desensitization import mask_id_card
 from app.models.member import MemberInfoCollection, MemberProfile, MemberStageHistory
 from app.models.user import User, UserRole
 from app.schemas.member_info import (
+    CollectionStatus,
     InfoCollectionOut,
     InfoCollectionSummary,
     InfoPayload,
@@ -58,7 +59,22 @@ STATUS_LABELS = {
     "department_approved": "待学校备案",
     "archived": "已备案",
     "returned": "已退回",
+    "unknown": "状态异常",
 }
+# 旧测试数据/历史导入可能写入旧状态名；approved 按已备案处理。
+LEGACY_COLLECTION_STATUSES = {"approved": "archived"}
+
+
+def normalize_collection_status(status: str | None) -> CollectionStatus:
+    """把历史状态收敛到当前契约，未知状态不阻断整页读取。"""
+
+    value = str(status or "draft").strip().lower()
+    value = LEGACY_COLLECTION_STATUSES.get(value, value)
+    if value not in STATUS_LABELS:
+        value = "unknown"
+    return cast(CollectionStatus, value)
+
+
 STAGE_LABELS = {
     "applicant": "入党申请人",
     "activist": "入党积极分子",
@@ -105,14 +121,8 @@ def can_edit_branch(user: User, collection: MemberInfoCollection) -> bool:
 def can_review(user: User, collection: MemberInfoCollection) -> bool:
     return (
         (user.role == UserRole.BRANCH_SECRETARY and collection.status == "submitted")
-        or (
-            user.role == UserRole.DEPARTMENT_ADMIN
-            and collection.status == "branch_approved"
-        )
-        or (
-            user.role == UserRole.SCHOOL_ADMIN
-            and collection.status == "department_approved"
-        )
+        or (user.role == UserRole.DEPARTMENT_ADMIN and collection.status == "branch_approved")
+        or (user.role == UserRole.SCHOOL_ADMIN and collection.status == "department_approved")
     )
 
 
@@ -182,9 +192,7 @@ def validate_self(payload: SelfInfoPayload | InfoPayload) -> dict[str, str]:
     return errors
 
 
-def validate_complete(
-    payload: InfoPayload, profile: MemberProfile
-) -> dict[str, str]:
+def validate_complete(payload: InfoPayload, profile: MemberProfile) -> dict[str, str]:
     """支部初核前校验全部字段。"""
 
     errors = validate_self(payload)
@@ -204,11 +212,7 @@ def validate_complete(
         and payload.full_member_on < payload.join_party_on
     ):
         errors["full_member_on"] = "转正日期不能早于加入党组织日期"
-    if (
-        profile.birth_date
-        and payload.join_party_on
-        and payload.join_party_on < profile.birth_date
-    ):
+    if profile.birth_date and payload.join_party_on and payload.join_party_on < profile.birth_date:
         errors["join_party_on"] = "加入党组织日期不能早于出生日期"
 
     job = str(payload.job_code or "").strip()
@@ -294,7 +298,7 @@ def serialize_collection(collection: MemberInfoCollection) -> InfoCollectionOut:
         id_card_masked=collection.id_card_masked,
         birth_date=collection.birth_date,
         stage_joined_on=collection.stage_joined_on,
-        status=collection.status,
+        status=normalize_collection_status(collection.status),
         version=collection.version,
         payload=InfoPayload.model_validate(collection.payload or {}),
         history=list(collection.history or []),
@@ -328,7 +332,7 @@ def serialize_summary(collection: MemberInfoCollection) -> InfoCollectionSummary
         org_unit_id=collection.org_unit_id,
         org_name=collection.org_name,
         department=collection.department,
-        status=collection.status,
+        status=normalize_collection_status(collection.status),
         version=collection.version,
         submitted_at=collection.submitted_at,
         updated_at=collection.updated_at,
@@ -365,9 +369,7 @@ async def own_collection(
     ).scalar_one_or_none()
 
 
-async def load_collection(
-    db: AsyncSession, user: User, collection_id: str
-) -> MemberInfoCollection:
+async def load_collection(db: AsyncSession, user: User, collection_id: str) -> MemberInfoCollection:
     collection = (
         await db.execute(
             select(MemberInfoCollection).where(
@@ -388,9 +390,7 @@ async def visible_org_ids(db: AsyncSession, user: User) -> set[str]:
     return {str(org.id) for org in orgs}
 
 
-async def ensure_scope(
-    db: AsyncSession, user: User, collection: MemberInfoCollection
-) -> None:
+async def ensure_scope(db: AsyncSession, user: User, collection: MemberInfoCollection) -> None:
     if user.role == UserRole.SYSTEM_ADMIN:
         raise HTTPException(403, "平台管理员不办理学校党员业务。")
     ids = await visible_org_ids(db, user)
@@ -464,16 +464,12 @@ def new_collection(
     )
 
 
-def refresh_profile_snapshot(
-    collection: MemberInfoCollection, profile: MemberProfile
-) -> None:
+def refresh_profile_snapshot(collection: MemberInfoCollection, profile: MemberProfile) -> None:
     collection.member_name = profile.name
     collection.member_stage = profile.current_stage
     collection.member_stage_label = stage_label(profile.current_stage)
     collection.org_name = profile.org_name
     collection.org_unit_id = str(profile.org_unit_id) if profile.org_unit_id else None
-    collection.id_card_masked = (
-        mask_id_card(profile.id_card_no) if profile.id_card_no else ""
-    )
+    collection.id_card_masked = mask_id_card(profile.id_card_no) if profile.id_card_no else ""
     collection.birth_date = profile.birth_date
     collection.stage_joined_on = profile.stage_joined_on

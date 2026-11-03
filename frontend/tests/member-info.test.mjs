@@ -211,3 +211,9 @@ test("applicants cannot start the party-member collection and demo seeds stay sc
   // 演示种子数据本身是完整记录，党籍状态已明确填写。
   assert.ok(seeds.every((item) => item.payload.party_status === "normal"));
 });
+
+test("unknown collection status stays visible with an explicit warning", () => {
+  assert.equal(infoStatusLabel("unknown"), "状态异常");
+  const counts = infoCounts([{ status: "unknown" }]);
+  assert.equal(counts.unknown, 1);
+});

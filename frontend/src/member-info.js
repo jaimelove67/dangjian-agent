@@ -8,6 +8,7 @@ export const INFO_STATUS = {
   department_approved: { label: "待学校备案", tone: "blue" },
   archived: { label: "已备案", tone: "green" },
   returned: { label: "已退回", tone: "orange" },
+  unknown: { label: "状态异常", tone: "orange" },
 };
 
 export const INFO_STATUS_ORDER = [
@@ -17,6 +18,7 @@ export const INFO_STATUS_ORDER = [
   "department_approved",
   "archived",
   "returned",
+  "unknown",
 ];
 
 export const STAGE_CODE_BY_LABEL = {

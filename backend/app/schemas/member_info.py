@@ -21,6 +21,8 @@ CollectionStatus = Literal[
     "department_approved",
     "archived",
     "returned",
+    # 历史数据或直接写库产生的未知状态单独标记，避免一条坏数据让整页 500。
+    "unknown",
 ]
 
 
@@ -30,18 +32,18 @@ class SelfInfoPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     gender: Gender | None = None
-    ethnicity: str | None = Field(None, max_length=30)
-    education_code: str | None = Field(None, max_length=10)
-    mobile: str | None = Field(None, max_length=20)
-    phone_area: str | None = Field(None, max_length=6)
-    phone_number: str | None = Field(None, max_length=12)
-    address: str | None = Field(None, max_length=200)
+    ethnicity: str | None = Field(default=None, max_length=30)
+    education_code: str | None = Field(default=None, max_length=10)
+    mobile: str | None = Field(default=None, max_length=20)
+    phone_area: str | None = Field(default=None, max_length=6)
+    phone_number: str | None = Field(default=None, max_length=12)
+    address: str | None = Field(default=None, max_length=200)
     lost_contact: bool | None = None
     lost_contact_on: date | None = None
     floating: bool | None = None
-    floating_province: str | None = Field(None, max_length=50)
-    floating_city: str | None = Field(None, max_length=50)
-    floating_county: str | None = Field(None, max_length=50)
+    floating_province: str | None = Field(default=None, max_length=50)
+    floating_city: str | None = Field(default=None, max_length=50)
+    floating_county: str | None = Field(default=None, max_length=50)
 
 
 class InfoPayload(SelfInfoPayload):
@@ -49,12 +51,12 @@ class InfoPayload(SelfInfoPayload):
 
     join_party_on: date | None = None
     full_member_on: date | None = None
-    job_code: str | None = Field(None, max_length=10)
+    job_code: str | None = Field(default=None, max_length=10)
     party_status: PartyStatus | None = None
     filing_type: FilingType | None = None
-    supplement_reason: str | None = Field(None, max_length=500)
+    supplement_reason: str | None = Field(default=None, max_length=500)
     relation_transfer: bool | None = None
-    transfer_branch: str | None = Field(None, max_length=200)
+    transfer_branch: str | None = Field(default=None, max_length=200)
 
 
 class SelfInfoSubmit(SelfInfoPayload):

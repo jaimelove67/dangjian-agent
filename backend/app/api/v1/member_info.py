@@ -50,6 +50,7 @@ from app.services.member_info_service import (
     load_collection,
     merge_payload,
     new_collection,
+    normalize_collection_status,
     now_local,
     own_collection,
     own_profile,
@@ -76,8 +77,8 @@ def _trace(request: Request) -> str | None:
 
 def _profile_out(
     profile: MemberProfile,
-    join_on=None,
-    full_on=None,
+    join_on: date | None = None,
+    full_on: date | None = None,
 ) -> SelfInfoProfile:
     return SelfInfoProfile(
         id=str(profile.id),
@@ -174,9 +175,7 @@ async def save_own_info_collection(
     )
     await db.commit()
     await db.refresh(collection)
-    return APIResponse(
-        data=serialize_collection(collection), trace_id=_trace(request)
-    )
+    return APIResponse(data=serialize_collection(collection), trace_id=_trace(request))
 
 
 @router.post(
@@ -240,9 +239,7 @@ async def submit_own_info_collection(
     )
     await db.commit()
     await db.refresh(collection)
-    return APIResponse(
-        data=serialize_collection(collection), trace_id=_trace(request)
-    )
+    return APIResponse(data=serialize_collection(collection), trace_id=_trace(request))
 
 
 def _scope_conditions(user: User, org_ids: set[str]) -> list:
@@ -304,26 +301,29 @@ async def list_info_collections(
     ).all()
     counts = {key: 0 for key in STATUS_LABELS}
     for key, value in count_rows:
-        counts[str(key)] = int(value)
+        normalized = normalize_collection_status(str(key))
+        counts[normalized] = counts.get(normalized, 0) + int(value)
 
     total = int(
         (
             await db.execute(
-                select(func.count())
-                .select_from(MemberInfoCollection)
-                .where(*conditions)
+                select(func.count()).select_from(MemberInfoCollection).where(*conditions)
             )
         ).scalar_one()
     )
     rows = (
-        await db.execute(
-            select(MemberInfoCollection)
-            .where(*conditions)
-            .order_by(MemberInfoCollection.updated_at.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+        (
+            await db.execute(
+                select(MemberInfoCollection)
+                .where(*conditions)
+                .order_by(MemberInfoCollection.updated_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return APIResponse(
         data=InfoCollectionList(
             items=[serialize_summary(item) for item in rows],
@@ -346,9 +346,7 @@ async def get_info_collection(
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[InfoCollectionOut]:
     collection = await load_collection(db, user, collection_id)
-    return APIResponse(
-        data=serialize_collection(collection), trace_id=_trace(request)
-    )
+    return APIResponse(data=serialize_collection(collection), trace_id=_trace(request))
 
 
 @router.patch(
@@ -389,9 +387,7 @@ async def update_info_collection(
     )
     await db.commit()
     await db.refresh(collection)
-    return APIResponse(
-        data=serialize_collection(collection), trace_id=_trace(request)
-    )
+    return APIResponse(data=serialize_collection(collection), trace_id=_trace(request))
 
 
 @router.post(
@@ -431,15 +427,15 @@ async def review_info_collection(
         collection.return_stage = (
             "submitted"
             if user.role == UserRole.BRANCH_SECRETARY
-            else "branch_approved"
-            if user.role == UserRole.DEPARTMENT_ADMIN
-            else "department_approved"
+            else (
+                "branch_approved"
+                if user.role == UserRole.DEPARTMENT_ADMIN
+                else "department_approved"
+            )
         )
         collection.updated_at = at
         collection.history = list(collection.history or []) + [
-            history_event(
-                "return", user, "returned", at, opinion, collection.version
-            )
+            history_event("return", user, "returned", at, opinion, collection.version)
         ]
         await audit_operation(
             db,
@@ -454,9 +450,7 @@ async def review_info_collection(
         )
         await db.commit()
         await db.refresh(collection)
-        return APIResponse(
-            data=serialize_collection(collection), trace_id=_trace(request)
-        )
+        return APIResponse(data=serialize_collection(collection), trace_id=_trace(request))
 
     if body.decision == "archive":
         if user.role != UserRole.SCHOOL_ADMIN or collection.status != "department_approved":
@@ -466,9 +460,7 @@ async def review_info_collection(
         collection.archived_by_name = user.name
         collection.updated_at = at
         collection.history = list(collection.history or []) + [
-            history_event(
-                "archive", user, "archived", at, opinion, collection.version
-            )
+            history_event("archive", user, "archived", at, opinion, collection.version)
         ]
         await audit_operation(
             db,
@@ -483,9 +475,7 @@ async def review_info_collection(
         )
         await db.commit()
         await db.refresh(collection)
-        return APIResponse(
-            data=serialize_collection(collection), trace_id=_trace(request)
-        )
+        return APIResponse(data=serialize_collection(collection), trace_id=_trace(request))
 
     if not can_review(user, collection):
         raise HTTPException(403, "当前账号不能审核这份采集表。")
@@ -532,12 +522,10 @@ async def review_info_collection(
     )
     await db.commit()
     await db.refresh(collection)
-    return APIResponse(
-        data=serialize_collection(collection), trace_id=_trace(request)
-    )
+    return APIResponse(data=serialize_collection(collection), trace_id=_trace(request))
 
 
-def _docx_text(value) -> str:
+def _docx_text(value: object) -> str:
     if value is None or value == "":
         return "未填写"
     if isinstance(value, bool):
@@ -564,7 +552,7 @@ async def export_info_collection(
     normal = document.styles["Normal"]
     normal.font.name = "宋体"
     normal.font.size = Pt(11)
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+    normal._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), "宋体")
     section = document.sections[0]
     section.top_margin = Cm(1.8)
     section.bottom_margin = Cm(1.8)
@@ -576,13 +564,13 @@ async def export_info_collection(
     run = title.add_run("党员基本信息采集表")
     run.bold = True
     run.font.size = Pt(18)
-    run._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+    run._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), "宋体")
     meta = document.add_paragraph("附件 2")
     meta.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
     rows = [
         ("1. 姓名", profile.name),
-        ("2. 性别", {"male": "男", "female": "女"}.get(payload.gender, "未填写")),
+        ("2. 性别", {"male": "男", "female": "女"}.get(payload.gender or "", "未填写")),
         ("3. 民族", payload.ethnicity),
         (
             "4. 公民身份证号",
@@ -601,9 +589,11 @@ async def export_info_collection(
                 part
                 for part in [
                     payload.mobile,
-                    f"{payload.phone_area}-{payload.phone_number}"
-                    if payload.phone_area and payload.phone_number
-                    else "",
+                    (
+                        f"{payload.phone_area}-{payload.phone_number}"
+                        if payload.phone_area and payload.phone_number
+                        else ""
+                    ),
                 ]
                 if part
             ),
@@ -611,42 +601,38 @@ async def export_info_collection(
         ("13. 家庭住址", payload.address),
         (
             "14. 党籍状态",
-            {"normal": "正常", "suspended": "停止党籍"}.get(
-                payload.party_status, "未填写"
-            ),
+            {"normal": "正常", "suspended": "停止党籍"}.get(payload.party_status or "", "未填写"),
         ),
         (
             "15. 是否失联党员",
-            f"是，失去联系日期：{payload.lost_contact_on}"
-            if payload.lost_contact
-            else "否",
+            f"是，失去联系日期：{payload.lost_contact_on}" if payload.lost_contact else "否",
         ),
         (
             "16. 是否流动党员",
-            "是，流向："
-            + " ".join(
-                part
-                for part in [
-                    payload.floating_province,
-                    payload.floating_city,
-                    payload.floating_county,
-                ]
-                if part
-            )
-            if payload.floating
-            else "否",
+            (
+                "是，流向："
+                + " ".join(
+                    part
+                    for part in [
+                        payload.floating_province,
+                        payload.floating_city,
+                        payload.floating_county,
+                    ]
+                    if part
+                )
+                if payload.floating
+                else "否"
+            ),
         ),
         (
             "17. 填报类型",
             {"new": "当年新发展党员", "supplement": "往年党员补录"}.get(
-                payload.filing_type, "未填写"
+                payload.filing_type or "", "未填写"
             ),
         ),
         (
             "18. 是否转接组织关系",
-            f"是，转入支部：{payload.transfer_branch}"
-            if payload.relation_transfer
-            else "否",
+            f"是，转入支部：{payload.transfer_branch}" if payload.relation_transfer else "否",
         ),
     ]
     table = document.add_table(rows=len(rows), cols=2)
@@ -687,13 +673,9 @@ async def export_info_collection(
         new_value={"format": "docx", "masked_id": True},
     )
     await db.commit()
-    filename = quote(
-        f"党员基本信息采集表-{collection.member_name}-第{collection.version}版.docx"
-    )
+    filename = quote(f"党员基本信息采集表-{collection.member_name}-第{collection.version}版.docx")
     return StreamingResponse(
         buffer,
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ),
+        media_type=("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
