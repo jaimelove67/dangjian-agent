@@ -90,6 +90,10 @@ class ImageMutation(RevisionRequest):
     """现场图片必须绑定当前会议版本，避免并发编辑时把旧图挂到新版本。"""
 
 
+class AgendaFromUpdates(RevisionRequest):
+    external_update_ids: list[str] = Field(default_factory=list, max_length=5)
+
+
 class ActivityUpdate(RevisionRequest):
     scheduled_on: date | None = None
     held_on: date | None = None

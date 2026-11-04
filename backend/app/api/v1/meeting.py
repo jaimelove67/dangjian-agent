@@ -33,6 +33,7 @@ from app.schemas.common import APIResponse
 from app.schemas.meeting import (
     ActivityCreate,
     ActivityUpdate,
+    AgendaFromUpdates,
     ImageMutation,
     ReviewRequest,
     RevisionRequest,
@@ -312,6 +313,55 @@ async def generate_agenda(
     record = await service.generate_agenda(record_id, body)
     return await respond(
         request, service, await service.record_data(record), "generate_agenda", "meeting", record_id
+    )
+
+
+@router.get(
+    "/meeting/records/{record_id}/external-suggestions",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage)],
+)
+async def external_suggestions(
+    record_id: str,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """列出可用于当前会议的最新外部资料；普通办理人只看已采用资料。"""
+    items = await service.external_suggestions(record_id)
+    return APIResponse(data={"items": items}, trace_id=getattr(request.state, "trace_id", None))
+
+
+@router.post(
+    "/meeting/records/{record_id}/generate-agenda-from-updates",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage)],
+)
+async def generate_agenda_from_updates(
+    record_id: str,
+    body: AgendaFromUpdates,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """批量采用所选外部资料，再生成会议议程草稿。"""
+    record = await service.generate_agenda_from_external(record_id, body)
+    if body.external_update_ids:
+        await audit_operation(
+            service.db,
+            request,
+            service.user,
+            action="adopt_external_updates",
+            resource_type="meeting",
+            resource_id=record_id,
+            data_level="public",
+            new_value={"external_update_ids": body.external_update_ids},
+        )
+    return await respond(
+        request,
+        service,
+        await service.record_data(record),
+        "generate_agenda_from_updates",
+        "meeting",
+        record_id,
     )
 
 

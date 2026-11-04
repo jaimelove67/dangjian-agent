@@ -15,12 +15,14 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.knowledge import KnowledgeDoc
+from app.core.security import Permission, has_permission
+from app.models.external import ExternalUpdate
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask
 from app.models.user import User
 from app.schemas.meeting import (
     ActivityCreate,
     ActivityUpdate,
+    AgendaFromUpdates,
     ImageMutation,
     ReviewRequest,
     RevisionRequest,
@@ -36,6 +38,7 @@ from app.services.activity_frequency import (
     load_requirements,
 )
 from app.services.archive_service import require_archive_policy
+from app.services.external_update_service import review_update
 from app.services.file_store import read_original, save_original
 from app.services.meeting_images import MEETING_IMAGE_LIMIT, inspect_meeting_image
 from app.services.meeting_service import (
@@ -403,43 +406,94 @@ class ActivityService:
             "notice": ORGANIZATION_LIFE_NOTICE,
         }
 
-    async def _latest_external_materials(self) -> str:
+    async def external_suggestions(self, record_id: str) -> list[dict[str, Any]]:
+        """返回当前会议可参考的外部资料；普通会议办理人只看已采用资料。"""
+
+        record = await self.record(record_id)
+        await self.require_visible_content(record)
+        query = select(ExternalUpdate).where(
+            ExternalUpdate.tenant_id == self.tenant_id,
+            ExternalUpdate.is_deleted.is_(False),
+            ExternalUpdate.status.in_(("pending", "approved")),
+        )
+        if not has_permission(self.user.role, Permission.KNOWLEDGE_MANAGE):
+            query = query.where(ExternalUpdate.status == "approved")
         rows = (
             (
                 await self.db.execute(
-                    select(KnowledgeDoc)
-                    .where(
-                        KnowledgeDoc.tenant_id == self.tenant_id,
-                        KnowledgeDoc.doc_id.like("external-%"),
-                        KnowledgeDoc.is_deleted.is_(False),
-                        KnowledgeDoc.status == "effective",
-                        KnowledgeDoc.validity == "effective",
-                        KnowledgeDoc.review_status == "published",
-                    )
-                    .order_by(
-                        KnowledgeDoc.effective_date.desc(),
-                        KnowledgeDoc.created_at.desc(),
-                    )
-                    .limit(5)
+                    query.order_by(
+                        ExternalUpdate.published_at.desc().nullslast(),
+                        ExternalUpdate.fetched_at.desc(),
+                    ).limit(10)
                 )
             )
             .scalars()
             .all()
         )
-        if not rows:
-            return ""
-        lines = []
-        for index, row in enumerate(rows, 1):
-            metadata = row.doc_metadata or {}
-            source = metadata.get("source_name") or row.issuer
-            source_url = metadata.get("source_url") or ""
-            lines.append(
-                f"[外部{index}] {row.title}（{source}，发布 {row.effective_date}，"
-                f"原文 {source_url}）：{(row.summary or '摘要待补')[:300]}"
+        return [
+            {
+                "id": str(row.id),
+                "title": row.title,
+                "source_name": row.source_name,
+                "source_url": row.source_url,
+                "summary": row.summary,
+                "published_at": row.published_at,
+                "status": row.status,
+                "knowledge_doc_id": row.knowledge_doc_id,
+            }
+            for row in rows
+        ]
+
+    async def generate_agenda_from_external(
+        self, record_id: str, body: AgendaFromUpdates
+    ) -> MeetingRecord:
+        """批量采用所选最新资料，并把资料加入本次会议后生成议程草稿。"""
+
+        record = await self.record(record_id, lock=True)
+        self.check_revision(record, body.expected_revision)
+        if record.archived_at:
+            raise HTTPException(409, "已归档活动不能覆盖")
+        ids = list(dict.fromkeys(body.external_update_ids))
+        if ids:
+            rows = (
+                (
+                    await self.db.execute(
+                        select(ExternalUpdate).where(
+                            ExternalUpdate.id.in_(ids),
+                            ExternalUpdate.tenant_id == self.tenant_id,
+                            ExternalUpdate.is_deleted.is_(False),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
             )
-        return "\n最新外部资料（仅作学习参考，须核对原文；不得据此虚构会议事实）：\n" + "\n".join(
-            lines
-        )
+            if len(rows) != len(ids):
+                raise HTTPException(404, "所选外部资料不存在")
+            selected_docs: list[str] = []
+            for row in rows:
+                if row.status == "approved":
+                    if not row.knowledge_doc_id:
+                        raise HTTPException(409, "已采用资料缺少知识库记录，请刷新后重试")
+                    selected_docs.append(row.knowledge_doc_id)
+                elif row.status == "pending":
+                    if not has_permission(self.user.role, Permission.KNOWLEDGE_MANAGE):
+                        raise HTTPException(403, "当前账号不能审核采用外部资料")
+                    _, doc = await review_update(
+                        self.db,
+                        self.user,
+                        str(row.id),
+                        "approve",
+                        body.reason,
+                    )
+                    if doc is None:
+                        raise HTTPException(409, "外部资料写入知识库失败")
+                    selected_docs.append(doc.doc_id)
+                else:
+                    raise HTTPException(422, "不能使用已退回的外部资料")
+            record.source_doc_ids = list(dict.fromkeys([*record.source_doc_ids, *selected_docs]))
+            await self.db.flush()
+        return await self.generate_agenda(record_id, body)
 
     async def generate_agenda(self, record_id: str, body: RevisionRequest) -> MeetingRecord:
         """生成通知与议程草稿；依据全部来自已选真实材料摘录。"""
@@ -463,9 +517,6 @@ class ActivityService:
             )
             or "政策依据待补；资料不足时不生成政策表述。"
         )
-        external_materials = await self._latest_external_materials()
-        if external_materials:
-            materials += external_materials
         people = "、".join(person["name"] for person in record.participants) or "参会人员待补"
         if record.activity_type == ORG_LIFE_ACTIVITY_TYPE:
             # 组织生活会的流程是"会前谈心谈话、会上批评与自我批评、会后整改"，

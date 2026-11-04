@@ -46,6 +46,7 @@ import {
 } from "../demo-courses";
 import { courses, DEPARTMENTS, organizations } from "../data";
 import { meetingPayload, meetingParticipants } from "../contracts";
+import { AgendaSourcesDialog } from "../components/AgendaSourcesDialog";
 import { ExternalUpdatesDialog } from "../components/ExternalUpdatesDialog";
 import {
   PageHeader,
@@ -192,6 +193,7 @@ export function Meetings() {
   const [imageError, setImageError] = useState("");
   const [previewImage, setPreviewImage] = useState(null);
   const [externalOpen, setExternalOpen] = useState(false);
+  const [agendaSources, setAgendaSources] = useState(null);
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
   );
@@ -606,15 +608,9 @@ export function Meetings() {
                       <button
                         className="button secondary"
                         disabled={busy}
-                        onClick={() =>
-                          recordAction(
-                            "generate-agenda",
-                            current,
-                            "根据已审核的最新资料生成会议议程草稿",
-                          )
-                        }
+                        onClick={() => setAgendaSources(current)}
                       >
-                        生成议程
+                        用最新资料生成议程
                       </button>
                     )}
                     {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
@@ -1003,6 +999,22 @@ export function Meetings() {
       )}
       {externalOpen && (
         <ExternalUpdatesDialog onClose={() => setExternalOpen(false)} />
+      )}
+      {agendaSources && (
+        <AgendaSourcesDialog
+          record={agendaSources}
+          onClose={() => setAgendaSources(null)}
+          onGenerated={(next) => {
+            const normalized = normalizeMeeting(next);
+            update("meetings", (prev) =>
+              prev.map((item) =>
+                item.id === normalized.id ? normalized : item,
+              ),
+            );
+            setAgendaSources(null);
+            notify("会议议程草稿已生成，请核对资料和实际情况");
+          }}
+        />
       )}
       {previewImage && (
         <Modal

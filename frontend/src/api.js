@@ -175,6 +175,18 @@ export const backend = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  externalSuggestions: (meetingId) =>
+    request(
+      `/meeting/records/${encodeURIComponent(meetingId)}/external-suggestions`,
+    ),
+  generateAgendaFromUpdates: (meetingId, body) =>
+    request(
+      `/meeting/records/${encodeURIComponent(meetingId)}/generate-agenda-from-updates`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
   createMeeting: (payload) =>
     request("/meeting/records", {
       method: "POST",
