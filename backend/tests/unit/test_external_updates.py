@@ -38,6 +38,7 @@ def test_topic_rules_map_latest_article_to_meeting_type():
     assert _topic_for("中共中央关于全面从严治党的重要决定")[1] == "party_lecture"
     assert _topic_for("加强基层党组织建设的工作要求")[1] == "branch_committee_meeting"
     assert "学习《" in _topic_for("其他党建资料")[0]
+    assert _topic_for("系列节目《思想的力量》")[0] == "学习系列节目《思想的力量》"
 
 
 def test_focus_topics_are_normalized_and_unknown_tags_are_ignored():

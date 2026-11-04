@@ -138,6 +138,9 @@ def _topic_for(title: str) -> tuple[str, str]:
     for keywords, topic, activity_type in TOPIC_RULES:
         if any(keyword in title for keyword in keywords):
             return topic, activity_type
+    # 资料标题本身可能已带书名号，避免生成“学习《系列节目《…》》”这类嵌套标题。
+    if "《" in title or "》" in title:
+        return f"学习{title[:36]}", "party_lecture"
     return f"学习《{title[:36]}》", "party_lecture"
 
 
