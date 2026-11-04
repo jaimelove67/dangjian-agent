@@ -46,6 +46,14 @@ export function TopicSuggestionsDialog({
     load();
   }, []);
 
+  useEffect(() => {
+    if (!orgId && orgs.length) {
+      setOrgId(
+        orgs.find((org) => org.org_type === "branch")?.id || orgs[0].id,
+      );
+    }
+  }, [orgs, orgId]);
+
   async function create(topic) {
     if (!orgId) return;
     setBusy(topic.id);
