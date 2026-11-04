@@ -677,7 +677,7 @@ class ActivityService:
         )
         materials = (
             "\n".join(
-                f"{index}. {_short_title(source['title'])}" f"（{source['issuer']}）"
+                f"{index}. {_short_title(source['title'])}"
                 for index, source in enumerate(sources, 1)
             )
             or "学习资料待补；资料不足时不生成政策表述。"
@@ -704,7 +704,7 @@ class ActivityService:
             agenda = (
                 f"会议议程（草稿）：\n一、会议主题：{record.title}\n二、学习资料：\n{materials}\n"
                 f"三、讨论安排：请围绕上述资料酝酿意见\n四、参会范围：{people}\n"
-                f"完整资料及原文链接见会议资料清单。\n{ORGANIZATION_LIFE_NOTICE}"
+                f"{ORGANIZATION_LIFE_NOTICE}"
             )
             notice = (
                 f"会议通知（草稿）：\n会议名称：{record.title}\n"
