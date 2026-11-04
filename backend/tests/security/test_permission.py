@@ -81,6 +81,13 @@ class TestInterfacePermissions:
             assert not has_permission(UserRole.DEPARTMENT_ADMIN, permission)
             assert not has_permission(UserRole.MEMBER, permission)
 
+    def test_organizer_prepares_but_does_not_review_or_archive_meetings(self):
+        assert has_permission(UserRole.ORGANIZER, Permission.MEETING_MANAGE)
+        assert not has_permission(UserRole.ORGANIZER, Permission.MEETING_REVIEW)
+        assert not has_permission(UserRole.ORGANIZER, Permission.MEETING_ARCHIVE)
+        assert has_permission(UserRole.BRANCH_SECRETARY, Permission.MEETING_REVIEW)
+        assert has_permission(UserRole.BRANCH_SECRETARY, Permission.MEETING_ARCHIVE)
+
 
 class TestDataScope:
     """角色 + 数据范围双层模型"""
