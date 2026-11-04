@@ -94,6 +94,10 @@ class AgendaFromUpdates(RevisionRequest):
     external_update_ids: list[str] = Field(default_factory=list, max_length=5)
 
 
+class TopicSuggestionRequest(MeetingInput):
+    org_unit_id: str | None = Field(default=None, max_length=36)
+
+
 class ActivityUpdate(RevisionRequest):
     scheduled_on: date | None = None
     held_on: date | None = None

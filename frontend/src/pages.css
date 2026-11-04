@@ -2297,6 +2297,70 @@ button.meeting-image {
 .archive-checklist-section {
   margin-top: 18px;
 }
+.page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.inline-field {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.inline-field > span {
+  color: #626b78;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.topic-suggestion-list {
+  display: grid;
+  gap: 14px;
+}
+.topic-suggestion-card {
+  border: 1px solid #dfe3e8;
+  border-radius: 4px;
+  padding: 16px;
+}
+.topic-suggestion-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.topic-suggestion-heading h3 {
+  margin: 0 0 6px;
+}
+.topic-suggestion-heading p {
+  margin: 0;
+  color: #626b78;
+  line-height: 1.7;
+}
+.topic-suggestion-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 12px;
+  color: #626b78;
+  font-size: 12px;
+}
+.topic-suggestion-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.topic-suggestion-sources {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.topic-suggestion-sources a {
+  color: #8b1e24;
+  overflow-wrap: anywhere;
+}
+.topic-suggestion-card .modal-actions {
+  margin-top: 14px;
+}
 .archive-checklist .inline-note span {
   display: block;
   margin-top: 5px;

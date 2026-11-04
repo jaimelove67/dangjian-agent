@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from app.services.activity_service import _topic_for
 from app.services.external_update_service import (
     _links,
     _published_date,
@@ -28,3 +29,9 @@ def test_publication_date_comes_from_article_url():
 def test_summary_prefers_meta_description_and_strips_markup():
     page = '<meta name="description" content="来源摘要 &amp; 重点内容">' "<p>正文不应优先</p>"
     assert _summary_from_page(page) == "来源摘要 & 重点内容"
+
+
+def test_topic_rules_map_latest_article_to_meeting_type():
+    assert _topic_for("中共中央关于全面从严治党的重要决定")[1] == "party_lecture"
+    assert _topic_for("加强基层党组织建设的工作要求")[1] == "branch_committee_meeting"
+    assert "学习《" in _topic_for("其他党建资料")[0]

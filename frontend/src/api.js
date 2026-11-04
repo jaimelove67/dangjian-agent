@@ -187,6 +187,12 @@ export const backend = {
         body: JSON.stringify(body),
       },
     ),
+  topicSuggestions: (body = {}) =>
+    request("/meeting/topic-suggestions", {
+      method: "POST",
+      body: JSON.stringify(body),
+      timeout: 120000,
+    }),
   createMeeting: (payload) =>
     request("/meeting/records", {
       method: "POST",

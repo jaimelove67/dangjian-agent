@@ -7,7 +7,7 @@
 
 import asyncio
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
@@ -23,6 +23,7 @@ from app.schemas.meeting import (
     ActivityCreate,
     ActivityUpdate,
     AgendaFromUpdates,
+    TopicSuggestionRequest,
     ImageMutation,
     ReviewRequest,
     RevisionRequest,
@@ -38,7 +39,7 @@ from app.services.activity_frequency import (
     load_requirements,
 )
 from app.services.archive_service import require_archive_policy
-from app.services.external_update_service import review_update
+from app.services.external_update_service import fetch_updates, review_update
 from app.services.file_store import read_original, save_original
 from app.services.meeting_images import MEETING_IMAGE_LIMIT, inspect_meeting_image
 from app.services.meeting_service import (
@@ -67,6 +68,67 @@ ACTIVITY_TYPES: dict[str, str] = {
     "organizational_life_meeting": "组织生活会",
     "other": "其他组织生活",
 }
+
+
+TOPIC_IGNORE = ("遗体", "火化", "送别", "会谈", "会见", "海洋治理", "生产率", "阿曼")
+TOPIC_RELEVANT = (
+    "党",
+    "党建",
+    "组织",
+    "基层",
+    "干部",
+    "作风",
+    "纪律",
+    "群众",
+    "思想",
+    "理论",
+    "学习",
+    "全会",
+    "习近平",
+    "长征",
+    "党性",
+    "生态",
+    "科技",
+    "创新",
+    "治理",
+)
+TOPIC_RULES: tuple[tuple[tuple[str, ...], str, str], ...] = (
+    (
+        ("全面从严治党", "管党治党"),
+        "深入学习贯彻全面从严治党最新部署",
+        "party_lecture",
+    ),
+    (("全会", "公报"), "学习贯彻党的二十届五中全会精神", "party_lecture"),
+    (("长征",), "弘扬伟大长征精神，走好新时代长征路", "party_lecture"),
+    (("党性", "理想信念"), "加强党性修养，坚定理想信念", "party_lecture"),
+    (
+        ("基层", "组织"),
+        "加强基层党组织建设，提升组织力",
+        "branch_committee_meeting",
+    ),
+    (
+        ("黄河", "生态", "绿色"),
+        "学习习近平总书记关于生态文明建设重要指示",
+        "party_lecture",
+    ),
+    (
+        ("科技", "人工智能", "创新", "高质量"),
+        "学习科技创新和高质量发展部署",
+        "branch_committee_meeting",
+    ),
+    (
+        ("习近平", "总书记", "重要讲话"),
+        "深入学习习近平总书记重要讲话精神",
+        "party_lecture",
+    ),
+)
+
+
+def _topic_for(title: str) -> tuple[str, str]:
+    for keywords, topic, activity_type in TOPIC_RULES:
+        if any(keyword in title for keyword in keywords):
+            return topic, activity_type
+    return f"学习《{title[:36]}》", "party_lecture"
 
 
 def _execution_status(record: MeetingRecord) -> str:
@@ -443,6 +505,104 @@ class ActivityService:
             }
             for row in rows
         ]
+
+    async def topic_suggestions(self, body: TopicSuggestionRequest) -> dict[str, Any]:
+        """按最新资料推荐会议主题；已采用资料优先，管理员可预览待审核资料。"""
+
+        if body.org_unit_id and body.org_unit_id not in self.org_ids:
+            raise HTTPException(403, "所选组织不在当前账号授权范围内")
+        refresh = None
+        can_review = has_permission(self.user.role, Permission.KNOWLEDGE_MANAGE)
+        if can_review:
+            last_fetched = await self.db.scalar(
+                select(func.max(ExternalUpdate.fetched_at)).where(
+                    ExternalUpdate.tenant_id == self.tenant_id,
+                    ExternalUpdate.is_deleted.is_(False),
+                )
+            )
+            if last_fetched is None or last_fetched < datetime.utcnow() - timedelta(hours=24):
+                refresh = await fetch_updates(self.db, self.user)
+
+        query = select(ExternalUpdate).where(
+            ExternalUpdate.tenant_id == self.tenant_id,
+            ExternalUpdate.is_deleted.is_(False),
+            ExternalUpdate.status.in_(("pending", "approved")),
+        )
+        if not can_review:
+            query = query.where(ExternalUpdate.status == "approved")
+        rows = (
+            (
+                await self.db.execute(
+                    query.order_by(
+                        ExternalUpdate.published_at.desc().nullslast(),
+                        ExternalUpdate.fetched_at.desc(),
+                    ).limit(12)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        recent_query = select(MeetingRecord.title).where(
+            MeetingRecord.tenant_id == self.tenant_id,
+            MeetingRecord.is_deleted.is_(False),
+            MeetingRecord.scheduled_on >= date.today() - timedelta(days=60),
+        )
+        if body.org_unit_id:
+            recent_query = recent_query.where(MeetingRecord.org_unit_id == body.org_unit_id)
+        recent_titles = set((await self.db.execute(recent_query)).scalars().all())
+        groups: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if any(word in row.title for word in TOPIC_IGNORE):
+                continue
+            if not any(word in row.title for word in TOPIC_RELEVANT):
+                continue
+            topic, activity_type = _topic_for(row.title)
+            if topic in recent_titles:
+                continue
+            group = groups.setdefault(
+                topic,
+                {
+                    "id": f"topic-{len(groups) + 1}",
+                    "title": topic,
+                    "activity_type": activity_type,
+                    "activity_type_label": ACTIVITY_TYPES[activity_type],
+                    "reason": "",
+                    "urgency": "近期",
+                    "source_ids": [],
+                    "sources": [],
+                    "sort": datetime.min,
+                },
+            )
+            group["sources"].append(
+                {
+                    "id": str(row.id),
+                    "title": row.title,
+                    "source_name": row.source_name,
+                    "source_url": row.source_url,
+                    "published_at": row.published_at,
+                    "status": row.status,
+                }
+            )
+            group["source_ids"].append(str(row.id))
+            stamp = row.published_at or row.fetched_at
+            if stamp and stamp > group["sort"]:
+                group["sort"] = stamp
+
+        topics = sorted(groups.values(), key=lambda item: item["sort"], reverse=True)[:3]
+        for topic in topics:
+            source_names = list(dict.fromkeys(source["source_name"] for source in topic["sources"]))
+            names = "、".join(source_names)
+            topic["reason"] = f"结合{names}近期发布的资料，建议围绕本条主题开展学习研讨。"
+            latest = topic["sources"][0]["published_at"] if topic["sources"] else None
+            if latest:
+                days = max(0, (date.today() - latest.date()).days)
+                topic["urgency"] = "本周" if days <= 7 else "近30天" if days <= 30 else "近期"
+            topic["sources"].sort(
+                key=lambda item: item["published_at"] or datetime.min,
+                reverse=True,
+            )
+            topic.pop("sort", None)
+        return {"topics": topics, "refreshed": refresh}
 
     async def generate_agenda_from_external(
         self, record_id: str, body: AgendaFromUpdates

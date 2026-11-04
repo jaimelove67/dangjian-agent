@@ -38,6 +38,7 @@ from app.schemas.meeting import (
     ReviewRequest,
     RevisionRequest,
     TaskCreate,
+    TopicSuggestionRequest,
     TaskHandle,
     TaskUpdate,
 )
@@ -295,6 +296,26 @@ async def recommendations(
         "recommend_materials",
         "meeting",
         record_id,
+    )
+
+
+@router.post(
+    "/meeting/topic-suggestions",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage)],
+)
+async def topic_suggestions(
+    body: TopicSuggestionRequest,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """根据最新资料推荐会议主题，选中后再由人工创建会议草稿。"""
+    return await respond(
+        request,
+        service,
+        await service.topic_suggestions(body),
+        "suggest_meeting_topics",
+        "meeting",
     )
 
 

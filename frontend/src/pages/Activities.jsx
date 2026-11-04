@@ -48,6 +48,7 @@ import { courses, DEPARTMENTS, organizations } from "../data";
 import { meetingPayload, meetingParticipants } from "../contracts";
 import { AgendaSourcesDialog } from "../components/AgendaSourcesDialog";
 import { ExternalUpdatesDialog } from "../components/ExternalUpdatesDialog";
+import { TopicSuggestionsDialog } from "../components/TopicSuggestionsDialog";
 import {
   PageHeader,
   PanelTitle,
@@ -193,6 +194,7 @@ export function Meetings() {
   const [imageError, setImageError] = useState("");
   const [previewImage, setPreviewImage] = useState(null);
   const [externalOpen, setExternalOpen] = useState(false);
+  const [topicOpen, setTopicOpen] = useState(false);
   const [agendaSources, setAgendaSources] = useState(null);
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
@@ -204,6 +206,10 @@ export function Meetings() {
     IS_LIVE &&
     hasPermission(session, "knowledge.manage") &&
     session.user.role !== "system_admin";
+  const canSuggestTopics =
+    IS_LIVE &&
+    hasPermission(session, "meeting.manage") &&
+    session.user.role !== "school_admin";
   function clearEditor() {
     pendingImages.forEach((item) => URL.revokeObjectURL(item.preview));
     setEditing(null);
@@ -514,14 +520,27 @@ export function Meetings() {
         title="三会一课"
         subtitle="落实组织生活制度，提升支部工作质效"
         action={
-          canManageExternal ? (
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => setExternalOpen(true)}
-            >
-              最新资料
-            </button>
+          canManageExternal || canSuggestTopics ? (
+            <div className="page-header-actions">
+              {canSuggestTopics && (
+                <button
+                  type="button"
+                  className="button primary"
+                  onClick={() => setTopicOpen(true)}
+                >
+                  推荐主题
+                </button>
+              )}
+              {canManageExternal && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setExternalOpen(true)}
+                >
+                  最新资料
+                </button>
+              )}
+            </div>
           ) : undefined
         }
       />
@@ -999,6 +1018,25 @@ export function Meetings() {
       )}
       {externalOpen && (
         <ExternalUpdatesDialog onClose={() => setExternalOpen(false)} />
+      )}
+      {topicOpen && (
+        <TopicSuggestionsDialog
+          orgs={orgs}
+          session={session}
+          onClose={() => setTopicOpen(false)}
+          onCreated={(next) => {
+            const normalized = normalizeMeeting(next);
+            update("meetings", (prev) =>
+              prev.map((item) =>
+                item.id === normalized.id ? normalized : item,
+              ),
+            );
+            setSelected(normalized.id);
+            setTopicOpen(false);
+            notify("已按推荐主题创建会议草稿，请核对后保存");
+            load();
+          }}
+        />
       )}
       {agendaSources && (
         <AgendaSourcesDialog
