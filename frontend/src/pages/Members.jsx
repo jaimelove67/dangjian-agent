@@ -1204,6 +1204,19 @@ export function Members({ mode = "members" }) {
           <p className="member-archive-note">
             档案阶段仅展示已登记信息，具体材料与审核记录以正式业务库为准。
           </p>
+          <div className="modal-actions">
+            <button
+              className="button primary"
+              onClick={() =>
+                navigate("development", {
+                  profileId: detail.id,
+                  tab: "卷内目录",
+                })
+              }
+            >
+              查看完整档案与材料
+            </button>
+          </div>
         </Modal>
       )}
     </section>

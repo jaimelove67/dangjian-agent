@@ -67,6 +67,23 @@ import {
   downloadBlob,
 } from "../components";
 
+function previewKind(blob, fileName = "") {
+  const mime = String(blob?.type || "").split(";")[0].toLowerCase();
+  const extension = fileName.toLowerCase().split(".").pop();
+  if (mime === "application/pdf" || extension === "pdf") return "pdf";
+  if (
+    mime.startsWith("image/") ||
+    ["png", "jpg", "jpeg", "gif", "webp"].includes(extension)
+  )
+    return "image";
+  if (
+    mime.startsWith("text/") ||
+    ["txt", "md", "csv", "json"].includes(extension)
+  )
+    return "text";
+  return "unsupported";
+}
+
 export function MaterialInbox() {
   const { session, routeParams } = useApp();
   const { data, update, notify } = useStore();
@@ -78,6 +95,7 @@ export function MaterialInbox() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState(null);
+  const [preview, setPreview] = useState({ status: "idle" });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   useEffect(() => {
@@ -116,6 +134,54 @@ export function MaterialInbox() {
       active = false;
     };
   }, [selected, page, session.user.id]);
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    if (!detail) {
+      setPreview({ status: "idle" });
+      return () => {};
+    }
+    if (detail.has_file === false) {
+      setPreview({ status: "missing" });
+      return () => {};
+    }
+    const profile = detail.profile_id || selected;
+    if (!profile || !detail.id) {
+      setPreview({ status: "error", message: "材料缺少关联档案或文件编号。" });
+      return () => {};
+    }
+    setPreview({ status: "loading" });
+    const loader = IS_LIVE
+      ? roleApi.receivedFile(profile, detail.id)
+      : getDemoFile(detail.id, detail.owner_id);
+    loader
+      .then(async (blob) => {
+        if (!active) return;
+        const kind = previewKind(blob, detail.file_name || detail.title || "");
+        if (kind === "text") {
+          const text = await blob.text();
+          if (active) setPreview({ status: "ready", kind, text });
+          return;
+        }
+        if (kind === "pdf" || kind === "image") {
+          objectUrl = URL.createObjectURL(blob);
+          setPreview({ status: "ready", kind, url: objectUrl });
+          return;
+        }
+        setPreview({ status: "unsupported", kind });
+      })
+      .catch((failure) => {
+        if (active)
+          setPreview({
+            status: "error",
+            message: failure?.message || "文件读取失败，请下载原件查看。",
+          });
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [detail, selected, session.user.id]);
   const ids = new Set(w.members.map((m) => m.id));
   const all = IS_LIVE
     ? loadedKey === `${selected}:${page}`
@@ -305,8 +371,45 @@ export function MaterialInbox() {
             </div>
           </div>
           <p className="body-copy">{detail.description || "无补充说明"}</p>
+          <div className="material-inbox-preview">
+            {preview.status === "loading" && <Loading />}
+            {preview.status === "missing" && (
+              <p className="inline-note">该材料只有台账记录，没有可预览的原件。</p>
+            )}
+            {preview.status === "error" && (
+              <p className="inline-note" role="alert">
+                {preview.message}
+              </p>
+            )}
+            {preview.status === "unsupported" && (
+              <p className="inline-note">
+                当前文件类型暂不支持在线预览，请下载原件后使用本地应用查看。
+              </p>
+            )}
+            {preview.status === "ready" && preview.kind === "pdf" && (
+              <div className="material-preview-viewer pdf">
+                <iframe
+                  src={preview.url}
+                  title={`${detail.file_name}预览`}
+                />
+              </div>
+            )}
+            {preview.status === "ready" && preview.kind === "image" && (
+              <div className="material-preview-viewer image">
+                <img
+                  src={preview.url}
+                  alt={`${detail.file_name}预览`}
+                />
+              </div>
+            )}
+            {preview.status === "ready" && preview.kind === "text" && (
+              <div className="material-preview-viewer text">
+                <pre>{preview.text}</pre>
+              </div>
+            )}
+          </div>
           <div className="inline-note">
-            个人原件仅按授权下载，不自动发送给模型，不自动进入知识库。
+            个人原件仅按授权查阅和下载，不自动发送给模型，不自动进入知识库。
           </div>
           <div className="modal-actions">
             <button
@@ -688,6 +791,7 @@ export function ReviewCenter() {
 }
 const DEVELOPMENT_TABS = [
   "材料清单",
+  "卷内目录",
   "培养记录",
   "发展程序",
   "阶段流转",
@@ -1732,6 +1836,105 @@ function DevelopmentProcedurePanel({
   );
 }
 
+function ArchiveChecklistPanel({ checklist, materials, onOpenMaterials, onDownload }) {
+  if (!checklist) {
+    return (
+      <Empty
+        title="暂无卷内目录核对结果"
+        description="当前档案尚未返回 38 项材料核对结果，请刷新后重试或核对人员档案。"
+      />
+    );
+  }
+  const materialById = new Map(materials.map((item) => [String(item.id), item]));
+  const tone = (status) =>
+    ({
+      ok: "green",
+      pending: "orange",
+      not_applicable: "gray",
+      archived: "green",
+      missing: "red",
+      unconfirmed: "orange",
+      optional: "gray",
+    })[status] || "blue";
+  return (
+    <div className="archive-checklist">
+      <div className="inline-note">
+        <strong>{checklist.label}</strong>：{checklist.message}
+        <span>
+          共 {checklist.total} 项，已归档 {checklist.archived} 项，缺材料 {checklist.missing} 项，待人工确认 {checklist.unconfirmed} 项。
+        </span>
+      </div>
+      {checklist.sections.map((section) => (
+        <section className="archive-checklist-section" key={section.key}>
+          <div className="sub-toolbar">
+            <strong>{section.label}</strong>
+            <span>
+              已归档 {section.archived} / {section.total}，缺材料 {section.missing}，待确认 {section.unconfirmed}
+            </span>
+          </div>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>编号</th>
+                  <th>材料名称</th>
+                  <th>载体</th>
+                  <th>核对状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {section.items.map((item) => {
+                  const material = materialById.get(String(item.material_id || ""));
+                  return (
+                    <tr key={item.code}>
+                      <td>{item.no}</td>
+                      <td>
+                        <strong>{item.name}</strong>
+                        <small className="cell-subtext">
+                          {item.note || "具体材料要求以组织审核为准"}
+                        </small>
+                      </td>
+                      <td>{item.carrier_label || "—"}</td>
+                      <td>
+                        <Badge tone={tone(item.status)}>{item.status_label || item.status}</Badge>
+                      </td>
+                      <td>
+                        {material && material.has_file ? (
+                          <button
+                            type="button"
+                            className="text-button link"
+                            onClick={() => onDownload(material)}
+                          >
+                            下载原件
+                          </button>
+                        ) : item.status === "missing" || item.status === "unconfirmed" ? (
+                          <button
+                            type="button"
+                            className="text-button link"
+                            onClick={onOpenMaterials}
+                          >
+                            去材料清单
+                          </button>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ))}
+      <p className="page-note">
+        卷内目录依据学校发展党员综合资料整理，只提示缺项和待确认项，不替代组织核验，也不阻断阶段流转。
+      </p>
+    </div>
+  );
+}
+
 export function DevelopmentWorkbench() {
   const { session, navigate, routeParams } = useApp();
   const { data, update, notify } = useStore();
@@ -1835,6 +2038,7 @@ export function DevelopmentWorkbench() {
   };
   const procedureState = detail?.procedures || emptyProcedureState();
   const policyChecks = detail?.policy_checks || {};
+  const archiveChecklist = policyChecks.archive_checklist || null;
   const flowBoardData = IS_LIVE
     ? board
     : buildDemoFlowBoard(
@@ -2582,6 +2786,16 @@ export function DevelopmentWorkbench() {
       setBusy(false);
     }
   }
+  async function downloadMaterial(material) {
+    try {
+      downloadBlob(
+        await roleApi.developmentFile(material.id),
+        material.file_name || `${material.material_type || "材料"}.bin`,
+      );
+    } catch (e) {
+      notify(e.message, "error");
+    }
+  }
   async function check() {
     try {
       if (IS_LIVE) {
@@ -2856,7 +3070,14 @@ export function DevelopmentWorkbench() {
                 onChange={setTab}
               />
               {busy && !modal && <Loading />}
-              {tab === "材料清单" ? (
+              {tab === "卷内目录" ? (
+                <ArchiveChecklistPanel
+                  checklist={archiveChecklist}
+                  materials={materials}
+                  onOpenMaterials={() => setTab("材料清单")}
+                  onDownload={downloadMaterial}
+                />
+              ) : tab === "材料清单" ? (
                 <>
                   <div className="sub-toolbar">
                     <span>按组织要求核对具体材料</span>

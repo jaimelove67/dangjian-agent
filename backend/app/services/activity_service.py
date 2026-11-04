@@ -15,6 +15,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.knowledge import KnowledgeDoc
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask
 from app.models.user import User
 from app.schemas.meeting import (
@@ -402,6 +403,44 @@ class ActivityService:
             "notice": ORGANIZATION_LIFE_NOTICE,
         }
 
+    async def _latest_external_materials(self) -> str:
+        rows = (
+            (
+                await self.db.execute(
+                    select(KnowledgeDoc)
+                    .where(
+                        KnowledgeDoc.tenant_id == self.tenant_id,
+                        KnowledgeDoc.doc_id.like("external-%"),
+                        KnowledgeDoc.is_deleted.is_(False),
+                        KnowledgeDoc.status == "effective",
+                        KnowledgeDoc.validity == "effective",
+                        KnowledgeDoc.review_status == "published",
+                    )
+                    .order_by(
+                        KnowledgeDoc.effective_date.desc(),
+                        KnowledgeDoc.created_at.desc(),
+                    )
+                    .limit(5)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not rows:
+            return ""
+        lines = []
+        for index, row in enumerate(rows, 1):
+            metadata = row.doc_metadata or {}
+            source = metadata.get("source_name") or row.issuer
+            source_url = metadata.get("source_url") or ""
+            lines.append(
+                f"[外部{index}] {row.title}（{source}，发布 {row.effective_date}，"
+                f"原文 {source_url}）：{(row.summary or '摘要待补')[:300]}"
+            )
+        return "\n最新外部资料（仅作学习参考，须核对原文；不得据此虚构会议事实）：\n" + "\n".join(
+            lines
+        )
+
     async def generate_agenda(self, record_id: str, body: RevisionRequest) -> MeetingRecord:
         """生成通知与议程草稿；依据全部来自已选真实材料摘录。"""
         record = await self.record(record_id, lock=True)
@@ -424,6 +463,9 @@ class ActivityService:
             )
             or "政策依据待补；资料不足时不生成政策表述。"
         )
+        external_materials = await self._latest_external_materials()
+        if external_materials:
+            materials += external_materials
         people = "、".join(person["name"] for person in record.participants) or "参会人员待补"
         if record.activity_type == ORG_LIFE_ACTIVITY_TYPE:
             # 组织生活会的流程是"会前谈心谈话、会上批评与自我批评、会后整改"，

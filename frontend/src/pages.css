@@ -2294,6 +2294,23 @@ button.meeting-image {
   color: #9ba8b9;
   font-size: 11px;
 }
+.archive-checklist-section {
+  margin-top: 18px;
+}
+.archive-checklist .inline-note span {
+  display: block;
+  margin-top: 5px;
+}
+.archive-checklist-section .sub-toolbar {
+  align-items: baseline;
+}
+.archive-checklist-section .sub-toolbar span {
+  color: #626b78;
+  font-size: 12px;
+}
+.material-inbox-preview {
+  margin: 14px 0;
+}
 .material-preview-viewer {
   display: flex;
   align-items: center;

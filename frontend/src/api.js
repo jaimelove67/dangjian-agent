@@ -166,6 +166,15 @@ export const backend = {
       body: JSON.stringify(payload),
     }),
   meetings: () => request("/meeting/records?page=1&page_size=100"),
+  externalUpdates: (status = "") =>
+    request("/external-updates" + (status ? `?status=${status}` : "")),
+  fetchExternalUpdates: () =>
+    request("/external-updates/fetch", { method: "POST", timeout: 120000 }),
+  reviewExternalUpdate: (id, body) =>
+    request(`/external-updates/${encodeURIComponent(id)}/review`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   createMeeting: (payload) =>
     request("/meeting/records", {
       method: "POST",

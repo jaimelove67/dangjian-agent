@@ -21,6 +21,7 @@ from app.api.v1 import (
     backups,
     education,
     embeddings,
+    external_updates,
     governance,
     health,
     knowledge,
@@ -260,6 +261,7 @@ app.include_router(study.router, prefix="/api/v1", tags=["中心组学习"])
 app.include_router(notifications.router, prefix="/api/v1", tags=["通知渠道"])
 app.include_router(school_business.router, prefix="/api/v1", tags=["学校业务"])
 app.include_router(education.router, prefix="/api/v1", tags=["学习与活动"])
+app.include_router(external_updates.router, prefix="/api/v1", tags=["组织生活"])
 app.include_router(backups.router, prefix="/api/v1", tags=["受控备份与恢复"])
 
 

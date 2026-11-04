@@ -37,6 +37,20 @@ from app.models.member import (
 )
 from app.models.user import User, UserRole
 from app.rules.application_form_checklist import APPLICATION_FORM_CHECKLIST
+from app.rules.archive_checklist import (
+    CARRIER_LABELS,
+    SECTION_LABELS,
+    SECTION_ORDER,
+    STATUS_ARCHIVED,
+    STATUS_LABELS,
+    STATUS_MISSING,
+    STATUS_NOT_APPLICABLE,
+    STATUS_OPTIONAL,
+    STATUS_UNCONFIRMED,
+    items_for_section,
+    match_item,
+    section_active,
+)
 from app.rules.data_sensitivity import (
     annotate_level,
     cloud_allowed,
@@ -134,6 +148,18 @@ PROCEDURE_STATUSES: dict[str, set[str]] = {
     "probation_outcome": {"qualified", "extended", "disqualified"},
     "higher_record": {"recorded"},
     "party_group": {"assigned"},
+    "secondary_review": {"completed"},
+}
+#: 程序节点"已完成"的终态：卷内目录只认终态，流转中/被退回的不提前记为已归档。
+PROCEDURE_DONE_STATUS: dict[str, set[str]] = {
+    "contact": {"assigned"},
+    "branch_committee_review": {"passed"},
+    "upper_pre_review": {"passed"},
+    "application_form": {"reviewed"},
+    "publicity": {"completed"},
+    "branch_vote": {"passed"},
+    "higher_record": {"recorded"},
+    "upper_talk": {"completed"},
     "secondary_review": {"completed"},
 }
 PROCEDURE_REQUIREMENT = (
@@ -1063,6 +1089,147 @@ class MemberDevelopment:
             "upper_pre_review_within_one_month": pre_review_check,
             "application_form_checklist": form_check,
             "secondary_review": secondary_check,
+            "archive_checklist": await self.archive_checklist(
+                profile_id, materials, profile=profile
+            ),
+        }
+
+    async def archive_checklist(
+        self,
+        profile_id: str,
+        materials: list[dict[str, Any]] | None = None,
+        *,
+        profile: MemberProfile | None = None,
+    ) -> dict[str, Any]:
+        """卷内目录核对：按阶段列出已归档、缺失与待人工确认的材料项。
+
+        只提示、不阻断：缺项不参与阶段流转门禁，是否补录由组织判断。
+        材料只认已核验通过且非历史登记的发展材料；程序只认终态（PROCEDURE_DONE_STATUS），
+        流转中或被退回的不提前记为已归档。
+        """
+        if materials is None:
+            materials = await self.list_materials(profile_id)
+        if profile is None:
+            profile = await self.profile(profile_id)
+        try:
+            stage = MemberStage(profile.current_stage)
+        except ValueError:  # 历史脏数据按申请人处理，不阻断查看
+            stage = MemberStage.APPLICANT
+
+        approved = [
+            item
+            for item in materials
+            if item.get("review_status") == "approved" and not item.get("legacy_material")
+        ]
+        by_type: dict[str, dict[str, Any]] = {}
+        for item in approved:
+            key = str(item.get("material_type") or "")
+            if key and key not in by_type:
+                by_type[key] = item
+
+        done_kinds: set[str] = set()
+        for row in await self._procedure_rows(str(profile.id)):
+            statuses = PROCEDURE_DONE_STATUS.get(row.kind)
+            if statuses and row.status in statuses:
+                done_kinds.add(row.kind)
+
+        tracked = any(section_active(section, stage) for section in SECTION_ORDER)
+        sections: list[dict[str, Any]] = []
+        tally = {
+            STATUS_ARCHIVED: 0,
+            STATUS_MISSING: 0,
+            STATUS_UNCONFIRMED: 0,
+            STATUS_OPTIONAL: 0,
+            STATUS_NOT_APPLICABLE: 0,
+        }
+        for section in SECTION_ORDER:
+            active = section_active(section, stage)
+            rows: list[dict[str, Any]] = []
+            for entry in items_for_section(section):
+                status = match_item(
+                    entry,
+                    archived_types=set(by_type),
+                    done_kinds=done_kinds,
+                    active=active,
+                )
+                if status in tally:
+                    tally[status] += 1
+                material = by_type.get(entry.material_types[0]) if entry.material_types else None
+                rows.append(
+                    {
+                        "code": entry.code,
+                        "no": entry.no,
+                        "name": entry.name,
+                        "carrier": entry.carrier,
+                        "carrier_label": CARRIER_LABELS.get(entry.carrier, ""),
+                        "required": entry.required,
+                        "page": entry.page,
+                        "note": entry.note,
+                        "status": status,
+                        "status_label": STATUS_LABELS.get(status, ""),
+                        "material_id": str(material["id"]) if material and material.get("id") else "",
+                        "document_date": (material or {}).get("document_date"),
+                    }
+                )
+            sections.append(
+                {
+                    "key": section,
+                    "label": SECTION_LABELS[section],
+                    "total": len(rows),
+                    "archived": sum(1 for row in rows if row["status"] == STATUS_ARCHIVED),
+                    "missing": sum(1 for row in rows if row["status"] == STATUS_MISSING),
+                    "unconfirmed": sum(
+                        1 for row in rows if row["status"] == STATUS_UNCONFIRMED
+                    ),
+                    "items": rows,
+                }
+            )
+
+        missing = tally[STATUS_MISSING]
+        unconfirmed = tally[STATUS_UNCONFIRMED]
+        if not tracked:
+            summary = {
+                "status": "not_applicable",
+                "label": "不核对",
+                "message": "当前阶段不核对卷内目录；请按组织处理结果整理档案。",
+            }
+        elif missing:
+            summary = {
+                "status": "pending",
+                "label": "待补",
+                "message": (
+                    f"卷内目录缺 {missing} 项必备材料，另有 {unconfirmed} 项需人工确认；"
+                    "缺项只提示，不阻断阶段流转。"
+                ),
+            }
+        elif unconfirmed:
+            summary = {
+                "status": "pending",
+                "label": "待确认",
+                "message": f"必备材料已归档，另有 {unconfirmed} 项粘贴页或内部决议需人工确认原件。",
+            }
+        else:
+            summary = {
+                "status": "ok",
+                "label": "齐全",
+                "message": "当前阶段卷内目录必备材料已归档。",
+            }
+
+        return {
+            **summary,
+            "hard_gate": False,
+            "stage": stage.value,
+            "total": sum(item["total"] for item in sections),
+            "archived": tally[STATUS_ARCHIVED],
+            "missing": missing,
+            "unconfirmed": unconfirmed,
+            "optional": tally[STATUS_OPTIONAL],
+            "not_applicable": tally[STATUS_NOT_APPLICABLE],
+            "sections": sections,
+            "notice": (
+                "卷内目录按手册五阶段核对；粘贴页与内部决议只登记是否归档，"
+                "系统不核验其内容，也不代替党组织认定材料是否合格。"
+            ),
         }
 
     async def review_material(self, material_id: str, body: MaterialReview) -> MemberMaterial:

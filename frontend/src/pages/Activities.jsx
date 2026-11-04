@@ -46,6 +46,7 @@ import {
 } from "../demo-courses";
 import { courses, DEPARTMENTS, organizations } from "../data";
 import { meetingPayload, meetingParticipants } from "../contracts";
+import { ExternalUpdatesDialog } from "../components/ExternalUpdatesDialog";
 import {
   PageHeader,
   PanelTitle,
@@ -190,12 +191,17 @@ export function Meetings() {
   const [removedImages, setRemovedImages] = useState([]);
   const [imageError, setImageError] = useState("");
   const [previewImage, setPreviewImage] = useState(null);
+  const [externalOpen, setExternalOpen] = useState(false);
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
   );
   const canEdit =
     hasPermission(session, "meeting.manage") &&
     session.user.role !== "school_admin";
+  const canManageExternal =
+    IS_LIVE &&
+    hasPermission(session, "knowledge.manage") &&
+    session.user.role !== "system_admin";
   function clearEditor() {
     pendingImages.forEach((item) => URL.revokeObjectURL(item.preview));
     setEditing(null);
@@ -328,7 +334,13 @@ export function Meetings() {
       const next = normalizeMeeting(await roleApi.meetingAction(record.id, action, record.revision, reason));
       update("meetings", prev => prev.map(item => item.id === next.id ? next : item));
       setArchiving(null);
-      notify(action === "archive" ? "会议纪要已归档" : "已从原文提取纪要，请核对后提交审核");
+      notify(
+        {
+          archive: "会议纪要已归档",
+          "generate-agenda": "会议议程草稿已生成，请核对最新资料与实际情况",
+          "generate-minutes": "已从原文提取纪要，请核对后提交审核",
+        }[action] || "会议记录已更新",
+      );
     } catch (err) {
       setError(err);
     } finally {
@@ -499,6 +511,17 @@ export function Meetings() {
       <PageHeader
         title="三会一课"
         subtitle="落实组织生活制度，提升支部工作质效"
+        action={
+          canManageExternal ? (
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setExternalOpen(true)}
+            >
+              最新资料
+            </button>
+          ) : undefined
+        }
       />
       <Tabs
         items={["会议管理", "课程管理", "记录管理", "统计分析"]}
@@ -579,6 +602,21 @@ export function Meetings() {
                       <DownloadSimple size={16} />
                       导出记录
                     </button>
+                    {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
+                      <button
+                        className="button secondary"
+                        disabled={busy}
+                        onClick={() =>
+                          recordAction(
+                            "generate-agenda",
+                            current,
+                            "根据已审核的最新资料生成会议议程草稿",
+                          )
+                        }
+                      >
+                        生成议程
+                      </button>
+                    )}
                     {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
                       <button className="button secondary" disabled={busy || !current.minutes?.trim()}
                         onClick={() => recordAction("generate-minutes", current, "根据已核对原始会议记录提取纪要")}>
@@ -962,6 +1000,9 @@ export function Meetings() {
             </div>
           </form>
         </Modal>
+      )}
+      {externalOpen && (
+        <ExternalUpdatesDialog onClose={() => setExternalOpen(false)} />
       )}
       {previewImage && (
         <Modal
