@@ -573,6 +573,8 @@ class ActivityService:
                     "sort": datetime.min,
                 },
             )
+            if len(group["source_ids"]) >= 5:
+                continue
             group["sources"].append(
                 {
                     "id": str(row.id),
