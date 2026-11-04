@@ -168,6 +168,12 @@ export const backend = {
   meetings: () => request("/meeting/records?page=1&page_size=100"),
   externalUpdates: (status = "") =>
     request("/external-updates" + (status ? `?status=${status}` : "")),
+  externalPreferences: () => request("/external-updates/preferences"),
+  updateExternalPreferences: (body) =>
+    request("/external-updates/preferences", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   fetchExternalUpdates: () =>
     request("/external-updates/fetch", { method: "POST", timeout: 120000 }),
   reviewExternalUpdate: (id, body) =>

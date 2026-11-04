@@ -39,7 +39,12 @@ from app.services.activity_frequency import (
     load_requirements,
 )
 from app.services.archive_service import require_archive_policy
-from app.services.external_update_service import fetch_updates, review_update
+from app.services.external_update_service import (
+    fetch_updates,
+    get_focus_topics,
+    matches_focus,
+    review_update,
+)
 from app.services.file_store import read_original, save_original
 from app.services.meeting_images import MEETING_IMAGE_LIMIT, inspect_meeting_image
 from app.services.meeting_service import (
@@ -517,6 +522,7 @@ class ActivityService:
         if body.org_unit_id and body.org_unit_id not in self.org_ids:
             raise HTTPException(403, "所选组织不在当前账号授权范围内")
         refresh = None
+        focus_topics = await get_focus_topics(self.db, self.tenant_id)
         can_review = has_permission(self.user.role, Permission.KNOWLEDGE_MANAGE)
         if can_review:
             last_fetched = await self.db.scalar(
@@ -541,7 +547,7 @@ class ActivityService:
                     query.order_by(
                         ExternalUpdate.published_at.desc().nullslast(),
                         ExternalUpdate.fetched_at.desc(),
-                    ).limit(12)
+                    ).limit(80)
                 )
             )
             .scalars()
@@ -555,14 +561,18 @@ class ActivityService:
         if body.org_unit_id:
             recent_query = recent_query.where(MeetingRecord.org_unit_id == body.org_unit_id)
         recent_titles = set((await self.db.execute(recent_query)).scalars().all())
+        # 最近已开过的会议按主题归并，避免同一方向仅换一个标题就重复推荐。
+        recent_topics = {_topic_for(title)[0] for title in recent_titles if title}
         groups: dict[str, dict[str, Any]] = {}
         for row in rows:
             if any(word in row.title for word in TOPIC_IGNORE):
                 continue
             if not any(word in row.title for word in TOPIC_RELEVANT):
                 continue
+            if focus_topics and not matches_focus(f"{row.title} {row.summary or ''}", focus_topics):
+                continue
             topic, activity_type = _topic_for(row.title)
-            if topic in recent_titles:
+            if topic in recent_titles or topic in recent_topics:
                 continue
             group = groups.setdefault(
                 topic,
@@ -599,7 +609,10 @@ class ActivityService:
         for topic in topics:
             source_names = list(dict.fromkeys(source["source_name"] for source in topic["sources"]))
             names = "、".join(source_names)
-            topic["reason"] = f"结合{names}近期发布的资料，建议围绕本条主题开展学习研讨。"
+            focus_note = "，并结合本校关注方向" if focus_topics else ""
+            topic["reason"] = (
+                f"结合{names}近期发布的资料{focus_note}，建议围绕本条主题开展学习研讨。"
+            )
             latest = topic["sources"][0]["published_at"] if topic["sources"] else None
             if latest:
                 days = max(0, (date.today() - latest.date()).days)
@@ -609,7 +622,11 @@ class ActivityService:
                 reverse=True,
             )
             topic.pop("sort", None)
-        return {"topics": topics, "refreshed": refresh}
+        return {
+            "topics": topics,
+            "refreshed": refresh,
+            "focus_topics": focus_topics,
+        }
 
     async def generate_agenda_from_external(
         self, record_id: str, body: AgendaFromUpdates

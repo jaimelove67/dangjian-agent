@@ -18,6 +18,14 @@
 .generate-row .text-button { color:#7d8594; }
 .generate-row .text-button:disabled { color:#c3c8d1; cursor:not-allowed; }
 .generate-row .text-button:not(:disabled):hover { color:var(--red); }
+.external-focus-settings { margin:12px 0 16px; border:1px solid #e6eaf0; border-radius:5px; background:#fcfdff; }
+.external-focus-settings > summary { padding:10px 12px; color:#4d5766; font-size:12px; cursor:pointer; }
+.external-focus-options { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:6px 14px; padding:2px 12px 10px; }
+.external-focus-options label { display:flex; align-items:center; gap:7px; color:#566070; font-size:12px; line-height:1.6; }
+.external-focus-options input { margin:0; accent-color:var(--red); flex:0 0 auto; }
+.external-focus-actions { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:10px 12px; border-top:1px dashed #eaedf2; }
+.external-focus-actions .muted { font-size:12px; }
+@media(max-width:760px) { .external-focus-actions { align-items:flex-start; flex-direction:column; } }
 .business-section { margin-top:20px; }
 .business-section > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
 .business-section h3 { margin:0; }

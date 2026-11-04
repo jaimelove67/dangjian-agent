@@ -20,17 +20,53 @@ export function ExternalUpdatesDialog({ onClose }) {
   const [error, setError] = useState(null);
   const [note, setNote] = useState("");
   const [message, setMessage] = useState("");
+  const [focus, setFocus] = useState({ topics: [], available: [] });
+  const [focusSaving, setFocusSaving] = useState(false);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const result = await backend.externalUpdates();
+      const [result, preferences] = await Promise.all([
+        backend.externalUpdates(),
+        backend.externalPreferences(),
+      ]);
       setItems(result.items || []);
+      setFocus(preferences || { topics: [], available: [] });
     } catch (failure) {
       setError(failure);
     } finally {
       setLoading(false);
+    }
+  }
+
+  function toggleFocus(topic) {
+    setFocus((current) => ({
+      ...current,
+      topics: current.topics.includes(topic)
+        ? current.topics.filter((item) => item !== topic)
+        : [...current.topics, topic],
+    }));
+  }
+
+  async function saveFocus() {
+    setFocusSaving(true);
+    setError(null);
+    setMessage("");
+    try {
+      const result = await backend.updateExternalPreferences({
+        topics: focus.topics,
+      });
+      setFocus(result);
+      setMessage(
+        result.topics?.length
+          ? "已保存本校资料关注方向，下次抓取和推荐将按该范围筛选。"
+          : "已清空关注方向，后续抓取和推荐不再按方向筛选。",
+      );
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setFocusSaving(false);
     }
   }
 
@@ -50,8 +86,11 @@ export function ExternalUpdatesDialog({ onClose }) {
       const errors = result.errors?.length
         ? `；${result.errors.map((item) => `${item.source}：${item.message}`).join("；")}`
         : "";
+      const focusNote = result.focus_topics?.length
+        ? `，按本校关注方向筛选掉 ${result.filtered || 0} 条`
+        : "";
       setMessage(
-        `已抓取 ${result.sources} 个来源，新增 ${result.added} 条，跳过重复 ${result.skipped} 条${errors}`,
+        `已抓取 ${result.sources} 个来源，新增 ${result.added} 条，跳过重复 ${result.skipped} 条${focusNote}${errors}`,
       );
     } catch (failure) {
       setError(failure);
@@ -93,6 +132,38 @@ export function ExternalUpdatesDialog({ onClose }) {
       <p className="inline-note">
         只从共产党员网、求是网等白名单官方来源抓取公开资料。资料先审核，审核通过后才作为三会一课议程草稿的参考；不会自动生成会议记录、参会人员或表决结果。
       </p>
+      <details className="external-focus-settings">
+        <summary>
+          本校资料关注方向：
+          {focus.topics.length ? focus.topics.join("、") : "全部方向"}
+        </summary>
+        <div className="external-focus-options">
+          {focus.available.map((topic) => (
+            <label key={topic}>
+              <input
+                type="checkbox"
+                checked={focus.topics.includes(topic)}
+                disabled={focusSaving || Boolean(busy)}
+                onChange={() => toggleFocus(topic)}
+              />
+              {topic}
+            </label>
+          ))}
+        </div>
+        <div className="external-focus-actions">
+          <span className="muted">
+            不选择任何方向时，抓取和推荐不按方向筛选；已抓取资料仍需人工审核。
+          </span>
+          <button
+            type="button"
+            className="button secondary"
+            disabled={focusSaving || Boolean(busy) || !focus.available.length}
+            onClick={saveFocus}
+          >
+            {focusSaving ? "正在保存…" : "保存关注方向"}
+          </button>
+        </div>
+      </details>
       <div className="table-toolbar">
         <button
           className="button primary"

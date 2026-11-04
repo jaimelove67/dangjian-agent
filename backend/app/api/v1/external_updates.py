@@ -15,8 +15,14 @@ from app.deps import require_permissions
 from app.models.external import ExternalUpdate
 from app.models.user import User, UserRole
 from app.schemas.common import APIResponse
-from app.schemas.external import ExternalReviewRequest
-from app.services.external_update_service import fetch_updates, review_update
+from app.schemas.external import ExternalPreferencesRequest, ExternalReviewRequest
+from app.services.external_update_service import (
+    FOCUS_TOPICS,
+    fetch_updates,
+    get_focus_topics,
+    review_update,
+    set_focus_topics,
+)
 
 router = APIRouter()
 _manage = require_permissions(Permission.KNOWLEDGE_MANAGE)
@@ -46,6 +52,53 @@ def _payload(row: ExternalUpdate) -> dict[str, Any]:
 def _ensure_school(user: User) -> None:
     if user.role == UserRole.SYSTEM_ADMIN:
         raise HTTPException(403, "平台管理员不办理学校三会一课资料。")
+
+
+@router.get("/external-updates/preferences", response_model=APIResponse[dict])
+async def read_external_preferences(
+    request: Request,
+    user: User = Depends(_manage),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """本校资料关注方向，用于抓取和推荐时缩小范围。"""
+    _ensure_school(user)
+    topics = await get_focus_topics(db, str(user.tenant_id))
+    return APIResponse(
+        data={"topics": topics, "available": list(FOCUS_TOPICS)},
+        trace_id=_trace(request),
+    )
+
+
+@router.put("/external-updates/preferences", response_model=APIResponse[dict])
+async def update_external_preferences(
+    body: ExternalPreferencesRequest,
+    request: Request,
+    user: User = Depends(_manage),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """保存本校资料关注方向；只影响公开资料的筛选，不改变审核规则。"""
+    _ensure_school(user)
+    old_topics = await get_focus_topics(db, str(user.tenant_id))
+    try:
+        topics = await set_focus_topics(db, str(user.tenant_id), body.topics)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="update_external_focus_topics",
+        resource_type="tenant_config",
+        resource_id=str(user.tenant_id),
+        data_level="public",
+        old_value={"topics": old_topics},
+        new_value={"topics": topics},
+    )
+    await db.commit()
+    return APIResponse(
+        data={"topics": topics, "available": list(FOCUS_TOPICS)},
+        trace_id=_trace(request),
+    )
 
 
 @router.get("/external-updates", response_model=APIResponse[dict])
@@ -95,6 +148,8 @@ async def fetch_external_updates(
             new_value={
                 "added": result["added"],
                 "skipped": result["skipped"],
+                "filtered": result["filtered"],
+                "focus_topics": result["focus_topics"],
                 "errors": len(result["errors"]),
             },
         )

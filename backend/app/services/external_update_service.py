@@ -19,14 +19,34 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import tenant_config
 from app.models.external import ExternalUpdate
 from app.models.knowledge import KnowledgeDoc
+from app.models.tenant import Tenant
 from app.models.user import User
 
 #: 仅允许官方公开来源。新增来源必须同时加入域名白名单，不能接受任意 URL。
 EXTERNAL_SOURCES: tuple[tuple[str, str, str], ...] = (
     ("共产党员网", "https://www.12371.cn/", "12371.cn"),
     ("求是网", "https://www.qstheory.cn/", "qstheory.cn"),
+)
+
+#: 学校可维护的资料关注方向。抓取和推荐都按本校关注方向筛选，避免所有学校
+#: 都收到同一批资料。标签只影响公开资料的筛选，不改变审核和引用规则。
+FOCUS_TOPICS: dict[str, tuple[str, ...]] = {
+    "理论武装": ("习近平", "总书记", "重要讲话", "全会", "理论", "思想", "党性", "长征"),
+    "全面从严治党": ("全面从严治党", "管党治党", "党纪", "纪律", "作风", "反腐", "廉政"),
+    "基层组织建设": ("基层", "支部", "组织建设", "组织力", "党员队伍", "治理"),
+    "发展党员": ("发展党员", "入党", "积极分子", "预备党员", "党员发展"),
+    "师德师风": ("师德", "教师", "育人", "教育", "学校"),
+    "科技创新": ("科技", "创新", "人工智能", "新质生产力", "高质量发展"),
+    "生态文明": ("生态", "绿色", "黄河", "环境", "低碳"),
+}
+DEFAULT_FOCUS_TOPICS: tuple[str, ...] = (
+    "理论武装",
+    "全面从严治党",
+    "基层组织建设",
+    "发展党员",
 )
 
 MAX_ITEMS_PER_SOURCE = 10
@@ -75,6 +95,54 @@ def _published_date(url: str) -> datetime | None:
         return datetime(*map(int, match.groups()))
     except ValueError:
         return None
+
+
+def normalize_focus_topics(value: Any) -> list[str]:
+    """把租户配置收敛为受支持的关注方向，未知标签不参与筛选。"""
+    if not isinstance(value, (list, tuple)):
+        return list(DEFAULT_FOCUS_TOPICS)
+    topics: list[str] = []
+    for item in value:
+        topic = str(item).strip()
+        if topic in FOCUS_TOPICS and topic not in topics:
+            topics.append(topic)
+    return topics[: len(FOCUS_TOPICS)]
+
+
+async def get_focus_topics(db: AsyncSession, tenant_id: str) -> list[str]:
+    """读取本校关注方向；未配置时使用默认方向。"""
+    tenant = (
+        await db.execute(
+            select(Tenant).where(
+                Tenant.id == tenant_id,
+                Tenant.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if tenant is None:
+        return list(DEFAULT_FOCUS_TOPICS)
+    value = (tenant.config or {}).get("external_focus_topics")
+    return normalize_focus_topics(value) if value is not None else list(DEFAULT_FOCUS_TOPICS)
+
+
+async def set_focus_topics(db: AsyncSession, tenant_id: str, topics: list[str]) -> list[str]:
+    """保存本校关注方向，配置版本和审计由既有租户配置机制保留。"""
+    if len(topics) != len(set(topics)):
+        raise HTTPException(422, "关注方向不能重复")
+    unknown = [item for item in topics if item not in FOCUS_TOPICS]
+    if unknown:
+        raise HTTPException(422, f"存在不支持的关注方向：{'、'.join(unknown)}")
+    clean = normalize_focus_topics(topics)
+    await tenant_config.save(db, tenant_id, {"external_focus_topics": clean})
+    return clean
+
+
+def matches_focus(text: str, topics: list[str]) -> bool:
+    """空关注方向表示不筛选；否则标题或摘要命中一个方向即可。"""
+    if not topics:
+        return True
+    normalized = " ".join(str(text or "").split())
+    return any(keyword in normalized for topic in topics for keyword in FOCUS_TOPICS.get(topic, ()))
 
 
 def _allowed_url(url: str, domain: str) -> bool:
@@ -167,6 +235,7 @@ async def fetch_updates(db: AsyncSession, user: User) -> dict[str, Any]:
     """抓取白名单来源，保存尚未见过的公开条目为待审核资料。"""
 
     tenant_id = str(user.tenant_id)
+    focus_topics = await get_focus_topics(db, tenant_id)
     existing = set(
         (
             await db.execute(
@@ -201,8 +270,12 @@ async def fetch_updates(db: AsyncSession, user: User) -> dict[str, Any]:
 
     added = 0
     skipped = 0
+    filtered = 0
     now = _now()
     for item in articles:
+        if focus_topics and not matches_focus(f"{item['title']} {item['summary']}", focus_topics):
+            filtered += 1
+            continue
         digest = hashlib.sha256(item["url"].encode()).hexdigest()
         if digest in existing:
             skipped += 1
@@ -226,7 +299,9 @@ async def fetch_updates(db: AsyncSession, user: User) -> dict[str, Any]:
     return {
         "added": added,
         "skipped": skipped,
+        "filtered": filtered,
         "sources": len(EXTERNAL_SOURCES),
+        "focus_topics": focus_topics,
         "errors": errors,
     }
 

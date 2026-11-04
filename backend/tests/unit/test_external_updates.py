@@ -4,9 +4,12 @@ from datetime import datetime
 
 from app.services.activity_service import _topic_for
 from app.services.external_update_service import (
+    DEFAULT_FOCUS_TOPICS,
     _links,
     _published_date,
     _summary_from_page,
+    matches_focus,
+    normalize_focus_topics,
 )
 
 
@@ -35,3 +38,16 @@ def test_topic_rules_map_latest_article_to_meeting_type():
     assert _topic_for("中共中央关于全面从严治党的重要决定")[1] == "party_lecture"
     assert _topic_for("加强基层党组织建设的工作要求")[1] == "branch_committee_meeting"
     assert "学习《" in _topic_for("其他党建资料")[0]
+
+
+def test_focus_topics_are_normalized_and_unknown_tags_are_ignored():
+    assert normalize_focus_topics(["发展党员", "不存在的方向", "发展党员"]) == ["发展党员"]
+    assert normalize_focus_topics([]) == []
+    assert normalize_focus_topics(None) == list(DEFAULT_FOCUS_TOPICS)
+
+
+def test_focus_matching_uses_title_and_summary_keywords():
+    assert matches_focus("加强基层党组织建设", ["基层组织建设"]) is True
+    assert matches_focus("学校开展专题学习", ["师德师风"]) is True
+    assert matches_focus("学校开展专题学习", ["科技创新"]) is False
+    assert matches_focus("任何内容", []) is True

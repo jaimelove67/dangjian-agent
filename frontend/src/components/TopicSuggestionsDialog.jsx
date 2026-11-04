@@ -22,6 +22,7 @@ export function TopicSuggestionsDialog({
   );
   const [topics, setTopics] = useState([]);
   const [refreshed, setRefreshed] = useState(null);
+  const [focusTopics, setFocusTopics] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState(null);
@@ -35,6 +36,7 @@ export function TopicSuggestionsDialog({
       });
       setTopics(result.topics || []);
       setRefreshed(result.refreshed || null);
+      setFocusTopics(result.focus_topics || []);
     } catch (failure) {
       setError(failure);
     } finally {
@@ -123,10 +125,15 @@ export function TopicSuggestionsDialog({
           {loading ? "正在推荐…" : "重新推荐"}
         </button>
       </div>
+      {focusTopics.length > 0 && (
+        <p className="inline-note">
+          已按本校资料关注方向筛选：{focusTopics.join("、")}。关注方向由院系或学校管理员在“最新资料”中维护。
+        </p>
+      )}
       {refreshed && (
         <p className="inline-note">
           已自动检查最新资料：新增 {refreshed.added} 条，跳过重复{" "}
-          {refreshed.skipped} 条。
+          {refreshed.skipped} 条，按关注方向筛选掉 {refreshed.filtered || 0} 条。
           {refreshed.errors?.length
             ? `部分来源暂时不可用：${refreshed.errors.map((item) => item.source).join("、")}`
             : ""}
@@ -181,7 +188,7 @@ export function TopicSuggestionsDialog({
       ) : (
         <Empty
           title="暂无合适的推荐主题"
-          description="可能还没有已审核的最新资料，或最近已开过相同主题。可以先抓取并审核资料，或稍后重新推荐。"
+          description="可能还没有已审核的最新资料、与本校关注方向不匹配，或最近已开过相同主题。可以先在“最新资料”中抓取、审核并调整关注方向，或稍后重新推荐。"
         />
       )}
     </Modal>

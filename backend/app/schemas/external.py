@@ -12,3 +12,9 @@ class ExternalReviewRequest(BaseModel):
 
     decision: Literal["approve", "reject"]
     note: str = Field(default="", max_length=2000)
+
+
+class ExternalPreferencesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    topics: list[str] = Field(default_factory=list, max_length=12)
