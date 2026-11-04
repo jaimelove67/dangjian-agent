@@ -684,6 +684,36 @@ export function Meetings() {
                     <dd className="agenda-box">
                       {current.agenda || "尚未登记"}
                     </dd>
+                    {current.sources?.length > 0 && (
+                      <>
+                        <dt>学习资料</dt>
+                        <dd>
+                          <ul className="meeting-source-list">
+                            {current.sources.map((source, index) => (
+                              <li key={`${source.doc_id}-${index}`}>
+                                {source.source_url ? (
+                                  <a
+                                    href={source.source_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    {source.title}
+                                  </a>
+                                ) : (
+                                  source.title
+                                )}
+                                <small>
+                                  {source.issuer}
+                                  {source.effective_date
+                                    ? ` · ${String(source.effective_date).slice(0, 10)}`
+                                    : ""}
+                                </small>
+                              </li>
+                            ))}
+                          </ul>
+                        </dd>
+                      </>
+                    )}
                     <dt>会议记录</dt>
                     <dd className="agenda-box">
                       {current.minutes || "会议尚未召开，暂无记录。"}

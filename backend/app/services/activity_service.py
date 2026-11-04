@@ -124,6 +124,11 @@ TOPIC_RULES: tuple[tuple[tuple[str, ...], str, str], ...] = (
 )
 
 
+def _short_title(value: str, limit: int = 30) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def _topic_for(title: str) -> tuple[str, str]:
     for keywords, topic, activity_type in TOPIC_RULES:
         if any(keyword in title for keyword in keywords):
@@ -672,12 +677,10 @@ class ActivityService:
         )
         materials = (
             "\n".join(
-                f"[{index}] {source['title']}（{source['doc_id']}，"
-                f"版本{source['content_revision']}，生效{source['effective_date']}）："
-                f"{source['excerpt'] or '原文摘录待补'}"
+                f"{index}. {_short_title(source['title'])}" f"（{source['issuer']}）"
                 for index, source in enumerate(sources, 1)
             )
-            or "政策依据待补；资料不足时不生成政策表述。"
+            or "学习资料待补；资料不足时不生成政策表述。"
         )
         people = "、".join(person["name"] for person in record.participants) or "参会人员待补"
         if record.activity_type == ORG_LIFE_ACTIVITY_TYPE:
@@ -687,7 +690,7 @@ class ActivityService:
                 f"会议议程（草稿）：\n一、会议主题：{record.title}\n"
                 f"二、会前准备：组织学习上级要求与本次主题，开展谈心谈话、听取党员和群众意见\n"
                 f"三、会上安排：通报上次整改落实情况，查摆问题，开展批评和自我批评，明确整改方向\n"
-                f"四、政策依据与学习材料：\n{materials}\n"
+                f"四、学习资料：\n{materials}\n"
                 f"五、参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
             )
             notice = (
@@ -699,8 +702,9 @@ class ActivityService:
             template_version = "org-life-meeting-1"
         else:
             agenda = (
-                f"会议议程（草稿）：\n一、{record.title}\n二、政策依据材料：\n{materials}\n"
-                f"三、讨论安排：请围绕上述依据酝酿意见\n四、参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
+                f"会议议程（草稿）：\n一、会议主题：{record.title}\n二、学习资料：\n{materials}\n"
+                f"三、讨论安排：请围绕上述资料酝酿意见\n四、参会范围：{people}\n"
+                f"完整资料及原文链接见会议资料清单。\n{ORGANIZATION_LIFE_NOTICE}"
             )
             notice = (
                 f"会议通知（草稿）：\n会议名称：{record.title}\n"
@@ -708,10 +712,12 @@ class ActivityService:
                 f"参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
             )
             template_version = "org-life-1"
+        record.sources = sources
         context = dict(record.context or {})
         context.update(
             agenda=agenda,
             notice=notice,
+            content_sources=sources,
             agenda_template_version=template_version,
         )
         record.context = context

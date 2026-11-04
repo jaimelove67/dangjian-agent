@@ -858,6 +858,27 @@
   line-height: 2 !important;
   font-size: 11px;
 }
+.meeting-source-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.meeting-source-list li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid #e5e8ec;
+  border-radius: 4px;
+}
+.meeting-source-list a {
+  color: #8b1e24;
+  overflow-wrap: anywhere;
+}
+.meeting-source-list small {
+  color: #626b78;
+}
 .meeting-source-note {
   display: flex;
   align-items: center;

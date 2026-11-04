@@ -90,6 +90,7 @@ async def source_snapshots(db: AsyncSession, documents: list[KnowledgeDoc]) -> l
                     "doc_id": document.doc_id,
                     "title": document.title,
                     "issuer": document.issuer,
+                    "source_url": (document.doc_metadata or {}).get("source_url"),
                     "file_name": document.file_name,
                     "doc_number": document.doc_number,
                     "effective_date": document.effective_date,
