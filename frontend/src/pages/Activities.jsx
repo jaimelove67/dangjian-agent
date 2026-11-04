@@ -199,17 +199,17 @@ export function Meetings() {
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
   );
+  const canOperateMeetings = ["branch_secretary", "organizer"].includes(
+    session.user.role,
+  );
   const canEdit =
-    hasPermission(session, "meeting.manage") &&
-    session.user.role !== "school_admin";
+    hasPermission(session, "meeting.manage") && canOperateMeetings;
+  const canSubmit = canEdit && session.user.role === "branch_secretary";
   const canManageExternal =
     IS_LIVE &&
     hasPermission(session, "knowledge.manage") &&
     session.user.role !== "system_admin";
-  const canSuggestTopics =
-    IS_LIVE &&
-    hasPermission(session, "meeting.manage") &&
-    session.user.role !== "school_admin";
+  const canSuggestTopics = IS_LIVE && canEdit;
   function clearEditor() {
     pendingImages.forEach((item) => URL.revokeObjectURL(item.preview));
     setEditing(null);
@@ -638,7 +638,7 @@ export function Meetings() {
                         提取纪要
                       </button>
                     )}
-                    {canEdit &&
+                    {canSubmit &&
                       ["待召开", "已退回"].includes(current.status) && (
                         <button
                           className="button primary"
@@ -723,7 +723,9 @@ export function Meetings() {
                     <CheckCircle size={15} />
                     {current.status === "已归档"
                       ? "已归档记录只读，请保留版本。"
-                      : "会议记录需经人工审核后归档。"}
+                      : canEdit && !canSubmit
+                        ? "组织员可登记和维护草稿；提交审核由支部书记办理。"
+                        : "会议记录需经人工审核后归档。"}
                   </div>
                 </>
               ) : (

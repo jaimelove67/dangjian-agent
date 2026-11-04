@@ -71,7 +71,9 @@ export const ROLE_INFO = {
     label: "组织员",
     scope: "branch",
     subtitle: "做好材料接收、培养记录和党务办理",
-    permissions: branchPermissions,
+    permissions: branchPermissions.filter(
+      (permission) => permission !== "meeting.archive",
+    ),
   },
   member: {
     label: "普通党员",

@@ -27,8 +27,8 @@ from app.api.audit import audit_operation
 from app.core.config import settings
 from app.core.security import Permission
 from app.db.session import get_db
-from app.deps import require_permissions
-from app.models.user import User
+from app.deps import require_permissions, require_roles
+from app.models.user import User, UserRole
 from app.schemas.common import APIResponse
 from app.schemas.meeting import (
     ActivityCreate,
@@ -49,6 +49,9 @@ _query = require_permissions(Permission.MEETING_QUERY)
 _manage = require_permissions(Permission.MEETING_MANAGE)
 _review = require_permissions(Permission.MEETING_REVIEW)
 _archive = require_permissions(Permission.MEETING_MANAGE, Permission.MEETING_ARCHIVE)
+# 支部会议由支部书记主持、组织员协助登记；院系和学校管理员只审核、督办、归档。
+_operator = require_roles(UserRole.BRANCH_SECRETARY, UserRole.ORGANIZER)
+_secretary = require_roles(UserRole.BRANCH_SECRETARY)
 
 
 async def activity_service(
@@ -142,7 +145,11 @@ async def records(
     )
 
 
-@router.post("/meeting/records", response_model=APIResponse[dict], dependencies=[Depends(_manage)])
+@router.post(
+    "/meeting/records",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage), Depends(_operator)],
+)
 async def create_record(
     body: ActivityCreate, request: Request, service: ActivityService = Depends(activity_service)
 ) -> APIResponse[dict]:
@@ -156,7 +163,7 @@ async def create_record(
 @router.post(
     "/meeting/records/{record_id}/images",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def upload_record_image(
     record_id: str,
@@ -206,7 +213,7 @@ async def upload_record_image(
 @router.delete(
     "/meeting/records/{record_id}/images/{image_id}",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def delete_record_image(
     record_id: str,
@@ -266,7 +273,7 @@ async def record_detail(
 @router.patch(
     "/meeting/records/{record_id}",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def update_record(
     record_id: str,
@@ -302,7 +309,7 @@ async def recommendations(
 @router.post(
     "/meeting/topic-suggestions",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def topic_suggestions(
     body: TopicSuggestionRequest,
@@ -322,7 +329,7 @@ async def topic_suggestions(
 @router.post(
     "/meeting/records/{record_id}/generate-agenda",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def generate_agenda(
     record_id: str,
@@ -340,7 +347,7 @@ async def generate_agenda(
 @router.get(
     "/meeting/records/{record_id}/external-suggestions",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def external_suggestions(
     record_id: str,
@@ -355,7 +362,7 @@ async def external_suggestions(
 @router.post(
     "/meeting/records/{record_id}/generate-agenda-from-updates",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def generate_agenda_from_updates(
     record_id: str,
@@ -389,7 +396,7 @@ async def generate_agenda_from_updates(
 @router.post(
     "/meeting/records/{record_id}/generate-minutes",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def generate_minutes(
     record_id: str,
@@ -412,7 +419,7 @@ async def generate_minutes(
 @router.post(
     "/meeting/records/{record_id}/submit",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator), Depends(_secretary)],
 )
 async def submit_record(
     record_id: str,
@@ -492,7 +499,7 @@ async def export_record(
 @router.post(
     "/meeting/records/{record_id}/tasks",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def create_task(
     record_id: str,
@@ -513,7 +520,9 @@ async def create_task(
 
 
 @router.patch(
-    "/meeting/tasks/{task_id}", response_model=APIResponse[dict], dependencies=[Depends(_manage)]
+    "/meeting/tasks/{task_id}",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def confirm_task(
     task_id: str,
@@ -536,7 +545,7 @@ async def confirm_task(
 @router.post(
     "/meeting/tasks/{task_id}/handle",
     response_model=APIResponse[dict],
-    dependencies=[Depends(_manage)],
+    dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def handle_task(
     task_id: str,

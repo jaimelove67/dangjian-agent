@@ -386,7 +386,9 @@ ROLE_PROFILES: dict[UserRole, RoleProfile] = {
         role=UserRole.ORGANIZER,
         knowledge_scopes=frozenset({KS_PUBLIC, KS_SCHOOL, KS_DEPARTMENT, KS_BRANCH}),
         business_scope=BS_BRANCH,
-        permissions=_BRANCH_PERMISSIONS,
+        # 组织员负责协助登记、整理材料和草稿，不代替支部书记审核或归档会议。
+        permissions=_BRANCH_PERMISSIONS
+        - frozenset({Permission.MEETING_REVIEW, Permission.MEETING_ARCHIVE}),
         data_level=DataLevel.SENSITIVE,
     ),
     UserRole.MEMBER: RoleProfile(
