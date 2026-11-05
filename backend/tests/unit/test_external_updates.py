@@ -5,10 +5,12 @@ from datetime import datetime
 from app.services.activity_service import _topic_for
 from app.services.external_update_service import (
     DEFAULT_FOCUS_TOPICS,
+    DEFAULT_SOURCE_NAMES,
     _links,
     _published_date,
     _summary_from_page,
     matches_focus,
+    normalize_external_sources,
     normalize_focus_topics,
 )
 
@@ -45,6 +47,11 @@ def test_focus_topics_are_normalized_and_unknown_tags_are_ignored():
     assert normalize_focus_topics(["发展党员", "不存在的方向", "发展党员"]) == ["发展党员"]
     assert normalize_focus_topics([]) == []
     assert normalize_focus_topics(None) == list(DEFAULT_FOCUS_TOPICS)
+
+
+def test_external_sources_are_limited_to_the_whitelisted_catalog():
+    assert normalize_external_sources(None) == list(DEFAULT_SOURCE_NAMES)
+    assert normalize_external_sources(["共产党员网", "未知来源", "共产党员网"]) == ["共产党员网"]
 
 
 def test_focus_matching_uses_title_and_summary_keywords():

@@ -49,6 +49,10 @@ DEFAULT_FOCUS_TOPICS: tuple[str, ...] = (
     "基层组织建设",
     "发展党员",
 )
+SOURCE_MAP: dict[str, tuple[str, str]] = {
+    name: (url, domain) for name, url, domain in EXTERNAL_SOURCES
+}
+DEFAULT_SOURCE_NAMES: tuple[str, ...] = tuple(SOURCE_MAP)
 
 MAX_ITEMS_PER_SOURCE = 10
 MAX_PAGE_BYTES = 5 * 1024 * 1024
@@ -108,6 +112,41 @@ def normalize_focus_topics(value: Any) -> list[str]:
         if topic in FOCUS_TOPICS and topic not in topics:
             topics.append(topic)
     return topics[: len(FOCUS_TOPICS)]
+
+
+def normalize_external_sources(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return list(DEFAULT_SOURCE_NAMES)
+    sources: list[str] = []
+    for item in value:
+        name = str(item).strip()
+        if name in SOURCE_MAP and name not in sources:
+            sources.append(name)
+    return sources
+
+
+async def get_external_sources(db: AsyncSession, tenant_id: str) -> list[str]:
+    tenant = (
+        await db.execute(
+            select(Tenant).where(
+                Tenant.id == tenant_id,
+                Tenant.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if tenant is None:
+        return list(DEFAULT_SOURCE_NAMES)
+    value = (tenant.config or {}).get("external_source_names")
+    return normalize_external_sources(value) if value is not None else list(DEFAULT_SOURCE_NAMES)
+
+
+async def set_external_sources(db: AsyncSession, tenant_id: str, names: list[str]) -> list[str]:
+    clean = normalize_external_sources(names)
+    unknown = [name for name in names if name not in SOURCE_MAP]
+    if unknown:
+        raise HTTPException(422, f"存在不支持的外部资料来源：{'、'.join(unknown)}")
+    await tenant_config.save(db, tenant_id, {"external_source_names": clean})
+    return clean
 
 
 async def get_focus_topics(
@@ -320,6 +359,8 @@ async def fetch_updates(db: AsyncSession, user: User) -> dict[str, Any]:
     started_at = _now()
     tenant_id = str(user.tenant_id)
     focus_topics = await get_focus_topics(db, tenant_id)
+    enabled_sources = await get_external_sources(db, tenant_id)
+    source_entries = [(name, *SOURCE_MAP[name]) for name in enabled_sources if name in SOURCE_MAP]
     existing = set(
         (
             await db.execute(
@@ -334,12 +375,14 @@ async def fetch_updates(db: AsyncSession, user: User) -> dict[str, Any]:
     )
     errors: list[dict[str, str]] = []
     fetched: list[dict[str, Any]] = []
+    if not source_entries:
+        errors.append({"source": "资料来源", "message": "当前未启用任何外部资料来源"})
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(15.0),
         follow_redirects=True,
         headers={"User-Agent": USER_AGENT},
     ) as client:
-        for source_name, source_url, domain in EXTERNAL_SOURCES:
+        for source_name, source_url, domain in source_entries:
             try:
                 page = await _get(client, source_url, domain)
                 items = _links(page, source_url, domain)
@@ -393,7 +436,7 @@ async def fetch_updates(db: AsyncSession, user: User) -> dict[str, Any]:
         "added": added,
         "skipped": skipped,
         "filtered": filtered,
-        "sources": len(EXTERNAL_SOURCES),
+        "sources": len(source_entries),
         "focus_topics": focus_topics,
         "errors": errors,
     }

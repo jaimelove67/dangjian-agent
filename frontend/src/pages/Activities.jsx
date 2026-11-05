@@ -1350,6 +1350,7 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
       {externalOpen && (
         <ExternalUpdatesDialog
           orgs={orgs}
+          canManageSources={session.user.role === "school_admin"}
           onClose={() => setExternalOpen(false)}
         />
       )}

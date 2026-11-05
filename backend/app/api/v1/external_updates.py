@@ -22,10 +22,13 @@ from app.schemas.external import (
 )
 from app.services.external_update_service import (
     FOCUS_TOPICS,
+    SOURCE_MAP,
     fetch_updates,
+    get_external_sources,
     get_focus_topics,
     review_update,
     review_updates_batch,
+    set_external_sources,
     set_focus_topics,
 )
 from app.services.org_scope import accessible_org_units
@@ -75,12 +78,15 @@ async def read_external_preferences(
             raise HTTPException(403, "无权维护该组织的资料关注方向")
     topics = await get_focus_topics(db, str(user.tenant_id), org_unit_id)
     school_topics = await get_focus_topics(db, str(user.tenant_id))
+    sources = await get_external_sources(db, str(user.tenant_id))
     return APIResponse(
         data={
             "topics": topics,
             "school_topics": school_topics,
             "org_unit_id": org_unit_id,
             "available": list(FOCUS_TOPICS),
+            "sources": sources,
+            "available_sources": list(SOURCE_MAP),
         },
         trace_id=_trace(request),
     )
@@ -95,25 +101,41 @@ async def update_external_preferences(
 ) -> APIResponse[dict]:
     """保存学校默认或指定组织的关注方向；不改变审核规则。"""
     _ensure_school(user)
+    if body.sources is not None and user.role != UserRole.SCHOOL_ADMIN:
+        raise HTTPException(403, "只有学校管理员可以维护外部资料来源")
     if body.org_unit_id:
         org_ids = {str(org.id) for org in await accessible_org_units(db, user)}
         if body.org_unit_id not in org_ids:
             raise HTTPException(403, "无权维护该组织的资料关注方向")
     old_topics = await get_focus_topics(db, str(user.tenant_id), body.org_unit_id)
+    old_sources = await get_external_sources(db, str(user.tenant_id))
     try:
         topics = await set_focus_topics(db, str(user.tenant_id), body.topics, body.org_unit_id)
+        sources = (
+            await set_external_sources(db, str(user.tenant_id), body.sources)
+            if body.sources is not None
+            else old_sources
+        )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     await audit_operation(
         db,
         request,
         user,
-        action="update_external_focus_topics",
+        action="update_external_preferences",
         resource_type="org_unit" if body.org_unit_id else "tenant_config",
         resource_id=body.org_unit_id or str(user.tenant_id),
         data_level="public",
-        old_value={"topics": old_topics, "org_unit_id": body.org_unit_id},
-        new_value={"topics": topics, "org_unit_id": body.org_unit_id},
+        old_value={
+            "topics": old_topics,
+            "sources": old_sources,
+            "org_unit_id": body.org_unit_id,
+        },
+        new_value={
+            "topics": topics,
+            "sources": sources,
+            "org_unit_id": body.org_unit_id,
+        },
     )
     await db.commit()
     school_topics = await get_focus_topics(db, str(user.tenant_id))
@@ -123,6 +145,8 @@ async def update_external_preferences(
             "school_topics": school_topics,
             "org_unit_id": body.org_unit_id,
             "available": list(FOCUS_TOPICS),
+            "sources": sources,
+            "available_sources": list(SOURCE_MAP),
         },
         trace_id=_trace(request),
     )

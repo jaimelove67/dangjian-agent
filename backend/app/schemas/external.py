@@ -19,6 +19,7 @@ class ExternalPreferencesRequest(BaseModel):
 
     org_unit_id: str | None = Field(default=None, max_length=36)
     topics: list[str] = Field(default_factory=list, max_length=12)
+    sources: list[str] | None = Field(default=None, max_length=10)
 
 
 class ExternalBatchReviewRequest(BaseModel):

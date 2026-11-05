@@ -19,14 +19,19 @@ function dateTime(value) {
     : "尚未抓取";
 }
 
-export function ExternalUpdatesDialog({ orgs = [], onClose }) {
+export function ExternalUpdatesDialog({ orgs = [], canManageSources = false, onClose }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState(null);
   const [note, setNote] = useState("");
   const [message, setMessage] = useState("");
-  const [focus, setFocus] = useState({ topics: [], available: [] });
+  const [focus, setFocus] = useState({
+    topics: [],
+    available: [],
+    sources: [],
+    available_sources: [],
+  });
   const [focusSaving, setFocusSaving] = useState(false);
   const [selected, setSelected] = useState([]);
   const [lastFetched, setLastFetched] = useState("");
@@ -46,7 +51,14 @@ export function ExternalUpdatesDialog({ orgs = [], onClose }) {
       setLastFetched(result.last_success_at || result.last_fetched_at || "");
       setLastAttempt(result.last_fetched_at || "");
       setLastFetchError(result.last_fetch_error || "");
-      setFocus(preferences || { topics: [], available: [] });
+      setFocus(
+        preferences || {
+          topics: [],
+          available: [],
+          sources: [],
+          available_sources: [],
+        },
+      );
       setSelected([]);
     } catch (failure) {
       setError(failure);
@@ -64,6 +76,15 @@ export function ExternalUpdatesDialog({ orgs = [], onClose }) {
     }));
   }
 
+  function toggleSource(source) {
+    setFocus((current) => ({
+      ...current,
+      sources: current.sources.includes(source)
+        ? current.sources.filter((item) => item !== source)
+        : [...current.sources, source],
+    }));
+  }
+
   async function saveFocus() {
     setFocusSaving(true);
     setError(null);
@@ -72,6 +93,7 @@ export function ExternalUpdatesDialog({ orgs = [], onClose }) {
       const result = await backend.updateExternalPreferences({
         org_unit_id: scopeOrgId || undefined,
         topics: focus.topics,
+        ...(canManageSources ? { sources: focus.sources } : {}),
       });
       setFocus(result);
       setMessage(
@@ -218,6 +240,22 @@ export function ExternalUpdatesDialog({ orgs = [], onClose }) {
             </select>
           </label>
         </div>
+        {canManageSources && (
+          <div className="external-source-options">
+            <strong>资料来源</strong>
+            {focus.available_sources.map((source) => (
+              <label key={source}>
+                <input
+                  type="checkbox"
+                  checked={focus.sources.includes(source)}
+                  disabled={focusSaving || Boolean(busy)}
+                  onChange={() => toggleSource(source)}
+                />
+                {source}
+              </label>
+            ))}
+          </div>
+        )}
         <div className="external-focus-options">
           {focus.available.map((topic) => (
             <label key={topic}>
@@ -233,7 +271,7 @@ export function ExternalUpdatesDialog({ orgs = [], onClose }) {
         </div>
         <div className="external-focus-actions">
           <span className="muted">
-            学校默认用于定时抓取；院系或支部设置只影响该组织的主题推荐。不选择任何方向时不筛选，已抓取资料仍需人工审核。
+            学校默认用于定时抓取；院系或支部设置只影响该组织的主题推荐。不选择任何方向时不筛选；资料来源全部取消时暂停抓取。已抓取资料仍需人工审核。
           </span>
           <button
             type="button"
