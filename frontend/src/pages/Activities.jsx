@@ -81,6 +81,19 @@ const DECISION_RESULTS = {
   rejected: "不同意",
   not_voted: "未表决",
 };
+function escapeHtml(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[character],
+  );
+}
 function normalizeMeeting(m) {
   return {
     ...m,
@@ -545,6 +558,79 @@ export function Meetings() {
     );
     notify("会议文书已导出");
   }
+
+  async function exportDocx() {
+    try {
+      const blob = await backend.exportMeetingDocx(current.id);
+      downloadBlob(blob, `${current.title}-会议文书.docx`);
+      notify("会议文书 Word 已导出");
+    } catch (failure) {
+      setError(failure);
+    }
+  }
+
+  function printRecord() {
+    const sources = (current.sources || [])
+      .map(
+        (source, index) =>
+          `<li>${escapeHtml(source.title)}<br><small>${escapeHtml(
+            source.issuer || "来源待补",
+          )}${source.effective_date ? ` · ${escapeHtml(String(source.effective_date).slice(0, 10))}` : ""}${
+            source.source_url
+              ? `<br>${escapeHtml(source.source_url)}`
+              : ""
+          }</small></li>`,
+      )
+      .join("");
+    const decisions = (current.decisions || [])
+      .map(
+        (item, index) =>
+          `<article><h3>${index + 1}. ${escapeHtml(item.title)}</h3>` +
+          `<p>结果：${escapeHtml(DECISION_RESULTS[item.result] || item.result || "未表决")}；` +
+          `同意 ${Number(item.agree_count) || 0} 票，反对 ${Number(item.oppose_count) || 0} 票，` +
+          `弃权 ${Number(item.abstain_count) || 0} 票</p>` +
+          `${item.note ? `<p>说明：${escapeHtml(item.note)}</p>` : ""}</article>`,
+      )
+      .join("");
+    const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>${escapeHtml(current.title)} · 会议文书</title>
+<style>
+body{font-family:"SimSun","宋体",serif;line-height:1.9;color:#111;max-width:820px;margin:36px auto;padding:0 28px;}
+h1{text-align:center;font-size:24px;margin-bottom:4px;} .sub{text-align:center;color:#555;margin-top:0;}
+h2{font-size:16px;border-bottom:1px solid #bbb;padding-bottom:5px;margin-top:24px;}
+pre{font-family:inherit;white-space:pre-wrap;word-break:break-word;margin:8px 0;}
+ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
+.meta{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px 12px;font-size:14px;}
+.note{font-size:12px;color:#666;margin-top:28px;border-top:1px solid #ccc;padding-top:10px;}
+@media print{body{margin:0;max-width:none;} @page{margin:18mm;}}
+</style></head><body>
+<h1>${escapeHtml(current.title)}</h1><p class="sub">会议文书</p>
+<div class="meta">
+<div>会议类型</div><div>${escapeHtml(current.type)}</div>
+<div>会议时间</div><div>${escapeHtml(current.date)} ${escapeHtml(current.time)}</div>
+<div>会议地点</div><div>${escapeHtml(current.location)}</div>
+<div>主持人</div><div>${escapeHtml(current.host)}</div>
+<div>记录人</div><div>${escapeHtml(current.recorder || "待登记")}</div>
+<div>参加人数</div><div>${current.attended} / ${current.total} 人</div>
+</div>
+<h2>一、会议通知</h2><pre>${escapeHtml(current.notice || "尚未生成会议通知")}</pre>
+<h2>二、会议议题</h2><pre>${escapeHtml(current.agenda || "尚未登记会议议题")}</pre>
+<h2>三、学习资料</h2>${sources ? `<ul>${sources}</ul>` : "<p>暂无学习资料</p>"}
+<h2>四、会议记录</h2><pre>${escapeHtml(current.minutes || "会议尚未召开，暂无会议记录")}</pre>
+<h2>五、决议与表决</h2>${decisions || "<p>尚未登记决议或表决结果</p>"}
+<p class="note">本文件由系统按当前登记内容生成，不替代真实会议记录；正式效力以学校审核和归档结果为准。</p>
+<script>window.onload=()=>{window.print();}; window.onafterprint=()=>{window.close();};</script>
+</body></html>`;
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      notify("浏览器阻止了打印窗口，请允许弹出窗口后重试。");
+      return;
+    }
+    printWindow.opener = null;
+    printWindow.document.write(html);
+    printWindow.document.close();
+  }
+
   return (
     <section className="panel workspace-panel">
       <PageHeader
@@ -650,9 +736,15 @@ export function Meetings() {
                           编辑
                         </button>
                       )}
-                    <button className="button secondary" onClick={exportRecord}>
+                    <button
+                      className="button secondary"
+                      onClick={IS_LIVE ? exportDocx : exportRecord}
+                    >
                       <DownloadSimple size={16} />
-                      导出记录
+                      {IS_LIVE ? "导出 Word" : "导出记录"}
+                    </button>
+                    <button className="button secondary" onClick={printRecord}>
+                      打印 / 保存 PDF
                     </button>
                     {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
                       <button

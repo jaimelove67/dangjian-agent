@@ -229,6 +229,11 @@ export const backend = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  exportMeetingDocx: (id) =>
+    request(`/meeting/records/${encodeURIComponent(id)}/documents.docx`, {
+      download: true,
+      timeout: 120000,
+    }),
   uploadMeetingImage: (id, file, expectedRevision, reason) => {
     const body = new FormData();
     body.append("file", file);

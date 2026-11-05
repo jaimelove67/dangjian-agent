@@ -46,6 +46,7 @@ from app.schemas.meeting import (
     TaskUpdate,
 )
 from app.services.activity_service import ACTIVITY_TYPES, ActivityService
+from app.services.meeting_document_export import build_meeting_docx
 
 router = APIRouter()
 _query = require_permissions(Permission.MEETING_QUERY)
@@ -572,6 +573,43 @@ async def export_record(
     """按当前权限导出归档、材料摘录与确认证据。"""
     return await respond(
         request, service, await service.export(record_id), "export", "meeting", record_id
+    )
+
+
+@router.get(
+    "/meeting/records/{record_id}/documents.docx",
+    summary="导出会议文书 Word",
+)
+async def export_record_docx(
+    record_id: str,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
+) -> Response:
+    """导出当前可访问会议的通知、议题、资料、记录和决议。"""
+    record = await service.record(record_id)
+    data = await service.record_data(record)
+    if data.get("restricted"):
+        raise HTTPException(403, "关联资料权限已变化，不能导出会议文书")
+    content = build_meeting_docx(data)
+    await audit_operation(
+        service.db,
+        request,
+        service.user,
+        action="export_meeting_documents",
+        resource_type="meeting",
+        resource_id=record_id,
+        data_level="sensitive",
+        new_value={"format": "docx", "revision": data.get("revision")},
+    )
+    await service.db.commit()
+    filename = quote(f"{record.title}-会议文书.docx", safe="")
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
