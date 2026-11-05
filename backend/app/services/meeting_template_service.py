@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
@@ -9,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.meeting_template import MeetingDocumentTemplate
 from app.models.org import OrgUnit
+from app.services.file_store import save_original
 
 SECTION_KEYS = ("notice", "agenda", "sources", "record", "decisions", "footer")
 DEFAULT_SECTION_TITLES = {
@@ -79,12 +82,40 @@ def normalize_schema(value: Any) -> dict[str, Any]:
     }
 
 
+def _word_meta(schema: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(schema, dict):
+        return None
+    value = schema.get("word_template")
+    return value if isinstance(value, dict) else None
+
+
 def _with_meta(schema: dict[str, Any], row: MeetingDocumentTemplate | None) -> dict[str, Any]:
     result = normalize_schema(schema)
+    word_template = _word_meta(schema)
+    if word_template:
+        result["word_template"] = word_template
     result["version"] = row.version if row else 0
     result["template_id"] = str(row.id) if row else ""
     result["org_unit_id"] = row.org_unit_id if row else ""
     return result
+
+
+async def _word_meta_for_scope(
+    db: AsyncSession, tenant_id: str, org_unit_id: str
+) -> dict[str, Any] | None:
+    row = (
+        await db.execute(
+            select(MeetingDocumentTemplate)
+            .where(
+                MeetingDocumentTemplate.tenant_id == tenant_id,
+                MeetingDocumentTemplate.org_unit_id == org_unit_id,
+                MeetingDocumentTemplate.is_deleted.is_(False),
+            )
+            .order_by(MeetingDocumentTemplate.version.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return _word_meta(row.schema_data) if row else None
 
 
 async def _published_for(
@@ -173,6 +204,15 @@ async def save_draft(
             .with_for_update()
         )
     ).scalar_one_or_none()
+    word_meta = _word_meta(schema)
+    if not word_meta:
+        word_meta = (
+            _word_meta(draft.schema_data)
+            if draft
+            else await _word_meta_for_scope(db, tenant_id, org_unit_id)
+        )
+    if word_meta:
+        normalized["word_template"] = word_meta
     if draft:
         draft.schema_data = normalized
         draft.created_by = actor_id
@@ -205,6 +245,9 @@ async def publish_template(
     actor_id: str,
 ) -> dict[str, Any]:
     normalized = normalize_schema(schema)
+    word_meta = await _word_meta_for_scope(db, tenant_id, org_unit_id)
+    if word_meta:
+        normalized["word_template"] = word_meta
     await db.execute(
         update(MeetingDocumentTemplate)
         .where(
@@ -242,3 +285,25 @@ async def publish_template(
     db.add(row)
     await db.flush()
     return _with_meta(row.schema_data, row)
+
+
+async def save_word_template(
+    db: AsyncSession,
+    tenant_id: str,
+    org_unit_id: str,
+    content: bytes,
+    file_name: str,
+    actor_id: str,
+) -> dict[str, Any]:
+    doc_id = f"meeting-template-{uuid.uuid4().hex}"
+    stored = save_original(tenant_id, doc_id, 1, content, file_name)
+    metadata = {
+        **stored,
+        "doc_id": doc_id,
+        "uploaded_at": datetime.utcnow().isoformat(),
+    }
+    state = await get_template_state(db, tenant_id, org_unit_id)
+    base = state["draft"] or state["published"] or state["default_schema"]
+    schema = normalize_schema(base)
+    schema["word_template"] = metadata
+    return await save_draft(db, tenant_id, org_unit_id, schema, actor_id)

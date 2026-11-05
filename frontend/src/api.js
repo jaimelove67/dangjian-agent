@@ -269,6 +269,16 @@ export const backend = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  uploadMeetingWordTemplate: (file, orgUnitId = "") => {
+    const body = new FormData();
+    body.append("org_unit_id", orgUnitId);
+    body.append("file", file);
+    return request("/meeting/document-template/word", {
+      method: "POST",
+      body,
+      timeout: 120000,
+    });
+  },
   uploadMeetingImage: (id, file, expectedRevision, reason) => {
     const body = new FormData();
     body.append("file", file);

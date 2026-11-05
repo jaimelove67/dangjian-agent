@@ -1030,6 +1030,17 @@
   padding-bottom: 8px;
   line-height: 1.5;
 }
+.meeting-template-word {
+  padding: 0 0 2px;
+}
+.meeting-template-word input[type="file"] {
+  max-width: 100%;
+  font-size: 12px;
+}
+.meeting-template-word .muted {
+  margin: 6px 0 0;
+  font-size: 11px;
+}
 .meeting-template-preview {
   margin-top: 16px;
   padding: 12px;

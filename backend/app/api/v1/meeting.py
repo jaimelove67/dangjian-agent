@@ -5,6 +5,7 @@
 ``meeting.manage`` + ``meeting.archive``。建议与生成内容只作草稿，不代组织结论。
 """
 
+import asyncio
 from datetime import date
 from typing import Any
 from urllib.parse import quote
@@ -49,7 +50,9 @@ from app.schemas.meeting import (
     TaskUpdate,
 )
 from app.services.activity_service import ACTIVITY_TYPES, ActivityService
+from app.services.file_store import read_original
 from app.services.meeting_document_export import build_meeting_docx
+from app.services.meeting_word_template import render_word_template, validate_word_template
 from app.services.meeting_document_settings import (
     get_meeting_document_settings,
     save_meeting_document_settings,
@@ -58,6 +61,7 @@ from app.services.meeting_template_service import (
     get_template_state,
     publish_template,
     save_draft,
+    save_word_template,
 )
 from app.services.org_scope import accessible_org_units
 
@@ -273,6 +277,44 @@ async def publish_document_template(
         resource_id=body.org_unit_id or str(user.tenant_id),
         data_level="internal",
         new_value={"version": data.get("version"), "sections": len(data["sections"])},
+    )
+    await db.commit()
+    return APIResponse(data=data, trace_id=getattr(request.state, "trace_id", None))
+
+
+@router.post(
+    "/meeting/document-template/word",
+    response_model=APIResponse[dict],
+)
+async def upload_word_document_template(
+    request: Request,
+    org_unit_id: str = Form("", max_length=36),
+    file: UploadFile = File(..., description="仅支持 .docx，不含宏和外部链接"),
+    user: User = Depends(_school_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """上传 Word 模板到草稿；发布后才会用于新会议。"""
+    await _validate_document_org(db, user, org_unit_id or None)
+    content = await file.read(settings.MAX_UPLOAD_SIZE + 1)
+    if len(content) > settings.MAX_UPLOAD_SIZE:
+        raise HTTPException(413, "Word 模板超过上传大小限制")
+    file_name = file.filename or "meeting-template.docx"
+    try:
+        validate_word_template(content, file_name)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    data = await save_word_template(
+        db, str(user.tenant_id), org_unit_id, content, file_name, str(user.id)
+    )
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="upload_meeting_word_template",
+        resource_type="org_unit" if org_unit_id else "tenant_config",
+        resource_id=org_unit_id or str(user.tenant_id),
+        data_level="internal",
+        new_value={"file_name": file_name, "size": len(content)},
     )
     await db.commit()
     return APIResponse(data=data, trace_id=getattr(request.state, "trace_id", None))
@@ -814,7 +856,24 @@ async def export_record_docx(
     data = await service.record_data(record)
     if data.get("restricted"):
         raise HTTPException(403, "关联资料权限已变化，不能导出会议文书")
-    content = build_meeting_docx(data, (data.get("context") or {}).get("document_template"))
+    document_template = (data.get("context") or {}).get("document_template")
+    word_meta = (document_template or {}).get("word_template")
+    if isinstance(word_meta, dict) and word_meta.get("doc_id"):
+        try:
+            source = await asyncio.to_thread(
+                read_original,
+                str(service.user.tenant_id),
+                str(word_meta["doc_id"]),
+                int(word_meta.get("revision") or 1),
+                word_meta.get("sha256"),
+            )
+            if not source:
+                raise ValueError("模板原件不存在")
+            content = render_word_template(source, data)
+        except Exception as exc:
+            raise HTTPException(409, "Word 模板文件不可用，请重新上传或发布模板") from exc
+    else:
+        content = build_meeting_docx(data, document_template)
     await audit_operation(
         service.db,
         request,

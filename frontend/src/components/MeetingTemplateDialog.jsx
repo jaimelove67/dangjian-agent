@@ -75,6 +75,22 @@ export function MeetingTemplateDialog({ orgs = [], onClose, onSaved }) {
     };
   }
 
+  async function uploadWord(file) {
+    if (!file) return;
+    setBusy("upload");
+    setError(null);
+    setMessage("");
+    try {
+      await backend.uploadMeetingWordTemplate(file, scopeOrgId);
+      await load(scopeOrgId);
+      setMessage("Word 模板已上传为草稿；发布后才会用于新会议。");
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function saveDraft() {
     setBusy("draft");
     setError(null);
@@ -105,6 +121,9 @@ export function MeetingTemplateDialog({ orgs = [], onClose, onSaved }) {
       setBusy("");
     }
   }
+
+  const wordTemplate =
+    state?.draft?.word_template || state?.published?.word_template || null;
 
   return (
     <Modal
@@ -225,6 +244,33 @@ export function MeetingTemplateDialog({ orgs = [], onClose, onSaved }) {
                 />
               </Field>
             ))}
+          </div>
+          <div className="meeting-template-heading">
+            <strong>Word 导入模板（可选）</strong>
+          </div>
+          <div className="meeting-template-word">
+            <p className="inline-note">
+              上传 .docx 后，Word 导出将按该模板排版。只允许以下占位符：
+              {"{{会议名称}} {{会议类型}} {{会议时间}} {{会议地点}} {{主持人}} {{记录人}} {{参加人数}} {{会议通知}} {{会议议题}} {{学习资料}} {{会议记录}} {{决议与表决}} {{说明}}"}
+            </p>
+            <input
+              type="file"
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              disabled={Boolean(busy)}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                uploadWord(file);
+              }}
+            />
+            {wordTemplate && (
+              <p className="muted">
+                当前草稿模板：{wordTemplate.file_name}（{Math.ceil((wordTemplate.size || 0) / 1024)} KB）
+              </p>
+            )}
+            <p className="muted">
+              模板不能包含宏或外部链接；上传后先保存为草稿，点击“发布模板”后生效。
+            </p>
           </div>
           <div className="meeting-template-preview">
             <strong>预览</strong>
