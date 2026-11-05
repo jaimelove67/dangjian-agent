@@ -14,7 +14,7 @@ Build the current React app UI in `frontend/src/`; the FastAPI application is in
 - 首页沿用本次确认的学校管理员与党员参考图：紧凑校园横幅，桌面左侧为公示公告，右侧为当前角色事项；党员首页另列本人档案和个人提交材料，管理首页保留工作统计与组织进度。公示分类为公示事项、通知公告和制度文件；窄屏改为单列，平台管理员保留独立运维首页。
 - 学校管理员使用 7 个一级导航：学校工作台、组织与党员、党员发展、组织生活、学习教育、考核与统计、校级管理；具体业务放入二级菜单，账号设置置于右上角，材料接收从相关业务进入。
 - 首页优先展示全校待审核事项、逾期与缺失材料、组织工作进度和重要通知；统计、问题和待办均可进入具体组织及业务记录。
-- 业务记录呈现提交人、审核人、材料版本、处理意见、退回原因和归档状态。审核与归档分别确认，学校管理员按学校制度办理，支部及组织员负责日常登记，院系负责核验及督办。
+- 业务记录呈现提交人、审核人、材料版本、处理意见、退回原因和归档状态。审核与归档分别确认，学校管理员按学校制度办理，支部及组织员负责日常登记，院系负责核验及督办。电子记录效力确认由学校管理员在“校级管理 → 学校业务参数”登记确认依据；确认前归档、历史归档查询及导出不可用，确认和撤销只对当前学校生效并保留版本与审计。
 - 校级管理提供本校账号管理：学校管理员可在本校新增账号，选择业务角色、组织归属和本人党员档案，并可编辑本校账号的姓名、业务角色、组织归属、启停状态与密码，管理范围固定本校。管理账号的组织授权范围与本人档案支部相互独立；账号与档案保持一对一，可关联、解除和重新关联，操作保留审计。平台管理员账号、租户开通和平台服务配置仍由平台管理员负责。
 
 Member archive details open in a centered, flat modal with small corners, no shadow or backdrop blur, compact two-column details and horizontal development stages on desktop. Narrow screens use one column and compact vertical stages; retain scrollable content and the existing close controls.

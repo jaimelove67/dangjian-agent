@@ -4240,3 +4240,25 @@ button.meeting-image {
 .meeting-preflight-list li::marker {
   color: #bf8a3d;
 }
+
+/* ?????????? */
+.archive-policy-section {
+  padding-top: 18px;
+  border-top: 1px solid #edf0f4;
+}
+.archive-policy-section > header {
+  align-items: flex-start;
+}
+.archive-policy-section > header > div {
+  min-width: 0;
+}
+.archive-policy-section > header p {
+  margin: 4px 0 0;
+  color: #9aa2af;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.archive-policy-section > header .button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}

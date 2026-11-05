@@ -14,6 +14,7 @@ export function LiveSchoolBusiness({ mode = "tasks", tenantId, category }) {
   const [tab, setTab] = useState("任务办理"), [onlyOverdue, setOnlyOverdue] = useState(false), [selected, setSelected] = useState(routeParams.recordId || null), [form, setForm] = useState(null), [error, setError] = useState(null);
   const kind = mode === "notices" ? "notice" : mode === "permissions" ? "permission" : "task";
   const resource = useResource(() => mode === "rules" ? get("/school/business/rules") : get("/school/business/records", { kind, tenant_id: tenantId }), [mode, kind, tenantId]);
+  const archivePolicy = useResource(() => school && mode === "rules" ? get("/admin/electronic-archive") : Promise.resolve(null), [school, mode]);
   const notices = useResource(() => mode === "personal" ? get("/school/business/records", { kind: "notice" }) : Promise.resolve(null), [mode]);
   const detail = useResource(() => selected ? get(`/school/business/records/${key(selected)}`) : Promise.resolve(null), [selected]);
   const orgs = useResource(() => school ? get("/admin/org-units") : Promise.resolve([]), [school]);
@@ -65,6 +66,30 @@ export function LiveSchoolBusiness({ mode = "tasks", tenantId, category }) {
     { name: "year", label: "当前业务年度", type: "number", min: 2000, max: 2100 }, { name: "review_days", label: "建议审核时限（天）", type: "number", min: 1, max: 60 }, { name: "reminder_days", label: "截止前提醒（天）", type: "number", min: 0, max: 60 },
     { name: "development_materials", label: "党员发展材料要求", type: "textarea" }, { name: "archive_requirements", label: "学校归档确认要求", type: "textarea" }, note,
   ], values => save("/school/business/rules", { ...values, expected_revision: current.revision }, "PUT"), current, "参数用于本校任务提醒与办理指引。阶段流转的法定要求和角色权限仍由相应业务规则校验。"); }
+  const policy = archivePolicy.value;
+  function editArchivePolicy() {
+    const current = policy || { enabled: false, revision: 0 };
+    open(
+      current.enabled ? "更新电子记录效力确认" : "确认电子记录效力",
+      [
+        { name: "enabled", label: "学校组织部门已确认电子记录效力", type: "checkbox" },
+        { name: "evidence", label: "学校确认依据", type: "textarea", rows: 4, max: 2000, placeholder: "填写学校制度名称、文号、会议决定或组织部门确认意见" },
+      ],
+      async values => {
+        const evidence = String(values.evidence || "").trim();
+        if (!evidence) throw new Error("请填写学校确认依据。");
+        await send("/admin/electronic-archive", {
+          enabled: !!values.enabled,
+          expected_revision: Number(current.revision || 0),
+          evidence,
+        }, "PATCH");
+        archivePolicy.reload();
+        notify(values.enabled ? "电子记录效力已确认" : "电子记录效力确认已撤销");
+      },
+      { enabled: current.revision ? !!current.enabled : true, evidence: current.evidence || "" },
+      "确认只对当前学校生效。确认后会议归档、历史归档查询及导出可用；撤销确认后已归档记录的历史查询和导出也会暂停。"
+    );
+  }
   const all = rows(resource.value).filter(r => (!category || r.body.category === category) && (!onlyOverdue || r.overdue));
   const records = mode === "personal" && tab === "通知公告" ? rows(notices.value) : all;
   return <section className="panel workspace-panel"><PageHeader title={{ tasks: category === "learning" ? "支部学习任务" : "问题与督办", personal: "通知与我的任务", notices: "公示公告管理", permissions: "业务角色申请", rules: "学校业务参数" }[mode]} subtitle="所有记录来自本校服务，保留材料版本、办理人及处理意见" action={<div className="inline-controls"><button className="button secondary" onClick={() => { resource.reload(); notices.reload(); }}>刷新</button>{school && (mode === "rules" ? <button className="button primary" disabled={!resource.value} onClick={rules}>修订学校参数</button> : <button className="button primary" onClick={create}>{kind === "notice" ? "编制公示公告" : kind === "permission" ? "提交业务申请" : "布置任务"}</button>)}</div>} />
@@ -72,6 +97,11 @@ export function LiveSchoolBusiness({ mode = "tasks", tenantId, category }) {
     {["tasks", "personal"].includes(mode) && tab !== "通知公告" && <BusinessToolbar><label><input type="checkbox" checked={onlyOverdue} onChange={e => setOnlyOverdue(e.target.checked)} /> 仅看逾期未完成</label></BusinessToolbar>}
     <ResourceState resource={resource} />
     {mode === "rules" ? resource.value && <><p>当前版本 v{resource.value.revision} · {resource.value.year} 年度</p><dl className="detail-list"><dt>建议审核时限</dt><dd>{resource.value.review_days}天</dd><dt>截止前提醒</dt><dd>{resource.value.reminder_days}天</dd><dt>发展材料要求</dt><dd>{resource.value.development_materials}</dd><dt>归档要求</dt><dd>{resource.value.archive_requirements}</dd><dt>维护人</dt><dd>{resource.value.updated_by || "采用初始办理指引"}</dd></dl></> : <BusinessTable items={records} columns={[["业务事项", r => r.title], ["要求 / 原因", r => r.body.requirements || r.body.reason || r.body.content?.slice(0, 100)], ["期限", r => r.body.due_date || r.body.expires_on || "—"], ["状态", r => <><Status value={r.status} />{r.overdue && <span className="cell-subtext">已逾期</span>}</>], ["操作", r => <button className="text-button link" onClick={() => setSelected(r.id)}>查看与办理</button>]]} />}
+    {mode === "rules" && school && <section className="business-section archive-policy-section">
+      <header><div><h3>电子记录效力确认</h3><p>学校组织部门确认后，会议归档、历史归档查询和导出才可使用。确认只对当前学校生效。</p></div><button className="button secondary" disabled={archivePolicy.loading || !policy} onClick={editArchivePolicy}>{policy?.enabled ? "更新或撤销确认" : "确认电子记录效力"}</button></header>
+      <ResourceState resource={archivePolicy} />
+      {policy && <><dl className="detail-list"><dt>当前状态</dt><dd>{policy.enabled ? "已确认" : "未确认 / 已撤销"}</dd><dt>确认版本</dt><dd>{policy.revision ? `v${policy.revision}` : "—"}</dd><dt>确认人</dt><dd>{rows(users.value).find(user => user.id === policy.confirmed_by)?.name || policy.confirmed_by || "—"}</dd><dt>确认时间</dt><dd>{policy.confirmed_at ? formatBusinessTime(policy.confirmed_at) : "—"}</dd><dt>确认依据</dt><dd>{policy.evidence || "—"}</dd></dl>{!policy.enabled && <div className="inline-note">未确认前，归档、历史归档查询及导出暂不可用。请取得学校组织部门确认后，再登记确认依据。</div>}</>}
+    </section>}
     {selected && <Modal title="业务记录与办理" wide flat onClose={() => setSelected(null)}><ResourceState resource={detail} />{d && <><h3>{d.title}</h3><Status value={d.status} /><RecordTrace record={d} />{error && <ErrorBox error={error} />}<p className="business-content">{d.body.content || d.body.requirements || d.body.reason}</p>{d.kind === "notice" && <p>类型：{d.body.category === "publicity" ? "公示事项" : "通知公告"} · 展示日期：{d.body.starts_on || "发布后"} 至 {d.body.expires_on || "长期展示"}</p>}{d.body.role && <p>目标角色：{ROLE_INFO[d.body.role]?.label}；组织：{d.body.org_unit_id}；目标账号：{d.body.user_id}</p>}{d.body.report && <p className="business-content">完成情况：{d.body.report}</p>}{d.body.evidence?.map(e => <p key={e.doc_id}>佐证：{e.title}（版本{e.revision}） <button className="text-button link" onClick={() => downloadEvidence(e)}>下载该版本</button></p>)}{d.body.materials?.map(e => <p key={e.id}>本人原件：{e.title}（{e.file_version}） <button className="text-button link" onClick={() => downloadEvidence(e, true)}>下载原件</button></p>)}
       <div className="business-actions">{school && d.status === "draft" && <button className="button primary" onClick={() => recordAction("publish")}>{d.kind === "notice" ? "确认发布" : "确认下发"}</button>}{d.kind === "task" && ["assigned", "rejected"].includes(d.status) && d.body.assignee_id === session.user.id && <button className="button primary" onClick={() => recordAction("complete")}>提交完成记录</button>}{d.status === "pending" && d.submitted_by !== session.user.id && (d.kind === "permission" ? platform : ["school_admin", "department_admin"].includes(session.user.role)) && <button className="button primary" onClick={() => recordAction("review")}>人工核验</button>}{school && d.kind === "task" && d.status === "approved" && <button className="button primary" onClick={() => recordAction("archive")}>确认归档</button>}</div>
       <BusinessTable items={d.history || []} columns={[["版本", r => r.revision], ["操作", r => r.action], ["办理人", r => r.actor_id], ["处理说明", r => r.reason], ["时间", r => formatBusinessTime(r.created_at)]]} /></>}</Modal>}
