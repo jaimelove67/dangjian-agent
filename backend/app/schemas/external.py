@@ -17,6 +17,7 @@ class ExternalReviewRequest(BaseModel):
 class ExternalPreferencesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    org_unit_id: str | None = Field(default=None, max_length=36)
     topics: list[str] = Field(default_factory=list, max_length=12)
 
 

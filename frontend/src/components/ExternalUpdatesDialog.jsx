@@ -19,7 +19,7 @@ function dateTime(value) {
     : "尚未抓取";
 }
 
-export function ExternalUpdatesDialog({ onClose }) {
+export function ExternalUpdatesDialog({ orgs = [], onClose }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState("");
@@ -32,14 +32,15 @@ export function ExternalUpdatesDialog({ onClose }) {
   const [lastFetched, setLastFetched] = useState("");
   const [lastAttempt, setLastAttempt] = useState("");
   const [lastFetchError, setLastFetchError] = useState("");
+  const [scopeOrgId, setScopeOrgId] = useState("");
 
-  async function load() {
+  async function load(scope = scopeOrgId) {
     setLoading(true);
     setError(null);
     try {
       const [result, preferences] = await Promise.all([
         backend.externalUpdates(),
-        backend.externalPreferences(),
+        backend.externalPreferences(scope),
       ]);
       setItems(result.items || []);
       setLastFetched(result.last_success_at || result.last_fetched_at || "");
@@ -69,13 +70,14 @@ export function ExternalUpdatesDialog({ onClose }) {
     setMessage("");
     try {
       const result = await backend.updateExternalPreferences({
+        org_unit_id: scopeOrgId || undefined,
         topics: focus.topics,
       });
       setFocus(result);
       setMessage(
         result.topics?.length
-          ? "已保存本校资料关注方向，下次抓取和推荐将按该范围筛选。"
-          : "已清空关注方向，后续抓取和推荐不再按方向筛选。",
+          ? "已保存资料关注方向；学校默认用于定时抓取，组织设置用于该组织推荐。"
+          : "已清空关注方向；后续抓取和推荐不再按方向筛选。",
       );
     } catch (failure) {
       setError(failure);
@@ -85,6 +87,8 @@ export function ExternalUpdatesDialog({ onClose }) {
   }
 
   const pendingItems = items.filter((item) => item.status === "pending");
+  const scopeName =
+    orgs.find((org) => org.id === scopeOrgId)?.name || "学校默认";
 
   function toggleSelected(id) {
     setSelected((current) =>
@@ -190,9 +194,30 @@ export function ExternalUpdatesDialog({ onClose }) {
       </p>
       <details className="external-focus-settings">
         <summary>
-          本校资料关注方向：
+          资料关注方向 · {scopeName}：
           {focus.topics.length ? focus.topics.join("、") : "全部方向"}
         </summary>
+        <div className="external-focus-scope">
+          <label className="inline-field">
+            <span>适用范围</span>
+            <select
+              value={scopeOrgId}
+              disabled={focusSaving || Boolean(busy)}
+              onChange={(event) => {
+                const next = event.target.value;
+                setScopeOrgId(next);
+                load(next);
+              }}
+            >
+              <option value="">学校默认</option>
+              {orgs.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <div className="external-focus-options">
           {focus.available.map((topic) => (
             <label key={topic}>
@@ -208,7 +233,7 @@ export function ExternalUpdatesDialog({ onClose }) {
         </div>
         <div className="external-focus-actions">
           <span className="muted">
-            不选择任何方向时，抓取和推荐不按方向筛选；已抓取资料仍需人工审核。
+            学校默认用于定时抓取；院系或支部设置只影响该组织的主题推荐。不选择任何方向时不筛选，已抓取资料仍需人工审核。
           </span>
           <button
             type="button"

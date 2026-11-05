@@ -28,6 +28,7 @@ from app.services.external_update_service import (
     review_updates_batch,
     set_focus_topics,
 )
+from app.services.org_scope import accessible_org_units
 
 router = APIRouter()
 _manage = require_permissions(Permission.KNOWLEDGE_MANAGE)
@@ -62,14 +63,25 @@ def _ensure_school(user: User) -> None:
 @router.get("/external-updates/preferences", response_model=APIResponse[dict])
 async def read_external_preferences(
     request: Request,
+    org_unit_id: str | None = Query(None, max_length=36),
     user: User = Depends(_manage),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
-    """本校资料关注方向，用于抓取和推荐时缩小范围。"""
+    """返回学校默认或指定组织的有效资料关注方向。"""
     _ensure_school(user)
-    topics = await get_focus_topics(db, str(user.tenant_id))
+    if org_unit_id:
+        org_ids = {str(org.id) for org in await accessible_org_units(db, user)}
+        if org_unit_id not in org_ids:
+            raise HTTPException(403, "无权维护该组织的资料关注方向")
+    topics = await get_focus_topics(db, str(user.tenant_id), org_unit_id)
+    school_topics = await get_focus_topics(db, str(user.tenant_id))
     return APIResponse(
-        data={"topics": topics, "available": list(FOCUS_TOPICS)},
+        data={
+            "topics": topics,
+            "school_topics": school_topics,
+            "org_unit_id": org_unit_id,
+            "available": list(FOCUS_TOPICS),
+        },
         trace_id=_trace(request),
     )
 
@@ -81,11 +93,15 @@ async def update_external_preferences(
     user: User = Depends(_manage),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
-    """保存本校资料关注方向；只影响公开资料的筛选，不改变审核规则。"""
+    """保存学校默认或指定组织的关注方向；不改变审核规则。"""
     _ensure_school(user)
-    old_topics = await get_focus_topics(db, str(user.tenant_id))
+    if body.org_unit_id:
+        org_ids = {str(org.id) for org in await accessible_org_units(db, user)}
+        if body.org_unit_id not in org_ids:
+            raise HTTPException(403, "无权维护该组织的资料关注方向")
+    old_topics = await get_focus_topics(db, str(user.tenant_id), body.org_unit_id)
     try:
-        topics = await set_focus_topics(db, str(user.tenant_id), body.topics)
+        topics = await set_focus_topics(db, str(user.tenant_id), body.topics, body.org_unit_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     await audit_operation(
@@ -93,15 +109,21 @@ async def update_external_preferences(
         request,
         user,
         action="update_external_focus_topics",
-        resource_type="tenant_config",
-        resource_id=str(user.tenant_id),
+        resource_type="org_unit" if body.org_unit_id else "tenant_config",
+        resource_id=body.org_unit_id or str(user.tenant_id),
         data_level="public",
-        old_value={"topics": old_topics},
-        new_value={"topics": topics},
+        old_value={"topics": old_topics, "org_unit_id": body.org_unit_id},
+        new_value={"topics": topics, "org_unit_id": body.org_unit_id},
     )
     await db.commit()
+    school_topics = await get_focus_topics(db, str(user.tenant_id))
     return APIResponse(
-        data={"topics": topics, "available": list(FOCUS_TOPICS)},
+        data={
+            "topics": topics,
+            "school_topics": school_topics,
+            "org_unit_id": body.org_unit_id,
+            "available": list(FOCUS_TOPICS),
+        },
         trace_id=_trace(request),
     )
 

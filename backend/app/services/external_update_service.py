@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import tenant_config
 from app.models.external import ExternalFetchState, ExternalUpdate
 from app.models.knowledge import KnowledgeDoc
+from app.models.org import OrgUnit
 from app.models.tenant import Tenant
 from app.models.user import User
 
@@ -109,8 +110,12 @@ def normalize_focus_topics(value: Any) -> list[str]:
     return topics[: len(FOCUS_TOPICS)]
 
 
-async def get_focus_topics(db: AsyncSession, tenant_id: str) -> list[str]:
-    """读取本校关注方向；未配置时使用默认方向。"""
+async def get_focus_topics(
+    db: AsyncSession,
+    tenant_id: str,
+    org_unit_id: str | None = None,
+) -> list[str]:
+    """读取有效关注方向；组织可覆盖学校默认，未覆盖时逐级继承。"""
     tenant = (
         await db.execute(
             select(Tenant).where(
@@ -121,19 +126,62 @@ async def get_focus_topics(db: AsyncSession, tenant_id: str) -> list[str]:
     ).scalar_one_or_none()
     if tenant is None:
         return list(DEFAULT_FOCUS_TOPICS)
-    value = (tenant.config or {}).get("external_focus_topics")
-    return normalize_focus_topics(value) if value is not None else list(DEFAULT_FOCUS_TOPICS)
+    config = tenant.config or {}
+    value = config.get("external_focus_topics")
+    school_topics = (
+        normalize_focus_topics(value) if value is not None else list(DEFAULT_FOCUS_TOPICS)
+    )
+    if not org_unit_id:
+        return school_topics
+    overrides = config.get("external_focus_by_org") or {}
+    if not isinstance(overrides, dict):
+        return school_topics
+    current: str | None = org_unit_id
+    visited: set[str] = set()
+    while current and current not in visited and len(visited) < 12:
+        visited.add(current)
+        if current in overrides:
+            return normalize_focus_topics(overrides[current])
+        current = await db.scalar(
+            select(OrgUnit.parent_id).where(
+                OrgUnit.id == current,
+                OrgUnit.tenant_id == tenant_id,
+                OrgUnit.is_deleted.is_(False),
+            )
+        )
+    return school_topics
 
 
-async def set_focus_topics(db: AsyncSession, tenant_id: str, topics: list[str]) -> list[str]:
-    """保存本校关注方向，配置版本和审计由既有租户配置机制保留。"""
+async def set_focus_topics(
+    db: AsyncSession,
+    tenant_id: str,
+    topics: list[str],
+    org_unit_id: str | None = None,
+) -> list[str]:
+    """保存学校默认或指定组织的关注方向，保留未修改的上级配置。"""
     if len(topics) != len(set(topics)):
         raise HTTPException(422, "关注方向不能重复")
     unknown = [item for item in topics if item not in FOCUS_TOPICS]
     if unknown:
         raise HTTPException(422, f"存在不支持的关注方向：{'、'.join(unknown)}")
     clean = normalize_focus_topics(topics)
-    await tenant_config.save(db, tenant_id, {"external_focus_topics": clean})
+    if org_unit_id:
+        tenant = (
+            await db.execute(
+                select(Tenant).where(
+                    Tenant.id == tenant_id,
+                    Tenant.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if tenant is None:
+            raise LookupError("当前账号所属租户尚未登记")
+        raw_overrides = (tenant.config or {}).get("external_focus_by_org")
+        overrides = dict(raw_overrides) if isinstance(raw_overrides, dict) else {}
+        overrides[str(org_unit_id)] = clean
+        await tenant_config.save(db, tenant_id, {"external_focus_by_org": overrides})
+    else:
+        await tenant_config.save(db, tenant_id, {"external_focus_topics": clean})
     return clean
 
 

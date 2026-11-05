@@ -1287,7 +1287,10 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
         </Modal>
       )}
       {externalOpen && (
-        <ExternalUpdatesDialog onClose={() => setExternalOpen(false)} />
+        <ExternalUpdatesDialog
+          orgs={orgs}
+          onClose={() => setExternalOpen(false)}
+        />
       )}
       {topicOpen && (
         <TopicSuggestionsDialog

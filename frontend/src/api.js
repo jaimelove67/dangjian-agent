@@ -168,7 +168,11 @@ export const backend = {
   meetings: () => request("/meeting/records?page=1&page_size=100"),
   externalUpdates: (status = "") =>
     request("/external-updates" + (status ? `?status=${status}` : "")),
-  externalPreferences: () => request("/external-updates/preferences"),
+  externalPreferences: (orgUnitId = "") =>
+    request(
+      "/external-updates/preferences" +
+        (orgUnitId ? `?org_unit_id=${encodeURIComponent(orgUnitId)}` : ""),
+    ),
   updateExternalPreferences: (body) =>
     request("/external-updates/preferences", {
       method: "PUT",

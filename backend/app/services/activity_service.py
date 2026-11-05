@@ -810,7 +810,7 @@ class ActivityService:
         if body.org_unit_id and body.org_unit_id not in self.org_ids:
             raise HTTPException(403, "所选组织不在当前账号授权范围内")
         refresh = None
-        focus_topics = await get_focus_topics(self.db, self.tenant_id)
+        focus_topics = await get_focus_topics(self.db, self.tenant_id, body.org_unit_id)
         can_review = has_permission(self.user.role, Permission.KNOWLEDGE_MANAGE)
         if can_review:
             last_fetched = await self.db.scalar(
