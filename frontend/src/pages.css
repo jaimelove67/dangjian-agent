@@ -4127,3 +4127,116 @@ button.meeting-image {
     grid-column: 1 / -1;
   }
 }
+
+/* 三会一课提交前核对与纪要标签检查 */
+.meeting-check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 7px;
+}
+.meeting-check-actions .text-button {
+  color: #9a5b3c;
+  font-size: 10.5px;
+}
+.meeting-check-actions .text-button:hover {
+  color: var(--red);
+}
+.meeting-minute-check {
+  margin: 0 0 11px;
+  padding: 10px 12px;
+  border: 1px solid #f0e4ce;
+  border-radius: 7px;
+  background: #fffaf1;
+}
+.meeting-minute-check-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.meeting-minute-check-head strong {
+  display: block;
+  color: #7c6034;
+  font-size: 11px;
+  font-weight: 600;
+}
+.meeting-minute-check-head span {
+  display: block;
+  margin-top: 3px;
+  color: #a18b68;
+  font-size: 9.5px;
+}
+.meeting-minute-check-head .text-button {
+  flex: 0 0 auto;
+  color: #9a6c38;
+  font-size: 10px;
+}
+.meeting-minute-check-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.meeting-minute-check-tags span {
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+.meeting-minute-check-tags .found {
+  background: #edf8f2;
+  color: #3d8064;
+}
+.meeting-minute-check-tags .missing {
+  background: #fff1e1;
+  color: #b7782e;
+}
+.meeting-minute-check > p {
+  margin: 8px 0 0;
+  color: #9a7a49;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.meeting-preflight-future {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #f2e2c8;
+  border-radius: 6px;
+  background: #fffaf1;
+  color: #8d6934;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.meeting-preflight-future > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #c18c3b;
+}
+.meeting-preflight-future p {
+  margin: 0;
+}
+.meeting-preflight-intro {
+  margin: 10px 0 0;
+  color: #7f8896;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.meeting-preflight-list {
+  display: grid;
+  gap: 5px;
+  margin: 9px 0 13px;
+  padding: 11px 12px 11px 27px;
+  border: 1px solid #f0e4ce;
+  border-radius: 6px;
+  background: #fffbf5;
+  color: #806238;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.meeting-preflight-list li::marker {
+  color: #bf8a3d;
+}

@@ -61,6 +61,7 @@ from app.services.meeting_service import (
     ORG_LIFE_ACTIVITY_TYPE,
     apply_review,
     extract_minutes,
+    meeting_not_held,
     minutes_missing,
     minutes_sections,
     reset_review,
@@ -1168,6 +1169,11 @@ class ActivityService:
         return record
 
     async def _validate_activity(self, record: MeetingRecord) -> None:
+        if meeting_not_held(record):
+            raise HTTPException(
+                422,
+                "会议尚未召开，不能提交审核；请在会议结束后补录实际召开日期、原始记录和纪要。",
+            )
         missing = minutes_missing(record)
         if missing:
             raise HTTPException(422, "；".join(missing))
@@ -1323,6 +1329,11 @@ class ActivityService:
         self.check_revision(record, body.expected_revision)
         if record.review_status != "approved" or not record.reviewed_by:
             raise HTTPException(409, "纪要须先经人工审核通过")
+        if meeting_not_held(record):
+            raise HTTPException(
+                422,
+                "会议尚未召开，不能归档；请先补录实际召开日期、原始记录和纪要。",
+            )
         missing = minutes_missing(record)
         if missing:
             raise HTTPException(422, "；".join(missing))

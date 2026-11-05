@@ -52,6 +52,10 @@ import {
   participantSummary,
   validateParticipantRows,
 } from "../meeting-participants";
+import {
+  meetingIsFuture,
+  transcriptSectionStatus,
+} from "../meeting-minutes";
 import { MeetingParticipantsEditor } from "../components/MeetingParticipantsEditor";
 import { AgendaSourcesDialog } from "../components/AgendaSourcesDialog";
 import { ExternalUpdatesDialog } from "../components/ExternalUpdatesDialog";
@@ -253,6 +257,7 @@ export function Meetings() {
   );
   const [editing, setEditing] = useState(null);
   const [submitting, setSubmitting] = useState(null);
+  const [submitCheck, setSubmitCheck] = useState(null);
   const [archiving, setArchiving] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -295,6 +300,7 @@ export function Meetings() {
   function clearEditor() {
     pendingImages.forEach((item) => URL.revokeObjectURL(item.preview));
     setEditing(null);
+    setSubmitCheck(null);
     setFormImages([]);
     setParticipantRows([]);
     setEditorOrgId("");
@@ -428,6 +434,10 @@ export function Meetings() {
   const currentEditable = Boolean(
     current && canEdit && ["待召开", "已退回"].includes(current.status),
   );
+  const currentIsFuture = current ? meetingIsFuture(current.date) : false;
+  const currentMinuteChecks = current
+    ? transcriptSectionStatus(current.minutes, current.activityType)
+    : [];
   const imageCount = formImages.length + pendingImages.length;
   async function submitReview(e) {
     e.preventDefault();
@@ -1004,8 +1014,12 @@ ${sectionsHtml}
                         className="button primary"
                         disabled={busy || !current.minutes?.trim()}
                         onClick={() => {
-                          setSubmitting(current);
                           setError(null);
+                          if (current.missing?.length) {
+                            setSubmitCheck(current);
+                            return;
+                          }
+                          setSubmitting(current);
                         }}
                       >
                         提交审核
@@ -1100,10 +1114,31 @@ ${sectionsHtml}
                 <div className="meeting-check-note">
                   <WarningCircle size={16} />
                   <div>
-                    <strong>资料核对</strong>
+                    <strong>{currentIsFuture ? "会议尚未召开" : "资料核对"}</strong>
+                    <p>{current.missing.join("；")}。</p>
                     <p>
-                      {current.missing.join("；")}。请核对实际情况、保存记录并提取纪要。
+                      {currentIsFuture
+                        ? `会议计划在 ${current.date} 召开，实际召开日期和纪要在会前不能补录，请在会议结束后办理。`
+                        : "请逐项核对实际情况，保存原始记录后提取纪要；系统不会自动补写纪要内容。"}
                     </p>
+                    <div className="meeting-check-actions">
+                      {currentEditable && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => openEditor(current)}
+                        >
+                          编辑会议记录
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => setDocTab("记录")}
+                      >
+                        查看原始记录
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1265,6 +1300,43 @@ ${sectionsHtml}
                           </button>
                         )}
                       </div>
+                      {currentMinuteChecks.some((item) => !item.found) && (
+                        <div className="meeting-minute-check">
+                          <div className="meeting-minute-check-head">
+                            <div>
+                              <strong>纪要标签检查</strong>
+                              <span>提取只读取“标签：内容”开头的行</span>
+                            </div>
+                            {currentEditable && (
+                              <button
+                                type="button"
+                                className="text-button"
+                                onClick={() => openEditor(current)}
+                              >
+                                补录原文
+                              </button>
+                            )}
+                          </div>
+                          <div className="meeting-minute-check-tags">
+                            {currentMinuteChecks.map((item) => (
+                              <span
+                                key={item.key}
+                                className={item.found ? "found" : "missing"}
+                              >
+                                {item.found ? "已找到" : "未找到"} {item.label}
+                              </span>
+                            ))}
+                          </div>
+                          <p>
+                            {current.minutes
+                              ? `原始记录中尚未找到：${currentMinuteChecks
+                                  .filter((item) => !item.found)
+                                  .map((item) => item.label)
+                                  .join("、")}。请按实际内容补充对应标签，系统不会自动推断。`
+                              : "原始记录尚未填写，会议结束后请按实际情况登记。"}
+                          </p>
+                        </div>
+                      )}
                       {current.minutes ? (
                         <pre className="agenda-box meeting-paper">{current.minutes}</pre>
                       ) : (
@@ -1380,6 +1452,65 @@ ${sectionsHtml}
           )}
         </div>
       </div>
+      {submitCheck && (
+        <Modal
+          title="提交审核前请核对"
+          onClose={() => !busy && setSubmitCheck(null)}
+        >
+          <h3 className="review-title">{submitCheck.title}</h3>
+          {meetingIsFuture(submitCheck.date) ? (
+            <div className="meeting-preflight-future">
+              <WarningCircle size={16} />
+              <p>
+                会议计划在 {submitCheck.date} 召开，会议尚未召开，实际召开日期和纪要在会前不能补录。
+              </p>
+            </div>
+          ) : (
+            <p className="meeting-preflight-intro">
+              当前记录还有以下待补事项，补齐后才能提交审核：
+            </p>
+          )}
+          <ul className="meeting-preflight-list">
+            {submitCheck.missing.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          <div className="inline-note">
+            学习要点、讨论共识、工作要求只从原始记录的标签行提取；系统不会自动生成会议纪要、参会人员或组织结论。
+          </div>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setSubmitCheck(null)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => {
+                setSubmitCheck(null);
+                setDocTab("记录");
+              }}
+            >
+              查看原始记录
+            </button>
+            {canEdit && ["待召开", "已退回"].includes(submitCheck.status) && (
+              <button
+                type="button"
+                className="button primary"
+                onClick={() => {
+                  setSubmitCheck(null);
+                  openEditor(submitCheck);
+                }}
+              >
+                编辑会议记录
+              </button>
+            )}
+          </div>
+        </Modal>
+      )}
       {submitting && (
         <Modal
           title="提交纪要审核"

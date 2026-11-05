@@ -1,6 +1,6 @@
 """组织生活会纪要栏目单元测试（T-ORG-11：查摆问题 / 批评意见 / 整改方向与三会一课分开）。"""
 
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +10,7 @@ from app.services.meeting_service import (
     DEFAULT_MINUTES_SECTIONS,
     ORG_LIFE_MINUTES_SECTIONS,
     extract_minutes,
+    meeting_not_held,
     minutes_missing,
     minutes_sections,
     validate_minutes,
@@ -56,6 +57,15 @@ def test_default_extraction_ignores_organizational_life_labels():
     minutes = extract_minutes(transcript)
     assert [note["text"] for note in minutes["learning_points"]] == ["应当提取。"]
     assert "problems" not in minutes
+
+
+def test_future_meeting_without_held_date_cannot_be_submitted():
+    future = record(held_on=None, scheduled_on=date.today() + timedelta(days=1))
+    assert meeting_not_held(future) is True
+    held = record(held_on=date.today(), scheduled_on=date.today() + timedelta(days=1))
+    assert meeting_not_held(held) is False
+    past = record(held_on=None, scheduled_on=date.today() - timedelta(days=1))
+    assert meeting_not_held(past) is False
 
 
 def test_organizational_life_missing_names_its_own_sections():

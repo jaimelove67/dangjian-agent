@@ -1,7 +1,7 @@
 """共用纪要原文定位与人工审核规则，不调用外部模型或自动认定组织结论。"""
 
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -74,6 +74,16 @@ def validate_minutes(transcript: str, minutes: dict[str, Any]) -> None:
                 or transcript[start:end] != quote
             ):
                 raise HTTPException(422, "纪要摘录与原文位置不一致，请重新定位")
+
+
+def meeting_not_held(record: Any) -> bool:
+    """会议尚未登记实际日期，且计划日期仍在未来；不得提前送审。"""
+    scheduled_on = getattr(record, "scheduled_on", None)
+    return (
+        not getattr(record, "held_on", None)
+        and scheduled_on is not None
+        and scheduled_on > date.today()
+    )
 
 
 def minutes_missing(record: Any) -> list[str]:
