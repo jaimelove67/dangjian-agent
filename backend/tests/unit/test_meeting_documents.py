@@ -10,6 +10,7 @@ from app.services.activity_service import (
     _meeting_notice,
     _record_template,
 )
+from app.services.meeting_document_settings import apply_document_settings
 
 
 def meeting(activity_type: str, title: str = "加强党性修养") -> SimpleNamespace:
@@ -99,6 +100,24 @@ def test_notice_includes_formal_meeting_fields():
     assert "会议地点：A301" in notice
     assert "记录人：王组织员" in notice
     assert "供支部委员会研究确定" in notice
+
+
+def test_document_settings_apply_header_and_footer_without_changing_body():
+    settings = {
+        "header": "中共合成学院总支部委员会",
+        "notice_footer": "请提前十分钟到场。",
+        "record_footer": "记录人签字：________",
+    }
+    notice = apply_document_settings(
+        "会议通知（草案）：\n请准时参加",
+        settings,
+        footer="notice_footer",
+    )
+    assert notice.startswith("中共合成学院总支部委员会\n")
+    assert notice.endswith("请提前十分钟到场。")
+    assert "请准时参加" in notice
+    record = apply_document_settings("会议记录（模板）", settings, footer="record_footer")
+    assert "记录人签字" in record
 
 
 def test_topic_selection_prefers_different_meeting_types():

@@ -244,6 +244,12 @@ export const backend = {
       body: JSON.stringify(body),
       timeout: 180000,
     }),
+  meetingDocumentSettings: () => request("/meeting/document-settings"),
+  updateMeetingDocumentSettings: (body) =>
+    request("/meeting/document-settings", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   uploadMeetingImage: (id, file, expectedRevision, reason) => {
     const body = new FormData();
     body.append("file", file);

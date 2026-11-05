@@ -50,6 +50,7 @@ import { AgendaSourcesDialog } from "../components/AgendaSourcesDialog";
 import { ExternalUpdatesDialog } from "../components/ExternalUpdatesDialog";
 import { MeetingAgendaItemsDialog } from "../components/MeetingAgendaItemsDialog";
 import { MeetingDecisionsDialog } from "../components/MeetingDecisionsDialog";
+import { MeetingDocumentSettingsDialog } from "../components/MeetingDocumentSettingsDialog";
 import { TopicSuggestionsDialog } from "../components/TopicSuggestionsDialog";
 import {
   PageHeader,
@@ -228,6 +229,7 @@ export function Meetings() {
   const [rebuildOpen, setRebuildOpen] = useState(false);
   const [rebuildBusy, setRebuildBusy] = useState(false);
   const [rebuildError, setRebuildError] = useState(null);
+  const [documentSettingsOpen, setDocumentSettingsOpen] = useState(false);
   const [docTab, setDocTab] = useState("议题");
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
@@ -238,6 +240,8 @@ export function Meetings() {
   const canEdit =
     hasPermission(session, "meeting.manage") && canOperateMeetings;
   const canSubmit = canEdit && session.user.role === "branch_secretary";
+  const canConfigureDocuments =
+    IS_LIVE && session.user.role === "school_admin";
   const canManageExternal =
     IS_LIVE &&
     hasPermission(session, "knowledge.manage") &&
@@ -670,8 +674,20 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
         title="三会一课"
         subtitle="落实组织生活制度，提升支部工作质效"
         action={
-          canManageExternal || canSuggestTopics || (IS_LIVE && canEdit) ? (
+          canManageExternal ||
+          canSuggestTopics ||
+          canConfigureDocuments ||
+          (IS_LIVE && canEdit) ? (
             <div className="page-header-actions">
+              {canConfigureDocuments && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setDocumentSettingsOpen(true)}
+                >
+                  文书设置
+                </button>
+              )}
               {IS_LIVE && canEdit && (
                 <button
                   type="button"
@@ -1405,6 +1421,15 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
             setDecisionsEditor(null);
             setDocTab("决议");
             notify("决议与表决信息已保存");
+          }}
+        />
+      )}
+      {documentSettingsOpen && (
+        <MeetingDocumentSettingsDialog
+          onClose={() => setDocumentSettingsOpen(false)}
+          onSaved={() => {
+            setDocumentSettingsOpen(false);
+            notify("学校会议文书设置已保存");
           }}
         />
       )}

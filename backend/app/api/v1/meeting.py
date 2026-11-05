@@ -24,7 +24,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.audit import audit_operation
-from app.core.config import settings
+from app.core.config import settings, tenant_config
 from app.core.security import Permission
 from app.db.session import get_db
 from app.deps import require_permissions, require_roles
@@ -37,6 +37,7 @@ from app.schemas.meeting import (
     AgendaItemsRequest,
     DecisionsRequest,
     ImageMutation,
+    MeetingDocumentSettings,
     RebuildDocumentsRequest,
     ReviewRequest,
     RevisionRequest,
@@ -48,6 +49,10 @@ from app.schemas.meeting import (
 )
 from app.services.activity_service import ACTIVITY_TYPES, ActivityService
 from app.services.meeting_document_export import build_meeting_docx
+from app.services.meeting_document_settings import (
+    get_meeting_document_settings,
+    save_meeting_document_settings,
+)
 
 router = APIRouter()
 _query = require_permissions(Permission.MEETING_QUERY)
@@ -57,6 +62,7 @@ _archive = require_permissions(Permission.MEETING_MANAGE, Permission.MEETING_ARC
 # 支部会议由支部书记主持、组织员协助登记；院系和学校管理员只审核、督办、归档。
 _operator = require_roles(UserRole.BRANCH_SECRETARY, UserRole.ORGANIZER)
 _secretary = require_roles(UserRole.BRANCH_SECRETARY)
+_school_admin = require_roles(UserRole.SCHOOL_ADMIN)
 
 
 async def activity_service(
@@ -83,11 +89,7 @@ async def respond(
         resource_type=resource_type,
         resource_id=resource_id,
         data_level="sensitive",
-        new_value={
-            key: data[key]
-            for key in ("revision", "total", "year", "count")
-            if key in data
-        },
+        new_value={key: data[key] for key in ("revision", "total", "year", "count") if key in data},
     )
     await service.db.commit()
     return APIResponse(data=data, trace_id=getattr(request.state, "trace_id", None))
@@ -120,12 +122,59 @@ async def type_options(
         request,
         service,
         {
-            "types": [
-                {"value": key, "label": label} for key, label in ACTIVITY_TYPES.items()
-            ],
+            "types": [{"value": key, "label": label} for key, label in ACTIVITY_TYPES.items()],
             "requirements": None,
         },
         "read_type_options",
+    )
+
+
+@router.get(
+    "/meeting/document-settings",
+    response_model=APIResponse[dict],
+)
+async def read_document_settings(
+    request: Request,
+    user: User = Depends(_school_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """读取本校会议文书抬头和说明设置。"""
+    await tenant_config.load(db, str(user.tenant_id))
+    return APIResponse(
+        data=get_meeting_document_settings(str(user.tenant_id)),
+        trace_id=getattr(request.state, "trace_id", None),
+    )
+
+
+@router.put(
+    "/meeting/document-settings",
+    response_model=APIResponse[dict],
+)
+async def update_document_settings(
+    body: MeetingDocumentSettings,
+    request: Request,
+    user: User = Depends(_school_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """保存本校会议文书设置；只影响之后生成的草稿和导出。"""
+    await tenant_config.load(db, str(user.tenant_id))
+    old = get_meeting_document_settings(str(user.tenant_id))
+    data = await save_meeting_document_settings(db, str(user.tenant_id), body.model_dump())
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="update_meeting_document_settings",
+        resource_type="tenant_config",
+        resource_id=str(user.tenant_id),
+        data_level="internal",
+        old_value=old,
+        new_value=data,
+    )
+    await db.commit()
+    return APIResponse(
+        data=data,
+        trace_id=getattr(request.state, "trace_id", None),
     )
 
 
@@ -384,9 +433,7 @@ async def update_decisions(
     )
 
 
-@router.get(
-    "/meeting/records/{record_id}/recommendations", response_model=APIResponse[dict]
-)
+@router.get("/meeting/records/{record_id}/recommendations", response_model=APIResponse[dict])
 async def recommendations(
     record_id: str,
     request: Request,
@@ -489,9 +536,7 @@ async def external_suggestions(
 ) -> APIResponse[dict]:
     """列出可用于当前会议的最新外部资料；普通办理人只看已采用资料。"""
     items = await service.external_suggestions(record_id)
-    return APIResponse(
-        data={"items": items}, trace_id=getattr(request.state, "trace_id", None)
-    )
+    return APIResponse(data={"items": items}, trace_id=getattr(request.state, "trace_id", None))
 
 
 @router.post(

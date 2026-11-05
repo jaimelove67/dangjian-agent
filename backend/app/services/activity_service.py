@@ -51,6 +51,10 @@ from app.services.external_update_service import (
     review_update,
 )
 from app.services.file_store import read_original, save_original
+from app.services.meeting_document_settings import (
+    apply_document_settings,
+    get_meeting_document_settings,
+)
 from app.services.meeting_images import MEETING_IMAGE_LIMIT, inspect_meeting_image
 from app.services.meeting_service import (
     ORG_LIFE_ACTIVITY_TYPE,
@@ -699,6 +703,7 @@ class ActivityService:
             .all()
         )
         rebuilt: list[str] = []
+        document_settings = get_meeting_document_settings(self.tenant_id)
         for record in records:
             sources = await selected_sources(
                 self.db,
@@ -710,13 +715,17 @@ class ActivityService:
             context = dict(record.context or {})
             if body.mode == "full":
                 agenda, agenda_items = _agenda_text(record, sources)
-                context["agenda"] = agenda
+                context["agenda"] = apply_document_settings(agenda, document_settings)
                 context["agenda_items"] = agenda_items
-                context["notice"] = _meeting_notice(record)
-            context["record_template"] = _record_template(
-                record,
-                sources,
-                context.get("agenda_items"),
+                context["notice"] = apply_document_settings(
+                    _meeting_notice(record),
+                    document_settings,
+                    footer="notice_footer",
+                )
+            context["record_template"] = apply_document_settings(
+                _record_template(record, sources, context.get("agenda_items")),
+                document_settings,
+                footer="record_footer",
             )
             record.context = context
             reset_review(record)
@@ -1102,9 +1111,17 @@ class ActivityService:
             record.source_doc_ids,
             on=record.held_on or record.scheduled_on or date.today(),
         )
+        document_settings = get_meeting_document_settings(self.tenant_id)
         agenda, agenda_items = _agenda_text(record, sources)
-        notice = _meeting_notice(record)
-        record_template = _record_template(record, sources)
+        agenda = apply_document_settings(agenda, document_settings)
+        notice = apply_document_settings(
+            _meeting_notice(record), document_settings, footer="notice_footer"
+        )
+        record_template = apply_document_settings(
+            _record_template(record, sources),
+            document_settings,
+            footer="record_footer",
+        )
         template_version = f"{record.activity_type}-formal-1"
         record.sources = sources
         context = dict(record.context or {})

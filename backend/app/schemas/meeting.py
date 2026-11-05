@@ -129,6 +129,12 @@ class DecisionsRequest(RevisionRequest):
     decisions: list[DecisionInput] = Field(default_factory=list, max_length=30)
 
 
+class MeetingDocumentSettings(MeetingInput):
+    header: str = Field(default="", max_length=200)
+    notice_footer: str = Field(default="", max_length=1000)
+    record_footer: str = Field(default="", max_length=1000)
+
+
 class RebuildDocumentsRequest(MeetingInput):
     org_unit_id: str | None = Field(default=None, max_length=36)
     ids: list[str] = Field(default_factory=list, max_length=200)
