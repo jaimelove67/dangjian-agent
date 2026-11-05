@@ -703,8 +703,10 @@ class ActivityService:
             .all()
         )
         rebuilt: list[str] = []
-        document_settings = get_meeting_document_settings(self.tenant_id)
         for record in records:
+            document_settings = await get_meeting_document_settings(
+                self.db, self.tenant_id, record.org_unit_id
+            )
             sources = await selected_sources(
                 self.db,
                 self.user,
@@ -1111,7 +1113,9 @@ class ActivityService:
             record.source_doc_ids,
             on=record.held_on or record.scheduled_on or date.today(),
         )
-        document_settings = get_meeting_document_settings(self.tenant_id)
+        document_settings = await get_meeting_document_settings(
+            self.db, self.tenant_id, record.org_unit_id
+        )
         agenda, agenda_items = _agenda_text(record, sources)
         agenda = apply_document_settings(agenda, document_settings)
         notice = apply_document_settings(

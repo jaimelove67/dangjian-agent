@@ -130,6 +130,7 @@ class DecisionsRequest(RevisionRequest):
 
 
 class MeetingDocumentSettings(MeetingInput):
+    org_unit_id: str | None = Field(default=None, max_length=36)
     header: str = Field(default="", max_length=200)
     notice_footer: str = Field(default="", max_length=1000)
     record_footer: str = Field(default="", max_length=1000)

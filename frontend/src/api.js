@@ -244,7 +244,11 @@ export const backend = {
       body: JSON.stringify(body),
       timeout: 180000,
     }),
-  meetingDocumentSettings: () => request("/meeting/document-settings"),
+  meetingDocumentSettings: (orgUnitId = "") =>
+    request(
+      "/meeting/document-settings" +
+        (orgUnitId ? `?org_unit_id=${encodeURIComponent(orgUnitId)}` : ""),
+    ),
   updateMeetingDocumentSettings: (body) =>
     request("/meeting/document-settings", {
       method: "PUT",

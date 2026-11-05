@@ -1427,6 +1427,7 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
       )}
       {documentSettingsOpen && (
         <MeetingDocumentSettingsDialog
+          orgs={orgs}
           onClose={() => setDocumentSettingsOpen(false)}
           onSaved={() => {
             setDocumentSettingsOpen(false);

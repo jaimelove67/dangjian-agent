@@ -2,32 +2,32 @@ import { useEffect, useState } from "react";
 import { backend } from "../api";
 import { ErrorBox, Field, Loading, Modal } from "../components";
 
-export function MeetingDocumentSettingsDialog({ onClose, onSaved }) {
+export function MeetingDocumentSettingsDialog({ orgs = [], onClose, onSaved }) {
   const [values, setValues] = useState({
     header: "",
     notice_footer: "",
     record_footer: "",
   });
+  const [scopeOrgId, setScopeOrgId] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
+  async function load(scope = scopeOrgId) {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await backend.meetingDocumentSettings(scope);
+      setValues(data || {});
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    let active = true;
-    backend
-      .meetingDocumentSettings()
-      .then((data) => {
-        if (active) setValues(data || {});
-      })
-      .catch((failure) => {
-        if (active) setError(failure);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
+    load("");
   }, []);
 
   function update(key, value) {
@@ -38,7 +38,10 @@ export function MeetingDocumentSettingsDialog({ onClose, onSaved }) {
     setBusy(true);
     setError(null);
     try {
-      const data = await backend.updateMeetingDocumentSettings(values);
+      const data = await backend.updateMeetingDocumentSettings({
+        ...values,
+        org_unit_id: scopeOrgId || undefined,
+      });
       setValues(data);
       onSaved(data);
     } catch (failure) {
@@ -56,7 +59,7 @@ export function MeetingDocumentSettingsDialog({ onClose, onSaved }) {
       onClose={() => !busy && onClose()}
     >
       <p className="inline-note">
-        这里的抬头和说明只影响之后新生成的会议文书；已经审核或归档的记录不会被自动改写。需要应用到历史草稿时，可使用“批量重建草稿文书”。
+        这里可以维护学校默认或院系、支部覆盖的抬头和说明；未单独设置的组织继承上级。设置只影响之后新生成的会议文书，已经审核或归档的记录不会被自动改写；历史草稿可使用“批量重建草稿文书”。
       </p>
       {error && <ErrorBox error={error} />}
       {loading ? (
@@ -64,6 +67,24 @@ export function MeetingDocumentSettingsDialog({ onClose, onSaved }) {
       ) : (
         <>
           <div className="form-grid">
+            <Field label="适用范围" full>
+              <select
+                value={scopeOrgId}
+                disabled={busy}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setScopeOrgId(next);
+                  load(next);
+                }}
+              >
+                <option value="">学校默认</option>
+                {orgs.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="会议文书抬头" full>
               <input
                 value={values.header || ""}

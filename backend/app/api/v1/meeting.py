@@ -53,6 +53,7 @@ from app.services.meeting_document_settings import (
     get_meeting_document_settings,
     save_meeting_document_settings,
 )
+from app.services.org_scope import accessible_org_units
 
 router = APIRouter()
 _query = require_permissions(Permission.MEETING_QUERY)
@@ -129,19 +130,29 @@ async def type_options(
     )
 
 
+async def _validate_document_org(db: AsyncSession, user: User, org_unit_id: str | None) -> None:
+    if not org_unit_id:
+        return
+    org_ids = {str(org.id) for org in await accessible_org_units(db, user)}
+    if org_unit_id not in org_ids:
+        raise HTTPException(403, "无权维护该组织的会议文书设置")
+
+
 @router.get(
     "/meeting/document-settings",
     response_model=APIResponse[dict],
 )
 async def read_document_settings(
     request: Request,
+    org_unit_id: str | None = Query(None, max_length=36),
     user: User = Depends(_school_admin),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
-    """读取本校会议文书抬头和说明设置。"""
+    """读取学校默认或指定组织的会议文书设置。"""
+    await _validate_document_org(db, user, org_unit_id)
     await tenant_config.load(db, str(user.tenant_id))
     return APIResponse(
-        data=get_meeting_document_settings(str(user.tenant_id)),
+        data=await get_meeting_document_settings(db, str(user.tenant_id), org_unit_id),
         trace_id=getattr(request.state, "trace_id", None),
     )
 
@@ -156,17 +167,20 @@ async def update_document_settings(
     user: User = Depends(_school_admin),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
-    """保存本校会议文书设置；只影响之后生成的草稿和导出。"""
+    """保存学校默认或指定组织的会议文书设置。"""
+    await _validate_document_org(db, user, body.org_unit_id)
     await tenant_config.load(db, str(user.tenant_id))
-    old = get_meeting_document_settings(str(user.tenant_id))
-    data = await save_meeting_document_settings(db, str(user.tenant_id), body.model_dump())
+    old = await get_meeting_document_settings(db, str(user.tenant_id), body.org_unit_id)
+    data = await save_meeting_document_settings(
+        db, str(user.tenant_id), body.model_dump(), body.org_unit_id
+    )
     await audit_operation(
         db,
         request,
         user,
         action="update_meeting_document_settings",
-        resource_type="tenant_config",
-        resource_id=str(user.tenant_id),
+        resource_type="org_unit" if body.org_unit_id else "tenant_config",
+        resource_id=body.org_unit_id or str(user.tenant_id),
         data_level="internal",
         old_value=old,
         new_value=data,
