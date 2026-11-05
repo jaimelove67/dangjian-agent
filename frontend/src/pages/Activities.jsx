@@ -47,7 +47,12 @@ import {
   visibleDemoCourses,
 } from "../demo-courses";
 import { courses, DEPARTMENTS, organizations } from "../data";
-import { meetingPayload, meetingParticipants } from "../contracts";
+import { meetingPayload } from "../contracts";
+import {
+  participantSummary,
+  validateParticipantRows,
+} from "../meeting-participants";
+import { MeetingParticipantsEditor } from "../components/MeetingParticipantsEditor";
 import { AgendaSourcesDialog } from "../components/AgendaSourcesDialog";
 import { ExternalUpdatesDialog } from "../components/ExternalUpdatesDialog";
 import { MeetingAgendaItemsDialog } from "../components/MeetingAgendaItemsDialog";
@@ -252,6 +257,9 @@ export function Meetings() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [formImages, setFormImages] = useState([]);
+  const [participantRows, setParticipantRows] = useState([]);
+  const [editorOrgId, setEditorOrgId] = useState("");
+  const [editorType, setEditorType] = useState("支部大会");
   const [pendingImages, setPendingImages] = useState([]);
   const [removedImages, setRemovedImages] = useState([]);
   const [imageError, setImageError] = useState("");
@@ -288,6 +296,9 @@ export function Meetings() {
     pendingImages.forEach((item) => URL.revokeObjectURL(item.preview));
     setEditing(null);
     setFormImages([]);
+    setParticipantRows([]);
+    setEditorOrgId("");
+    setEditorType("支部大会");
     setPendingImages([]);
     setRemovedImages([]);
     setImageError("");
@@ -300,6 +311,23 @@ export function Meetings() {
   function openEditor(record = {}) {
     setEditing(record);
     setFormImages(Array.isArray(record.images) ? record.images : []);
+    setParticipantRows(
+      (Array.isArray(record.participants) ? record.participants : []).map(
+        (person) => ({
+          participant_id: String(person.participant_id || ""),
+          name: person.name || "",
+          stage: person.stage || "",
+          org_name: person.org_name || "",
+          attended:
+            person.attended === true || person.attended === false
+              ? person.attended
+              : null,
+          manual: Boolean(person.manual),
+        }),
+      ),
+    );
+    setEditorOrgId(record.orgId || orgs[0]?.id || "");
+    setEditorType(TYPE_MAP[record.type] ? record.type : "支部大会");
     setPendingImages([]);
     setRemovedImages([]);
     setImageError("");
@@ -470,28 +498,30 @@ export function Meetings() {
         throw new Error(
           "当前账号没有可创建会议的组织，请联系管理员核对授权范围。",
         );
+      const title = String(form.get("title") || "").trim();
+      const host = String(form.get("host") || "").trim();
+      if (!title || !host)
+        throw new Error("会议主题和主持人不能为空。");
+      const participantPayload = validateParticipantRows(participantRows);
+      const participantsSummary = participantSummary(participantRows);
       const values = {
-        title: form.get("title").trim(),
+        title,
         date: form.get("date"),
         time: form.get("time"),
         type: form.get("type") || editing.type,
         activityType: TYPE_MAP[form.get("type") || editing.type],
-        host: form.get("host").trim(),
+        host,
         location: String(form.get("location") || "未登记").trim(),
         recorder: String(form.get("recorder") || "").trim(),
         orgId: chosen.id,
         organization: chosen.name,
         agenda: form.get("agenda").trim(),
         minutes: form.get("minutes")?.trim() || "",
-        attended: Number(form.get("attended") || 0),
-        total: Number(form.get("total") || 0),
-        ...(IS_LIVE ? {
-          heldOn: form.get("held_on") || undefined,
-          participants: meetingParticipants(String(form.get("participants") || "")),
-        } : {}),
+        attended: participantsSummary.attended,
+        total: participantsSummary.total,
+        participants: participantPayload,
+        ...(IS_LIVE ? { heldOn: form.get("held_on") || undefined } : {}),
       };
-      if (!values.title || !values.host)
-        throw new Error("会议主题和主持人不能为空。");
       if (values.attended > values.total)
         throw new Error("实到人数不能大于应到人数。");
       let record = {
@@ -1410,7 +1440,7 @@ ${sectionsHtml}
             <div className="form-grid">
               {IS_LIVE && (
                 <div className="inline-note field full">
-                  请按实际情况登记人员编号、姓名和出勤。保存原始会议记录后，使用“提取纪要”核对送审内容。
+                  请从支部名册带入参会人员并逐人确认实际出勤；名册外人员可手动添加。保存原始会议记录后，使用“提取纪要”核对送审内容。
                 </div>
               )}
               <Field label="会议主题" required full>
@@ -1426,7 +1456,8 @@ ${sectionsHtml}
                 <select
                   name="type"
                   disabled={IS_LIVE && !!editing.id}
-                  defaultValue={editing.type || "支部大会"}
+                  value={editorType}
+                  onChange={(event) => setEditorType(event.target.value)}
                 >
                   {Object.keys(TYPE_MAP).map((t) => (
                     <option key={t}>{t}</option>
@@ -1436,8 +1467,12 @@ ${sectionsHtml}
               <Field label="所属组织" required>
                 <select
                   name="orgId"
-                  defaultValue={editing.orgId}
+                  value={editorOrgId}
                   disabled={IS_LIVE && !!editing.id}
+                  onChange={(event) => {
+                    setEditorOrgId(event.target.value);
+                    if (!editing.id) setParticipantRows([]);
+                  }}
                 >
                   {orgs.map((o) => (
                     <option key={o.id} value={o.id}>
@@ -1490,26 +1525,19 @@ ${sectionsHtml}
                   required
                 />
               </Field>
-              <Field label="应到人数">
-                <input
-                  name="total"
-                  disabled={IS_LIVE}
-                  type="number"
-                  min="0"
-                  max="10000"
-                  defaultValue={editing.total || 0}
+              <div className="field full">
+                <span>参会人员</span>
+                <MeetingParticipantsEditor
+                  value={participantRows}
+                  onChange={setParticipantRows}
+                  orgId={editorOrgId}
+                  activityType={
+                    TYPE_MAP[editorType] || "branch_member_meeting"
+                  }
+                  demoMembers={data.members || []}
+                  disabled={busy}
                 />
-              </Field>
-              <Field label="实到人数">
-                <input
-                  name="attended"
-                  disabled={IS_LIVE}
-                  type="number"
-                  min="0"
-                  max="10000"
-                  defaultValue={editing.attended || 0}
-                />
-              </Field>
+              </div>
               <Field label="会议议题" full>
                 <textarea
                   name="agenda"
@@ -1519,11 +1547,6 @@ ${sectionsHtml}
                   placeholder="逐项填写会议议题；学习资料请在下方单独登记"
                 />
               </Field>
-              {IS_LIVE && <Field label="实名参会记录（每行：人员编号 | 姓名 | 出席或缺席）" full>
-                <textarea name="participants" rows={4} maxLength={100000}
-                  defaultValue={(editing.participants || []).map(p => `${p.participant_id} | ${p.name} | ${p.attended ? "出席" : "缺席"}`).join("\n")}
-                  placeholder="填写真实参会名单；未确定时可留空，送审前须补齐。" />
-              </Field>}
               <Field label="会议记录" full>
                 <textarea
                   name="minutes"
