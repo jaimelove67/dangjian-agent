@@ -26,6 +26,7 @@ from app.schemas.meeting import (
     AgendaFromUpdates,
     AgendaItemsRequest,
     DecisionsRequest,
+    RebuildDocumentsRequest,
     TopicFeedbackRequest,
     TopicSuggestionRequest,
     ImageMutation,
@@ -62,7 +63,11 @@ from app.services.meeting_service import (
     validate_minutes,
 )
 from app.services.org_scope import visible_org_units
-from app.services.study_materials import recommend_sources, selected_sources, visible_sources
+from app.services.study_materials import (
+    recommend_sources,
+    selected_sources,
+    visible_sources,
+)
 from app.utils.snapshot import record_snapshot as row_data
 
 ORGANIZATION_LIFE_NOTICE = "供支部委员会研究确定，不作为正式纪要"
@@ -184,7 +189,9 @@ def _learning_item(sources: list[dict[str, Any]]) -> str:
     return f"传达学习{first}等{len(sources)}项资料"
 
 
-def _agenda_items(record: MeetingRecord, sources: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _agenda_items(
+    record: MeetingRecord, sources: list[dict[str, Any]]
+) -> list[dict[str, str]]:
     """按会议类型生成议题草案；未知决议留给人工补充，不自动编造。"""
     topic = record.title.strip()
     if record.activity_type == "party_lecture":
@@ -265,7 +272,9 @@ def _agenda_text(
             f"{ORGANIZATION_LIFE_NOTICE}",
             items,
         )
-    lines = "\n".join(f"{index}. {item['title']}" for index, item in enumerate(items, 1))
+    lines = "\n".join(
+        f"{index}. {item['title']}" for index, item in enumerate(items, 1)
+    )
     return (
         f"会议议题（草案）：\n会议主题：{record.title}\n{lines}\n"
         "学习资料：见会议资料清单。\n"
@@ -276,7 +285,11 @@ def _agenda_text(
 
 def _agenda_text_from_items(record: MeetingRecord, items: list[dict[str, Any]]) -> str:
     """按人工编辑后的议题条目生成议题单正文。"""
-    heading = "党课安排（草案）" if record.activity_type == "party_lecture" else "会议议题（草案）"
+    heading = (
+        "党课安排（草案）"
+        if record.activity_type == "party_lecture"
+        else "会议议题（草案）"
+    )
     if not items:
         body = "（尚未添加议题，请人工补充）"
     else:
@@ -343,7 +356,9 @@ def _record_template(
     participants = record.participants or []
     expected = len(participants) or "待补"
     attended = (
-        sum(1 for person in participants if person.get("attended")) if participants else "待补"
+        sum(1 for person in participants if person.get("attended"))
+        if participants
+        else "待补"
     )
     absent = (
         "、".join(
@@ -361,13 +376,17 @@ def _record_template(
             "讨论情况：\n（请记录党员讨论发言和主要认识）"
         )
     elif record.activity_type == ORG_LIFE_ACTIVITY_TYPE:
-        topic_block = "\n".join(f"{index}. {item['title']}" for index, item in enumerate(items, 1))
+        topic_block = "\n".join(
+            f"{index}. {item['title']}" for index, item in enumerate(items, 1)
+        )
         body = (
             "会议内容：\n（请记录通报、查摆问题、批评和自我批评情况）\n\n"
             "整改方向：\n（请根据会议实际记录整改事项、责任人和完成时限）"
         )
     else:
-        topic_block = "\n".join(f"{index}. {item['title']}" for index, item in enumerate(items, 1))
+        topic_block = "\n".join(
+            f"{index}. {item['title']}" for index, item in enumerate(items, 1)
+        )
         body = (
             "会议内容：\n（请按议题逐项记录实际讨论、发言和形成的意见）\n\n"
             "会议决议：\n（仅对审议、表决事项填写；学习类议题不填写）"
@@ -439,7 +458,9 @@ class ActivityService:
         return record
 
     async def task(self, task_id: str, *, lock: bool = False) -> MeetingTask:
-        stmt = select(MeetingTask).where(*self._scope(MeetingTask), MeetingTask.id == task_id)
+        stmt = select(MeetingTask).where(
+            *self._scope(MeetingTask), MeetingTask.id == task_id
+        )
         if lock:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
         task = (await self.db.execute(stmt)).scalar_one_or_none()
@@ -479,7 +500,9 @@ class ActivityService:
             )
             for snapshot in snapshots:
                 sources.extend(snapshot.get("sources", []))
-                sources.extend((snapshot.get("context") or {}).get("content_sources", []))
+                sources.extend(
+                    (snapshot.get("context") or {}).get("content_sources", [])
+                )
         distinct = {}
         for source in sources:
             distinct[(source.get("doc_id"), source.get("content_revision"))] = source
@@ -560,7 +583,11 @@ class ActivityService:
         if body.org_unit_id not in self.org_ids:
             raise HTTPException(403, "请选择权限范围内有效的组织")
         sources = await selected_sources(
-            self.db, self.user, body.org_unit_id, body.source_doc_ids, on=body.scheduled_on
+            self.db,
+            self.user,
+            body.org_unit_id,
+            body.source_doc_ids,
+            on=body.scheduled_on,
         )
         record = MeetingRecord(
             tenant_id=self.tenant_id,
@@ -605,7 +632,9 @@ class ActivityService:
             record.participants = [person.model_dump() for person in body.participants]
         content_changed = body.transcript is not None or body.minutes is not None
         if content_changed:
-            transcript = body.transcript if body.transcript is not None else record.transcript
+            transcript = (
+                body.transcript if body.transcript is not None else record.transcript
+            )
             minutes = body.minutes.model_dump() if body.minutes is not None else {}
             validate_minutes(transcript, minutes)
             record.transcript, record.minutes = transcript, minutes
@@ -617,7 +646,9 @@ class ActivityService:
                 body.source_doc_ids,
                 on=body.held_on or record.scheduled_on or date.today(),
             )
-            record.sources, record.source_doc_ids = chosen, list(dict.fromkeys(body.source_doc_ids))
+            record.sources, record.source_doc_ids = chosen, list(
+                dict.fromkeys(body.source_doc_ids)
+            )
         context = dict(record.context or {})
         context["content_sources"] = derived_sources + list(record.sources or [])
         if body.agenda is not None:
@@ -635,7 +666,9 @@ class ActivityService:
         await self.save_revision(record, "meeting", "revise", body.reason)
         return record
 
-    async def update_agenda_items(self, record_id: str, body: AgendaItemsRequest) -> MeetingRecord:
+    async def update_agenda_items(
+        self, record_id: str, body: AgendaItemsRequest
+    ) -> MeetingRecord:
         """保存人工编辑的议题条目，并同步生成议题单正文。"""
         record = await self.record(record_id, lock=True)
         self.check_revision(record, body.expected_revision)
@@ -645,13 +678,17 @@ class ActivityService:
         context = dict(record.context or {})
         context["agenda_items"] = items
         context["agenda"] = _agenda_text_from_items(record, items)
-        context["record_template"] = _record_template(record, record.sources or [], items)
+        context["record_template"] = _record_template(
+            record, record.sources or [], items
+        )
         record.context = context
         reset_review(record)
         await self.save_revision(record, "meeting", "update_agenda_items", body.reason)
         return record
 
-    async def update_decisions(self, record_id: str, body: DecisionsRequest) -> MeetingRecord:
+    async def update_decisions(
+        self, record_id: str, body: DecisionsRequest
+    ) -> MeetingRecord:
         """保存人工登记的决议和表决结果，不根据文本自动推断。"""
         record = await self.record(record_id, lock=True)
         self.check_revision(record, body.expected_revision)
@@ -664,9 +701,62 @@ class ActivityService:
         await self.save_revision(record, "meeting", "update_decisions", body.reason)
         return record
 
+    async def rebuild_documents(self, body: RebuildDocumentsRequest) -> dict[str, Any]:
+        """批量重建草稿会议文书；不触碰已提交、已审核或已归档记录。"""
+        if body.org_unit_id and body.org_unit_id not in self.org_ids:
+            raise HTTPException(403, "所选组织不在当前账号授权范围内")
+        stmt = select(MeetingRecord).where(
+            *self._scope(MeetingRecord),
+            MeetingRecord.activity_type.in_(list(ACTIVITY_TYPES)),
+            MeetingRecord.archived_at.is_(None),
+            MeetingRecord.review_status == "draft",
+        )
+        if body.org_unit_id:
+            stmt = stmt.where(MeetingRecord.org_unit_id == body.org_unit_id)
+        records = (
+            (
+                await self.db.execute(
+                    stmt.order_by(MeetingRecord.scheduled_on.desc(), MeetingRecord.id)
+                    .limit(200)
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        rebuilt: list[str] = []
+        for record in records:
+            sources = await selected_sources(
+                self.db,
+                self.user,
+                record.org_unit_id,
+                record.source_doc_ids,
+                on=record.held_on or record.scheduled_on or date.today(),
+            )
+            context = dict(record.context or {})
+            if body.mode == "full":
+                agenda, agenda_items = _agenda_text(record, sources)
+                context["agenda"] = agenda
+                context["agenda_items"] = agenda_items
+                context["notice"] = _meeting_notice(record)
+            context["record_template"] = _record_template(
+                record,
+                sources,
+                context.get("agenda_items"),
+            )
+            record.context = context
+            reset_review(record)
+            await self.save_revision(
+                record, "meeting", "rebuild_documents", body.reason
+            )
+            rebuilt.append(str(record.id))
+        return {"count": len(rebuilt), "mode": body.mode, "ids": rebuilt}
+
     # ==================== 现场图片 ====================
 
-    async def _editable_image_record(self, record_id: str, expected_revision: int) -> MeetingRecord:
+    async def _editable_image_record(
+        self, record_id: str, expected_revision: int
+    ) -> MeetingRecord:
         record = await self.record(record_id, lock=True)
         self.check_revision(record, expected_revision)
         if record.archived_at:
@@ -684,9 +774,13 @@ class ActivityService:
         """保存现场图片元数据与加密原件；不改变会议正文，但会使旧审核失效。"""
         record = await self._editable_image_record(record_id, body.expected_revision)
         context = dict(record.context or {})
-        images = [item for item in (context.get("images") or []) if isinstance(item, dict)]
+        images = [
+            item for item in (context.get("images") or []) if isinstance(item, dict)
+        ]
         if len(images) >= MEETING_IMAGE_LIMIT:
-            raise HTTPException(409, f"每场会议最多上传 {MEETING_IMAGE_LIMIT} 张现场图片")
+            raise HTTPException(
+                409, f"每场会议最多上传 {MEETING_IMAGE_LIMIT} 张现场图片"
+            )
         content_type = inspect_meeting_image(content, file_name)
         image_id = str(uuid.uuid4())
         stored = await asyncio.to_thread(
@@ -713,7 +807,9 @@ class ActivityService:
         """移除记录中的图片元数据；已追加版本保留可追溯的旧依据。"""
         record = await self._editable_image_record(record_id, body.expected_revision)
         context = dict(record.context or {})
-        images = [item for item in (context.get("images") or []) if isinstance(item, dict)]
+        images = [
+            item for item in (context.get("images") or []) if isinstance(item, dict)
+        ]
         remaining = [item for item in images if str(item.get("id")) != image_id]
         if len(remaining) == len(images):
             raise HTTPException(404, "现场图片不存在或已被移除")
@@ -723,7 +819,9 @@ class ActivityService:
         await self.save_revision(record, "meeting", "remove_image", body.reason)
         return record
 
-    async def read_image(self, record_id: str, image_id: str) -> tuple[bytes, dict[str, Any]]:
+    async def read_image(
+        self, record_id: str, image_id: str
+    ) -> tuple[bytes, dict[str, Any]]:
         record = await self.record(record_id)
         await self.require_visible_content(record)
         image = next(
@@ -747,7 +845,9 @@ class ActivityService:
             raise HTTPException(404, "现场图片原件不存在，请联系管理员核对存储")
         return content, image
 
-    async def recommendations(self, record_id: str, query: str | None = None) -> dict[str, Any]:
+    async def recommendations(
+        self, record_id: str, query: str | None = None
+    ) -> dict[str, Any]:
         """从授权知识库推荐议题材料，不补写虚构文件。"""
         record = await self.record(record_id)
         await self.require_visible_content(record)
@@ -819,7 +919,9 @@ class ActivityService:
                     ExternalUpdate.is_deleted.is_(False),
                 )
             )
-            if last_fetched is None or last_fetched < datetime.utcnow() - timedelta(hours=24):
+            if last_fetched is None or last_fetched < datetime.utcnow() - timedelta(
+                hours=24
+            ):
                 refresh = await fetch_updates(self.db, self.user)
 
         query = select(ExternalUpdate).where(
@@ -847,7 +949,9 @@ class ActivityService:
             MeetingRecord.scheduled_on >= date.today() - timedelta(days=60),
         )
         if body.org_unit_id:
-            recent_query = recent_query.where(MeetingRecord.org_unit_id == body.org_unit_id)
+            recent_query = recent_query.where(
+                MeetingRecord.org_unit_id == body.org_unit_id
+            )
         recent_titles = set((await self.db.execute(recent_query)).scalars().all())
         # 最近已开过的会议按主题归并，避免同一方向仅换一个标题就重复推荐。
         recent_topics = {_topic_for(title)[0] for title in recent_titles if title}
@@ -873,7 +977,9 @@ class ActivityService:
                 continue
             if not any(word in row.title for word in TOPIC_RELEVANT):
                 continue
-            if focus_topics and not matches_focus(f"{row.title} {row.summary or ''}", focus_topics):
+            if focus_topics and not matches_focus(
+                f"{row.title} {row.summary or ''}", focus_topics
+            ):
                 continue
             topic, activity_type = _topic_for(row.title)
             if topic in recent_titles or topic in recent_topics:
@@ -914,7 +1020,9 @@ class ActivityService:
 
         topics = _balanced_topics(list(groups.values()))
         for topic in topics:
-            source_names = list(dict.fromkeys(source["source_name"] for source in topic["sources"]))
+            source_names = list(
+                dict.fromkeys(source["source_name"] for source in topic["sources"])
+            )
             names = "、".join(source_names)
             focus_note = "，并结合本校关注方向" if focus_topics else ""
             topic["reason"] = (
@@ -923,7 +1031,9 @@ class ActivityService:
             latest = topic["sources"][0]["published_at"] if topic["sources"] else None
             if latest:
                 days = max(0, (date.today() - latest.date()).days)
-                topic["urgency"] = "本周" if days <= 7 else "近30天" if days <= 30 else "近期"
+                topic["urgency"] = (
+                    "本周" if days <= 7 else "近30天" if days <= 30 else "近期"
+                )
             topic["sources"].sort(
                 key=lambda item: item["published_at"] or datetime.min,
                 reverse=True,
@@ -1008,7 +1118,9 @@ class ActivityService:
             for row in rows:
                 if row.status == "approved":
                     if not row.knowledge_doc_id:
-                        raise HTTPException(409, "已采用资料缺少知识库记录，请刷新后重试")
+                        raise HTTPException(
+                            409, "已采用资料缺少知识库记录，请刷新后重试"
+                        )
                     selected_docs.append(row.knowledge_doc_id)
                 elif row.status == "pending":
                     if not has_permission(self.user.role, Permission.KNOWLEDGE_MANAGE):
@@ -1025,11 +1137,15 @@ class ActivityService:
                     selected_docs.append(doc.doc_id)
                 else:
                     raise HTTPException(422, "不能使用已退回的外部资料")
-            record.source_doc_ids = list(dict.fromkeys([*record.source_doc_ids, *selected_docs]))
+            record.source_doc_ids = list(
+                dict.fromkeys([*record.source_doc_ids, *selected_docs])
+            )
             await self.db.flush()
         return await self.generate_agenda(record_id, body)
 
-    async def generate_agenda(self, record_id: str, body: RevisionRequest) -> MeetingRecord:
+    async def generate_agenda(
+        self, record_id: str, body: RevisionRequest
+    ) -> MeetingRecord:
         """生成会议通知、议题单和会议记录模板；不生成真实决议或表决结果。"""
         record = await self.record(record_id, lock=True)
         self.check_revision(record, body.expected_revision)
@@ -1063,7 +1179,9 @@ class ActivityService:
 
     # ==================== 纪要 ====================
 
-    async def generate_minutes(self, record_id: str, body: RevisionRequest) -> MeetingRecord:
+    async def generate_minutes(
+        self, record_id: str, body: RevisionRequest
+    ) -> MeetingRecord:
         """仅提取原文中明确标注的学习要点、共识与工作要求。"""
         record = await self.record(record_id, lock=True)
         self.check_revision(record, body.expected_revision)
@@ -1072,7 +1190,9 @@ class ActivityService:
         if not record.transcript:
             raise HTTPException(422, "原始会议文本待补")
         await self.require_visible_content(record)
-        record.minutes = extract_minutes(record.transcript, minutes_sections(record.activity_type))
+        record.minutes = extract_minutes(
+            record.transcript, minutes_sections(record.activity_type)
+        )
         reset_review(record)
         await self.save_revision(record, "meeting", "generate_minutes", body.reason)
         return record
@@ -1190,7 +1310,9 @@ class ActivityService:
             conditions.append(MeetingTask.record_id.in_(record_ids))
         if status:
             conditions.append(MeetingTask.status == status)
-        total = await self.db.scalar(select(func.count(MeetingTask.id)).where(*conditions))
+        total = await self.db.scalar(
+            select(func.count(MeetingTask.id)).where(*conditions)
+        )
         tasks = (
             (
                 await self.db.execute(
@@ -1241,7 +1363,10 @@ class ActivityService:
         )
         if restricted:
             raise HTTPException(403, "关联材料当前不可访问，不能归档")
-        record.archived_at, record.archive_policy_version = utc_now(), policy["revision"]
+        record.archived_at, record.archive_policy_version = (
+            utc_now(),
+            policy["revision"],
+        )
         await self.save_revision(record, "meeting", "archive", body.reason)
         return record
 
@@ -1253,7 +1378,9 @@ class ActivityService:
         )
         data["tasks"] = [row_data(task) for task in await self.tasks_of(record)]
         data.update(
-            activity_type_label=ACTIVITY_TYPES.get(record.activity_type, record.activity_type),
+            activity_type_label=ACTIVITY_TYPES.get(
+                record.activity_type, record.activity_type
+            ),
             notice=ORGANIZATION_LIFE_NOTICE,
             missing=minutes_missing(record) + warnings,
             restricted=restricted,
@@ -1352,7 +1479,9 @@ class ActivityService:
                 )
             else:
                 raise HTTPException(422, "未知执行状态")
-        total = await self.db.scalar(select(func.count(MeetingRecord.id)).where(*conditions))
+        total = await self.db.scalar(
+            select(func.count(MeetingRecord.id)).where(*conditions)
+        )
         records = (
             (
                 await self.db.execute(
@@ -1395,7 +1524,9 @@ class ActivityService:
         current_sources = await self.content_sources(record)
         for revision in revisions:
             snapshot = revision.snapshot
-            all_sources = snapshot.get("sources", []) if isinstance(snapshot, dict) else []
+            all_sources = (
+                snapshot.get("sources", []) if isinstance(snapshot, dict) else []
+            )
             _, _, restricted = await visible_sources(
                 self.db, self.user, record.org_unit_id, all_sources + current_sources
             )
@@ -1405,7 +1536,11 @@ class ActivityService:
                     "action": revision.action,
                     "actor_id": revision.actor_id,
                     "created_at": jsonable_encoder(revision.created_at),
-                    "reason": "内容因资料权限变化暂不可查看" if restricted else revision.reason,
+                    "reason": (
+                        "内容因资料权限变化暂不可查看"
+                        if restricted
+                        else revision.reason
+                    ),
                     "snapshot": None if restricted else snapshot,
                     "restricted": restricted,
                 }
@@ -1444,7 +1579,9 @@ class ActivityService:
             if activity_type not in ACTIVITY_TYPES:
                 raise HTTPException(422, "未知活动类型")
             conditions.append(MeetingRecord.activity_type == activity_type)
-        total = await self.db.scalar(select(func.count(MeetingRecord.id)).where(*conditions))
+        total = await self.db.scalar(
+            select(func.count(MeetingRecord.id)).where(*conditions)
+        )
         records = (
             (
                 await self.db.execute(
@@ -1537,7 +1674,10 @@ class ActivityService:
                     "held_on": record.held_on.isoformat() if record.held_on else None,
                     "reviewed_by": record.reviewed_by,
                     "participants": [
-                        {"source_id": f"{record.id}:{person['participant_id']}", **person}
+                        {
+                            "source_id": f"{record.id}:{person['participant_id']}",
+                            **person,
+                        }
                         for person in record.participants
                     ],
                     "minutes_sections": [
@@ -1550,7 +1690,8 @@ class ActivityService:
             )
         expected = sum(len(record.participants) for record in formal)
         attended = sum(
-            sum(person["attended"] for person in record.participants) for record in formal
+            sum(person["attended"] for person in record.participants)
+            for record in formal
         )
         complete_minutes = sum(not minutes_missing(record) for record in formal)
 
@@ -1564,7 +1705,9 @@ class ActivityService:
 
         counts: dict[str, int] = {}
         for record in records:
-            counts[_execution_status(record)] = counts.get(_execution_status(record), 0) + 1
+            counts[_execution_status(record)] = (
+                counts.get(_execution_status(record), 0) + 1
+            )
         by_type: dict[str, dict[str, Any]] = {}
         requirements = load_requirements()
         for key in ACTIVITY_TYPES:
@@ -1578,7 +1721,9 @@ class ActivityService:
                 "label": ACTIVITY_TYPES[key],
                 "required": requirement.annual_required,
                 "performed": len(held_reviewed),
-                "total_registered": sum(1 for record in records if record.activity_type == key),
+                "total_registered": sum(
+                    1 for record in records if record.activity_type == key
+                ),
                 "period": requirement.period,
                 "period_text": requirement.period_text,
                 "basis": requirement.basis,
@@ -1603,7 +1748,9 @@ class ActivityService:
 
     # ==================== 周期频次与提醒 ====================
 
-    async def _frequency_records(self, org_ids: list[str], year: int) -> list[RecordFact]:
+    async def _frequency_records(
+        self, org_ids: list[str], year: int
+    ) -> list[RecordFact]:
         """一次取回年度内的记录事实，频次计算不再逐条查库。"""
         if not org_ids:
             return []
@@ -1622,7 +1769,9 @@ class ActivityService:
                     MeetingRecord.org_unit_id.in_(org_ids),
                     MeetingRecord.activity_type.in_(list(ACTIVITY_TYPES)),
                     or_(
-                        and_(MeetingRecord.held_on >= start, MeetingRecord.held_on <= end),
+                        and_(
+                            MeetingRecord.held_on >= start, MeetingRecord.held_on <= end
+                        ),
                         and_(
                             MeetingRecord.held_on.is_(None),
                             MeetingRecord.scheduled_on >= start,
@@ -1658,7 +1807,9 @@ class ActivityService:
                 raise HTTPException(422, "三会一课频次按支部计算，请选择支部组织")
         truncated = len(branches) > MAX_FREQUENCY_BRANCHES
         branches = branches[:MAX_FREQUENCY_BRANCHES]
-        records = await self._frequency_records([str(org.id) for org in branches], as_of.year)
+        records = await self._frequency_records(
+            [str(org.id) for org in branches], as_of.year
+        )
         built = build_frequency(
             load_requirements(),
             records,

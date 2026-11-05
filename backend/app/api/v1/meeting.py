@@ -37,6 +37,7 @@ from app.schemas.meeting import (
     AgendaItemsRequest,
     DecisionsRequest,
     ImageMutation,
+    RebuildDocumentsRequest,
     ReviewRequest,
     RevisionRequest,
     TaskCreate,
@@ -82,7 +83,11 @@ async def respond(
         resource_type=resource_type,
         resource_id=resource_id,
         data_level="sensitive",
-        new_value={key: data[key] for key in ("revision", "total", "year") if key in data},
+        new_value={
+            key: data[key]
+            for key in ("revision", "total", "year", "count")
+            if key in data
+        },
     )
     await service.db.commit()
     return APIResponse(data=data, trace_id=getattr(request.state, "trace_id", None))
@@ -115,7 +120,9 @@ async def type_options(
         request,
         service,
         {
-            "types": [{"value": key, "label": label} for key, label in ACTIVITY_TYPES.items()],
+            "types": [
+                {"value": key, "label": label} for key, label in ACTIVITY_TYPES.items()
+            ],
             "requirements": None,
         },
         "read_type_options",
@@ -155,12 +162,19 @@ async def records(
     dependencies=[Depends(_manage), Depends(_operator)],
 )
 async def create_record(
-    body: ActivityCreate, request: Request, service: ActivityService = Depends(activity_service)
+    body: ActivityCreate,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
 ) -> APIResponse[dict]:
     """登记一次组织生活活动计划。"""
     record = await service.create(body)
     return await respond(
-        request, service, await service.record_data(record), "create", "meeting", str(record.id)
+        request,
+        service,
+        await service.record_data(record),
+        "create",
+        "meeting",
+        str(record.id),
     )
 
 
@@ -263,14 +277,41 @@ async def download_record_image(
     )
 
 
+@router.post(
+    "/meeting/records/rebuild-documents",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage), Depends(_operator)],
+)
+async def rebuild_documents(
+    body: RebuildDocumentsRequest,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """按当前模板批量重建草稿文书，不覆盖已提交、已审核或已归档记录。"""
+    return await respond(
+        request,
+        service,
+        await service.rebuild_documents(body),
+        "rebuild_meeting_documents",
+        "meeting",
+    )
+
+
 @router.get("/meeting/records/{record_id}", response_model=APIResponse[dict])
 async def record_detail(
-    record_id: str, request: Request, service: ActivityService = Depends(activity_service)
+    record_id: str,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
 ) -> APIResponse[dict]:
     """读取当前权限和合规开关允许的活动记录。"""
     record = await service.record(record_id)
     return await respond(
-        request, service, await service.record_data(record), "read", "meeting", record_id
+        request,
+        service,
+        await service.record_data(record),
+        "read",
+        "meeting",
+        record_id,
     )
 
 
@@ -288,7 +329,12 @@ async def update_record(
     """登记会议文本与参会情况，修改后重新审核纪要。"""
     record = await service.update(record_id, body)
     return await respond(
-        request, service, await service.record_data(record), "revise", "meeting", record_id
+        request,
+        service,
+        await service.record_data(record),
+        "revise",
+        "meeting",
+        record_id,
     )
 
 
@@ -338,7 +384,9 @@ async def update_decisions(
     )
 
 
-@router.get("/meeting/records/{record_id}/recommendations", response_model=APIResponse[dict])
+@router.get(
+    "/meeting/records/{record_id}/recommendations", response_model=APIResponse[dict]
+)
 async def recommendations(
     record_id: str,
     request: Request,
@@ -420,7 +468,12 @@ async def generate_agenda(
     """生成会议通知、议题单和记录模板，供支部研究确定。"""
     record = await service.generate_agenda(record_id, body)
     return await respond(
-        request, service, await service.record_data(record), "generate_agenda", "meeting", record_id
+        request,
+        service,
+        await service.record_data(record),
+        "generate_agenda",
+        "meeting",
+        record_id,
     )
 
 
@@ -436,7 +489,9 @@ async def external_suggestions(
 ) -> APIResponse[dict]:
     """列出可用于当前会议的最新外部资料；普通办理人只看已采用资料。"""
     items = await service.external_suggestions(record_id)
-    return APIResponse(data={"items": items}, trace_id=getattr(request.state, "trace_id", None))
+    return APIResponse(
+        data={"items": items}, trace_id=getattr(request.state, "trace_id", None)
+    )
 
 
 @router.post(
@@ -510,7 +565,12 @@ async def submit_record(
     """核查原文定位、参会、日期及依据后提交纪要。"""
     record = await service.submit(record_id, body)
     return await respond(
-        request, service, await service.record_data(record), "submit", "meeting", record_id
+        request,
+        service,
+        await service.record_data(record),
+        "submit",
+        "meeting",
+        record_id,
     )
 
 
@@ -528,13 +588,20 @@ async def review_record(
     """人工审核当前纪要版本，不允许自审。"""
     record = await service.review(record_id, body)
     return await respond(
-        request, service, await service.record_data(record), "review", "meeting", record_id
+        request,
+        service,
+        await service.record_data(record),
+        "review",
+        "meeting",
+        record_id,
     )
 
 
 @router.get("/meeting/records/{record_id}/revisions", response_model=APIResponse[dict])
 async def record_revisions(
-    record_id: str, request: Request, service: ActivityService = Depends(activity_service)
+    record_id: str,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
 ) -> APIResponse[dict]:
     """查询纪要修订与审核历史，屏蔽当前不可访问内容。"""
     record = await service.record(record_id)
@@ -562,17 +629,29 @@ async def archive_record(
     """学校确认电子效力后归档人工审核通过的记录。"""
     record = await service.archive(record_id, body)
     return await respond(
-        request, service, await service.record_data(record), "archive", "meeting", record_id
+        request,
+        service,
+        await service.record_data(record),
+        "archive",
+        "meeting",
+        record_id,
     )
 
 
 @router.get("/meeting/records/{record_id}/export", response_model=APIResponse[dict])
 async def export_record(
-    record_id: str, request: Request, service: ActivityService = Depends(activity_service)
+    record_id: str,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
 ) -> APIResponse[dict]:
     """按当前权限导出归档、材料摘录与确认证据。"""
     return await respond(
-        request, service, await service.export(record_id), "export", "meeting", record_id
+        request,
+        service,
+        await service.export(record_id),
+        "export",
+        "meeting",
+        record_id,
     )
 
 
@@ -697,7 +776,11 @@ async def tasks(
         request,
         service,
         await service.list_tasks(
-            org_unit_id=org_unit_id, year=year, status=status, page=page, page_size=page_size
+            org_unit_id=org_unit_id,
+            year=year,
+            status=status,
+            page=page,
+            page_size=page_size,
         ),
         "read_tasks",
         "meeting_task",

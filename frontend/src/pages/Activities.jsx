@@ -225,6 +225,9 @@ export function Meetings() {
   const [agendaSources, setAgendaSources] = useState(null);
   const [agendaEditor, setAgendaEditor] = useState(null);
   const [decisionsEditor, setDecisionsEditor] = useState(null);
+  const [rebuildOpen, setRebuildOpen] = useState(false);
+  const [rebuildBusy, setRebuildBusy] = useState(false);
+  const [rebuildError, setRebuildError] = useState(null);
   const [docTab, setDocTab] = useState("议题");
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
@@ -631,14 +634,56 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
     printWindow.document.close();
   }
 
+  async function rebuildDocuments(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const reason = String(form.get("reason") || "").trim();
+    if (!reason) {
+      setRebuildError(new Error("请填写本次批量重建说明。"));
+      return;
+    }
+    setRebuildBusy(true);
+    setRebuildError(null);
+    try {
+      const result = await backend.rebuildMeetingDocuments({
+        org_unit_id: String(form.get("org_unit_id") || "") || undefined,
+        mode: form.get("mode"),
+        reason,
+      });
+      setRebuildOpen(false);
+      await load();
+      notify(
+        result.count
+          ? `已重建 ${result.count} 条草稿会议文书，请逐条核对`
+          : "当前没有需要重建的草稿会议文书",
+      );
+    } catch (failure) {
+      setRebuildError(failure);
+    } finally {
+      setRebuildBusy(false);
+    }
+  }
+
   return (
     <section className="panel workspace-panel">
       <PageHeader
         title="三会一课"
         subtitle="落实组织生活制度，提升支部工作质效"
         action={
-          canManageExternal || canSuggestTopics ? (
+          canManageExternal || canSuggestTopics || (IS_LIVE && canEdit) ? (
             <div className="page-header-actions">
+              {IS_LIVE && canEdit && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => {
+                    setRebuildError(null);
+                    setRebuildOpen(true);
+                  }}
+                >
+                  批量重建草稿文书
+                </button>
+              )}
               {canSuggestTopics && (
                 <button
                   type="button"
@@ -1362,6 +1407,65 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
             notify("决议与表决信息已保存");
           }}
         />
+      )}
+      {rebuildOpen && (
+        <Modal
+          title="批量重建草稿会议文书"
+          wide
+          flat
+          onClose={() => !rebuildBusy && setRebuildOpen(false)}
+        >
+          <p className="inline-note">
+            仅处理当前草稿状态的会议，不覆盖已提交审核、已审核通过或已归档记录。重建会生成新的修订版本，请逐条核对后再提交。
+          </p>
+          {rebuildError && <ErrorBox error={rebuildError} />}
+          <form onSubmit={rebuildDocuments}>
+            <div className="form-grid">
+              <Field label="重建方式" full>
+                <select name="mode" defaultValue="template_only" disabled={rebuildBusy}>
+                  <option value="template_only">
+                    仅重建记录模板，保留现有议题和会议通知
+                  </option>
+                  <option value="full">
+                    重建议题、会议通知和记录模板，覆盖当前草稿文书
+                  </option>
+                </select>
+              </Field>
+              <Field label="组织范围" full>
+                <select name="org_unit_id" defaultValue="" disabled={rebuildBusy}>
+                  <option value="">全部授权组织</option>
+                  {orgs.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="本次操作说明" full required>
+                <input
+                  name="reason"
+                  required
+                  maxLength={2000}
+                  disabled={rebuildBusy}
+                  placeholder="例如：按新版会议文书模板统一整理历史草稿"
+                />
+              </Field>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={rebuildBusy}
+                onClick={() => setRebuildOpen(false)}
+              >
+                取消
+              </button>
+              <button type="submit" className="button primary" disabled={rebuildBusy}>
+                {rebuildBusy ? "正在重建…" : "开始重建"}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
       {previewImage && (
         <Modal

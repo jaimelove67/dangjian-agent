@@ -238,6 +238,12 @@ export const backend = {
       download: true,
       timeout: 120000,
     }),
+  rebuildMeetingDocuments: (body) =>
+    request("/meeting/records/rebuild-documents", {
+      method: "POST",
+      body: JSON.stringify(body),
+      timeout: 180000,
+    }),
   uploadMeetingImage: (id, file, expectedRevision, reason) => {
     const body = new FormData();
     body.append("file", file);

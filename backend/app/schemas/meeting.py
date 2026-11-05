@@ -129,6 +129,12 @@ class DecisionsRequest(RevisionRequest):
     decisions: list[DecisionInput] = Field(default_factory=list, max_length=30)
 
 
+class RebuildDocumentsRequest(MeetingInput):
+    org_unit_id: str | None = Field(default=None, max_length=36)
+    mode: Literal["template_only", "full"] = "template_only"
+    reason: str = Field(min_length=1, max_length=2000)
+
+
 class TopicFeedbackRequest(MeetingInput):
     org_unit_id: str | None = Field(default=None, max_length=36)
     topic: Label
@@ -152,8 +158,8 @@ class ActivityUpdate(RevisionRequest):
     recorder: str | None = Field(default=None, max_length=100)
     topic: Label | None = None
     participants: list[Participant] | None = Field(default=None, max_length=500)
-    transcript: Annotated[str, StringConstraints(strip_whitespace=False)] | None = Field(
-        default=None, max_length=200000
+    transcript: Annotated[str, StringConstraints(strip_whitespace=False)] | None = (
+        Field(default=None, max_length=200000)
     )
     source_doc_ids: list[DocId] | None = Field(default=None, max_length=20)
     minutes: MinutesInput | None = None
