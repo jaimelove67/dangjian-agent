@@ -129,6 +129,29 @@ class DecisionsRequest(RevisionRequest):
     decisions: list[DecisionInput] = Field(default_factory=list, max_length=30)
 
 
+TemplateSectionKey = Literal["notice", "agenda", "sources", "record", "decisions", "footer"]
+
+
+class TemplateSection(MeetingInput):
+    key: TemplateSectionKey
+    title: str = Field(min_length=1, max_length=100)
+    enabled: bool = True
+
+
+class TemplateLabels(MeetingInput):
+    meeting_time: str = Field(default="会议时间", max_length=50)
+    location: str = Field(default="会议地点", max_length=50)
+    host: str = Field(default="主持人", max_length=50)
+    recorder: str = Field(default="记录人", max_length=50)
+    attendance: str = Field(default="参加人数", max_length=50)
+
+
+class MeetingTemplateInput(MeetingInput):
+    org_unit_id: str = Field(default="", max_length=36)
+    sections: list[TemplateSection] = Field(default_factory=list, max_length=6)
+    labels: TemplateLabels = Field(default_factory=TemplateLabels)
+
+
 class MeetingDocumentSettings(MeetingInput):
     org_unit_id: str | None = Field(default=None, max_length=36)
     header: str = Field(default="", max_length=200)

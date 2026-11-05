@@ -254,6 +254,21 @@ export const backend = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  meetingDocumentTemplate: (orgUnitId = "") =>
+    request(
+      "/meeting/document-template" +
+        (orgUnitId ? `?org_unit_id=${encodeURIComponent(orgUnitId)}` : ""),
+    ),
+  saveMeetingDocumentTemplateDraft: (body) =>
+    request("/meeting/document-template/draft", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  publishMeetingDocumentTemplate: (body) =>
+    request("/meeting/document-template/publish", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   uploadMeetingImage: (id, file, expectedRevision, reason) => {
     const body = new FormData();
     body.append("file", file);

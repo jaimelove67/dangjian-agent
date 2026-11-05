@@ -56,6 +56,7 @@ from app.services.meeting_document_settings import (
     get_meeting_document_settings,
 )
 from app.services.meeting_images import MEETING_IMAGE_LIMIT, inspect_meeting_image
+from app.services.meeting_template_service import get_effective_template
 from app.services.meeting_service import (
     ORG_LIFE_ACTIVITY_TYPE,
     apply_review,
@@ -707,6 +708,9 @@ class ActivityService:
             document_settings = await get_meeting_document_settings(
                 self.db, self.tenant_id, record.org_unit_id
             )
+            document_template = await get_effective_template(
+                self.db, self.tenant_id, record.org_unit_id
+            )
             sources = await selected_sources(
                 self.db,
                 self.user,
@@ -715,6 +719,7 @@ class ActivityService:
                 on=record.held_on or record.scheduled_on or date.today(),
             )
             context = dict(record.context or {})
+            context["document_template"] = document_template
             if body.mode == "full":
                 agenda, agenda_items = _agenda_text(record, sources)
                 context["agenda"] = apply_document_settings(agenda, document_settings)
@@ -1116,6 +1121,9 @@ class ActivityService:
         document_settings = await get_meeting_document_settings(
             self.db, self.tenant_id, record.org_unit_id
         )
+        document_template = await get_effective_template(
+            self.db, self.tenant_id, record.org_unit_id
+        )
         agenda, agenda_items = _agenda_text(record, sources)
         agenda = apply_document_settings(agenda, document_settings)
         notice = apply_document_settings(
@@ -1134,6 +1142,7 @@ class ActivityService:
             agenda_items=agenda_items,
             notice=notice,
             record_template=record_template,
+            document_template=document_template,
             content_sources=sources,
             agenda_template_version=template_version,
         )

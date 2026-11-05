@@ -38,6 +38,7 @@ from app.schemas.meeting import (
     DecisionsRequest,
     ImageMutation,
     MeetingDocumentSettings,
+    MeetingTemplateInput,
     RebuildDocumentsRequest,
     ReviewRequest,
     RevisionRequest,
@@ -52,6 +53,11 @@ from app.services.meeting_document_export import build_meeting_docx
 from app.services.meeting_document_settings import (
     get_meeting_document_settings,
     save_meeting_document_settings,
+)
+from app.services.meeting_template_service import (
+    get_template_state,
+    publish_template,
+    save_draft,
 )
 from app.services.org_scope import accessible_org_units
 
@@ -190,6 +196,86 @@ async def update_document_settings(
         data=data,
         trace_id=getattr(request.state, "trace_id", None),
     )
+
+
+@router.get(
+    "/meeting/document-template",
+    response_model=APIResponse[dict],
+)
+async def read_document_template(
+    request: Request,
+    org_unit_id: str = Query("", max_length=36),
+    user: User = Depends(_school_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """读取模板草稿、已发布版本和当前有效模板。"""
+    await _validate_document_org(db, user, org_unit_id or None)
+    return APIResponse(
+        data=await get_template_state(db, str(user.tenant_id), org_unit_id),
+        trace_id=getattr(request.state, "trace_id", None),
+    )
+
+
+@router.put(
+    "/meeting/document-template/draft",
+    response_model=APIResponse[dict],
+)
+async def save_document_template_draft(
+    body: MeetingTemplateInput,
+    request: Request,
+    user: User = Depends(_school_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """保存模板草稿，不影响当前已发布版本。"""
+    await _validate_document_org(db, user, body.org_unit_id or None)
+    schema = {
+        "sections": [item.model_dump() for item in body.sections],
+        "labels": body.labels.model_dump(),
+    }
+    data = await save_draft(db, str(user.tenant_id), body.org_unit_id, schema, str(user.id))
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="save_meeting_document_template_draft",
+        resource_type="org_unit" if body.org_unit_id else "tenant_config",
+        resource_id=body.org_unit_id or str(user.tenant_id),
+        data_level="internal",
+        new_value={"version": data.get("version"), "sections": len(data["sections"])},
+    )
+    await db.commit()
+    return APIResponse(data=data, trace_id=getattr(request.state, "trace_id", None))
+
+
+@router.post(
+    "/meeting/document-template/publish",
+    response_model=APIResponse[dict],
+)
+async def publish_document_template(
+    body: MeetingTemplateInput,
+    request: Request,
+    user: User = Depends(_school_admin),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """发布新模板版本；旧版本保留为 superseded。"""
+    await _validate_document_org(db, user, body.org_unit_id or None)
+    schema = {
+        "sections": [item.model_dump() for item in body.sections],
+        "labels": body.labels.model_dump(),
+    }
+    data = await publish_template(db, str(user.tenant_id), body.org_unit_id, schema, str(user.id))
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="publish_meeting_document_template",
+        resource_type="org_unit" if body.org_unit_id else "tenant_config",
+        resource_id=body.org_unit_id or str(user.tenant_id),
+        data_level="internal",
+        new_value={"version": data.get("version"), "sections": len(data["sections"])},
+    )
+    await db.commit()
+    return APIResponse(data=data, trace_id=getattr(request.state, "trace_id", None))
 
 
 @router.get("/meeting/records", response_model=APIResponse[dict])
@@ -728,7 +814,7 @@ async def export_record_docx(
     data = await service.record_data(record)
     if data.get("restricted"):
         raise HTTPException(403, "关联资料权限已变化，不能导出会议文书")
-    content = build_meeting_docx(data)
+    content = build_meeting_docx(data, (data.get("context") or {}).get("document_template"))
     await audit_operation(
         service.db,
         request,

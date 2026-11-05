@@ -30,6 +30,7 @@ from app.models.governance import ConfigRevision, DurableJob, HumanReview, Model
 from app.models.knowledge import EmbeddingChunk, KnowledgeDoc  # noqa: F401
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask  # noqa: F401
 from app.models.meeting_feedback import MeetingTopicFeedback  # noqa: F401
+from app.models.meeting_template import MeetingDocumentTemplate  # noqa: F401
 from app.models.member import (  # noqa: F401
     MemberArchiveCheck,
     MemberBatch,

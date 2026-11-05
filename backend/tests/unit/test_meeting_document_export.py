@@ -59,3 +59,32 @@ def test_docx_contains_current_documents_without_inventing_decisions():
     assert "审议支部工作报告" in text
     assert "同意 8 票；反对 0 票；弃权 1 票" in text
     assert "会议记录（模板）" not in text
+
+
+def test_docx_respects_custom_section_order_and_titles():
+    data = {
+        "title": "支部委员会会议",
+        "activity_type_label": "支委会",
+        "scheduled_on": "2026-11-20",
+        "host": "张书记",
+        "transcript": "会议记录原文",
+        "participants": [],
+        "context": {"meeting_time": "14:30", "location": "A301"},
+        "documents": {"notice": "会议通知原文"},
+        "sources": [],
+    }
+    template = {
+        "sections": [
+            {"key": "record", "title": "会议纪要", "enabled": True},
+            {"key": "notice", "title": "会议通知", "enabled": False},
+            {"key": "footer", "title": "归档说明", "enabled": True},
+        ],
+        "labels": {"host": "主持人姓名"},
+    }
+    content = build_meeting_docx(data, template)
+    document = Document(BytesIO(content))
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "会议纪要" in text
+    assert "会议记录原文" in text
+    assert "会议通知原文" not in text
+    assert "主持人姓名：张书记" in text

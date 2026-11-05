@@ -51,6 +51,7 @@ import { ExternalUpdatesDialog } from "../components/ExternalUpdatesDialog";
 import { MeetingAgendaItemsDialog } from "../components/MeetingAgendaItemsDialog";
 import { MeetingDecisionsDialog } from "../components/MeetingDecisionsDialog";
 import { MeetingDocumentSettingsDialog } from "../components/MeetingDocumentSettingsDialog";
+import { MeetingTemplateDialog } from "../components/MeetingTemplateDialog";
 import { TopicSuggestionsDialog } from "../components/TopicSuggestionsDialog";
 import {
   PageHeader,
@@ -82,6 +83,22 @@ const DECISION_RESULTS = {
   rejected: "不同意",
   not_voted: "未表决",
 };
+const DEFAULT_DOCUMENT_SECTIONS = [
+  ["notice", "会议通知"],
+  ["agenda", "会议议题"],
+  ["sources", "学习资料"],
+  ["record", "会议记录"],
+  ["decisions", "决议与表决"],
+  ["footer", "说明"],
+].map(([key, title]) => ({ key, title, enabled: true }));
+const DEFAULT_DOCUMENT_LABELS = {
+  meeting_time: "会议时间",
+  location: "会议地点",
+  host: "主持人",
+  recorder: "记录人",
+  attendance: "参加人数",
+};
+const SECTION_NUMERALS = "一二三四五六七八九十";
 function escapeHtml(value) {
   return String(value ?? "").replace(
     /[&<>"']/g,
@@ -121,6 +138,7 @@ function normalizeMeeting(m) {
     agenda: m.context?.agenda || "",
     agendaItems: m.documents?.agenda_items || m.context?.agenda_items || [],
     decisions: m.documents?.decisions || m.context?.decisions || [],
+    documentTemplate: m.context?.document_template || null,
     notice: m.documents?.notice || m.context?.notice || "",
     recordTemplate:
       m.documents?.record_template || m.context?.record_template || "",
@@ -230,6 +248,7 @@ export function Meetings() {
   const [rebuildBusy, setRebuildBusy] = useState(false);
   const [rebuildError, setRebuildError] = useState(null);
   const [documentSettingsOpen, setDocumentSettingsOpen] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
   const [docTab, setDocTab] = useState("议题");
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
@@ -599,6 +618,26 @@ export function Meetings() {
           `${item.note ? `<p>说明：${escapeHtml(item.note)}</p>` : ""}</article>`,
       )
       .join("");
+    const template = current.documentTemplate || {};
+    const layoutSections =
+      template.sections?.length > 0 ? template.sections : DEFAULT_DOCUMENT_SECTIONS;
+    const labels = { ...DEFAULT_DOCUMENT_LABELS, ...(template.labels || {}) };
+    const content = {
+      notice: `<pre>${escapeHtml(current.notice || "尚未生成会议通知")}</pre>`,
+      agenda: `<pre>${escapeHtml(current.agenda || "尚未登记会议议题")}</pre>`,
+      sources: sources ? `<ul>${sources}</ul>` : "<p>暂无学习资料</p>",
+      record: `<pre>${escapeHtml(current.minutes || "会议尚未召开，暂无会议记录")}</pre>`,
+      decisions: decisions || "<p>尚未登记决议或表决结果</p>",
+      footer:
+        '<p class="note">本文件由系统按当前登记内容生成，不替代真实会议记录；正式效力以学校审核和归档结果为准。</p>',
+    };
+    const sectionsHtml = layoutSections
+      .filter((section) => section.enabled)
+      .map((section, index) => {
+        const numeral = SECTION_NUMERALS[index] || String(index + 1);
+        return `<h2>${numeral}、${escapeHtml(section.title)}</h2>${content[section.key] || ""}`;
+      })
+      .join("");
     const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>${escapeHtml(current.title)} · 会议文书</title>
 <style>
@@ -614,18 +653,13 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
 <h1>${escapeHtml(current.title)}</h1><p class="sub">会议文书</p>
 <div class="meta">
 <div>会议类型</div><div>${escapeHtml(current.type)}</div>
-<div>会议时间</div><div>${escapeHtml(current.date)} ${escapeHtml(current.time)}</div>
-<div>会议地点</div><div>${escapeHtml(current.location)}</div>
-<div>主持人</div><div>${escapeHtml(current.host)}</div>
-<div>记录人</div><div>${escapeHtml(current.recorder || "待登记")}</div>
-<div>参加人数</div><div>${current.attended} / ${current.total} 人</div>
+<div>${escapeHtml(labels.meeting_time)}</div><div>${escapeHtml(current.date)} ${escapeHtml(current.time)}</div>
+<div>${escapeHtml(labels.location)}</div><div>${escapeHtml(current.location)}</div>
+<div>${escapeHtml(labels.host)}</div><div>${escapeHtml(current.host)}</div>
+<div>${escapeHtml(labels.recorder)}</div><div>${escapeHtml(current.recorder || "待登记")}</div>
+<div>${escapeHtml(labels.attendance)}</div><div>${current.attended} / ${current.total} 人</div>
 </div>
-<h2>一、会议通知</h2><pre>${escapeHtml(current.notice || "尚未生成会议通知")}</pre>
-<h2>二、会议议题</h2><pre>${escapeHtml(current.agenda || "尚未登记会议议题")}</pre>
-<h2>三、学习资料</h2>${sources ? `<ul>${sources}</ul>` : "<p>暂无学习资料</p>"}
-<h2>四、会议记录</h2><pre>${escapeHtml(current.minutes || "会议尚未召开，暂无会议记录")}</pre>
-<h2>五、决议与表决</h2>${decisions || "<p>尚未登记决议或表决结果</p>"}
-<p class="note">本文件由系统按当前登记内容生成，不替代真实会议记录；正式效力以学校审核和归档结果为准。</p>
+${sectionsHtml}
 <script>window.onload=()=>{window.print();}; window.onafterprint=()=>{window.close();};</script>
 </body></html>`;
     const printWindow = window.open("", "_blank");
@@ -680,13 +714,22 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
           (IS_LIVE && canEdit) ? (
             <div className="page-header-actions">
               {canConfigureDocuments && (
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => setDocumentSettingsOpen(true)}
-                >
-                  文书设置
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setDocumentSettingsOpen(true)}
+                  >
+                    文书设置
+                  </button>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setTemplateOpen(true)}
+                  >
+                    文书模板
+                  </button>
+                </>
               )}
               {IS_LIVE && canEdit && (
                 <button
@@ -1432,6 +1475,16 @@ ul{padding-left:22px;} li{margin:8px 0;} small{color:#555;}
           onSaved={() => {
             setDocumentSettingsOpen(false);
             notify("学校会议文书设置已保存");
+          }}
+        />
+      )}
+      {templateOpen && (
+        <MeetingTemplateDialog
+          orgs={orgs}
+          onClose={() => setTemplateOpen(false)}
+          onSaved={(data) => {
+            setTemplateOpen(false);
+            notify(`会议文书模板已发布，第 ${data.version} 版`);
           }}
         />
       )}
