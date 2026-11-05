@@ -13,6 +13,12 @@ function dateOnly(value) {
   return value ? String(value).slice(0, 10) : "日期未识别";
 }
 
+function dateTime(value) {
+  return value
+    ? String(value).slice(0, 16).replace("T", " ")
+    : "尚未抓取";
+}
+
 export function ExternalUpdatesDialog({ onClose }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -23,6 +29,9 @@ export function ExternalUpdatesDialog({ onClose }) {
   const [focus, setFocus] = useState({ topics: [], available: [] });
   const [focusSaving, setFocusSaving] = useState(false);
   const [selected, setSelected] = useState([]);
+  const [lastFetched, setLastFetched] = useState("");
+  const [lastAttempt, setLastAttempt] = useState("");
+  const [lastFetchError, setLastFetchError] = useState("");
 
   async function load() {
     setLoading(true);
@@ -33,6 +42,9 @@ export function ExternalUpdatesDialog({ onClose }) {
         backend.externalPreferences(),
       ]);
       setItems(result.items || []);
+      setLastFetched(result.last_success_at || result.last_fetched_at || "");
+      setLastAttempt(result.last_fetched_at || "");
+      setLastFetchError(result.last_fetch_error || "");
       setFocus(preferences || { topics: [], available: [] });
       setSelected([]);
     } catch (failure) {
@@ -173,6 +185,8 @@ export function ExternalUpdatesDialog({ onClose }) {
     >
       <p className="inline-note">
         只从共产党员网、求是网等白名单官方来源抓取公开资料。资料先审核，审核通过后才作为三会一课议程草稿的参考；不会自动生成会议记录、参会人员或表决结果。
+        最近成功抓取：{dateTime(lastFetched)}；最近尝试：{dateTime(lastAttempt)}。
+        {lastFetchError ? `最近一次抓取存在来源错误：${lastFetchError}` : ""}
       </p>
       <details className="external-focus-settings">
         <summary>

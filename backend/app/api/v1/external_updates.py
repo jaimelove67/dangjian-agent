@@ -5,14 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.audit import audit_operation
 from app.core.security import Permission
 from app.db.session import get_db
 from app.deps import require_permissions
-from app.models.external import ExternalUpdate
+from app.models.external import ExternalFetchState, ExternalUpdate
 from app.models.user import User, UserRole
 from app.schemas.common import APIResponse
 from app.schemas.external import (
@@ -131,7 +131,29 @@ async def list_external_updates(
         .scalars()
         .all()
     )
-    return APIResponse(data={"items": [_payload(row) for row in rows]}, trace_id=_trace(request))
+    state = (
+        await db.execute(
+            select(ExternalFetchState).where(
+                ExternalFetchState.tenant_id == str(user.tenant_id),
+                ExternalFetchState.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    last_fetched_at = await db.scalar(
+        select(func.max(ExternalUpdate.fetched_at)).where(
+            ExternalUpdate.tenant_id == str(user.tenant_id),
+            ExternalUpdate.is_deleted.is_(False),
+        )
+    )
+    return APIResponse(
+        data={
+            "items": [_payload(row) for row in rows],
+            "last_fetched_at": state.last_finished_at if state else last_fetched_at,
+            "last_success_at": state.last_success_at if state else last_fetched_at,
+            "last_fetch_error": state.last_error if state else "",
+        },
+        trace_id=_trace(request),
+    )
 
 
 @router.post("/external-updates/fetch", response_model=APIResponse[dict])

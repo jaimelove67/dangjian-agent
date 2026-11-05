@@ -8,10 +8,25 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+
+
+class ExternalFetchState(Base):
+    """每个学校最近一次外部资料抓取的状态，避免只靠资料行判断更新时间。"""
+
+    __tablename__ = "external_fetch_state"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_external_fetch_state_tenant"),)
+
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_added: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_skipped: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_filtered: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class ExternalUpdate(Base):

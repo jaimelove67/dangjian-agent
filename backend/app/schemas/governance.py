@@ -194,7 +194,12 @@ class ReviewDecision(StrictInput):
     opinion: str = Field(min_length=1, max_length=2000)
 
 
-JobKind = Literal["member_reminders", "assessment_reminders", "embedding"]
+JobKind = Literal[
+    "member_reminders",
+    "assessment_reminders",
+    "external_updates",
+    "embedding",
+]
 
 
 class JobCreate(StrictInput):

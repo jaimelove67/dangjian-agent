@@ -25,6 +25,7 @@ from app.models.assessment import (  # noqa: F401
 from app.models.audit import AuditLog  # noqa: F401 - 注册迁移元数据
 from app.models.backup import BackupJob  # noqa: F401
 from app.models.education import EducationEnrollment, EducationOffering  # noqa: F401
+from app.models.external import ExternalFetchState, ExternalUpdate  # noqa: F401
 from app.models.governance import ConfigRevision, DurableJob, HumanReview, ModelUsage  # noqa: F401
 from app.models.knowledge import EmbeddingChunk, KnowledgeDoc  # noqa: F401
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask  # noqa: F401

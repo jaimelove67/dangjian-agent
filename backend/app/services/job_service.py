@@ -20,7 +20,7 @@ from app.db.session import async_session_maker
 from app.models.assessment import AssessmentTask
 from app.models.governance import DurableJob
 from app.models.tenant import Tenant
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.governance import JobCreate, JobKind
 from app.services.org_scope import accessible_org_units
 
@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 JOB_PERMISSIONS = {
     "member_reminders": Permission.MEMBER_QUERY,
     "assessment_reminders": Permission.ASSESSMENT_QUERY,
+    "external_updates": Permission.KNOWLEDGE_MANAGE,
     "embedding": Permission.KNOWLEDGE_MANAGE,
 }
 
@@ -242,6 +243,11 @@ async def execute(tenant_id: str, record_id: str, token: str) -> None:
                 count = 0
                 for org_id, year in pairs:
                     count += len(await assessment_service.sync_reminders(org_id, year))
+            elif job.kind == "external_updates":
+                from app.services.external_update_service import fetch_updates
+
+                result = await fetch_updates(db, user)
+                count = result["added"]
             else:
                 # 二次检查文档授权；队列执行期间角色及组织绑定可能已修改。
                 from app.models.knowledge import KnowledgeDoc
@@ -366,17 +372,28 @@ async def schedule_reminders() -> None:
                 .scalars()
                 .all()
             )
+    external_tenants: set[str] = set()
     for user in users:
         with tenant_context(str(user.tenant_id)):
             async with async_session_maker() as db:
                 scheduled: tuple[tuple[JobKind, int], ...] = (
                     ("member_reminders", settings.MEMBER_REMINDER_SCAN_SECONDS),
                     ("assessment_reminders", settings.ASSESSMENT_REMINDER_SCAN_SECONDS),
+                    ("external_updates", settings.EXTERNAL_UPDATE_SCAN_SECONDS),
                 )
                 for kind, interval in scheduled:
+                    if kind == "external_updates":
+                        # 每个学校只用一个学校管理员身份抓取，避免同一批资料被重复抓取。
+                        if (
+                            user.role != UserRole.SCHOOL_ADMIN
+                            or str(user.tenant_id) in external_tenants
+                        ):
+                            continue
                     if has_permission(user.role, JOB_PERMISSIONS[kind]):
                         slot = int(datetime.utcnow().timestamp() // interval)
                         await enqueue(db, user, JobCreate(kind=kind, dedup_key=f"scheduled-{slot}"))
+                        if kind == "external_updates":
+                            external_tenants.add(str(user.tenant_id))
                 await db.commit()
 
 

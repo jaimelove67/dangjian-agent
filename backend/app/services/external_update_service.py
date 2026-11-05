@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import tenant_config
-from app.models.external import ExternalUpdate
+from app.models.external import ExternalFetchState, ExternalUpdate
 from app.models.knowledge import KnowledgeDoc
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -231,9 +231,45 @@ async def _article(
     }
 
 
+async def _record_fetch_state(
+    db: AsyncSession,
+    tenant_id: str,
+    started_at: datetime,
+    *,
+    added: int,
+    skipped: int,
+    filtered: int,
+    errors: list[dict[str, str]],
+) -> None:
+    state = (
+        await db.execute(
+            select(ExternalFetchState)
+            .where(
+                ExternalFetchState.tenant_id == tenant_id,
+                ExternalFetchState.is_deleted.is_(False),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    finished_at = _now()
+    if state is None:
+        state = ExternalFetchState(tenant_id=tenant_id)
+        db.add(state)
+    state.last_started_at = started_at
+    state.last_finished_at = finished_at
+    if not errors:
+        state.last_success_at = finished_at
+    state.last_added = added
+    state.last_skipped = skipped
+    state.last_filtered = filtered
+    state.last_error = "；".join(f"{item['source']}：{item['message']}" for item in errors)[:2000]
+    await db.flush()
+
+
 async def fetch_updates(db: AsyncSession, user: User) -> dict[str, Any]:
     """抓取白名单来源，保存尚未见过的公开条目为待审核资料。"""
 
+    started_at = _now()
     tenant_id = str(user.tenant_id)
     focus_topics = await get_focus_topics(db, tenant_id)
     existing = set(
@@ -296,6 +332,15 @@ async def fetch_updates(db: AsyncSession, user: User) -> dict[str, Any]:
         )
         added += 1
     await db.flush()
+    await _record_fetch_state(
+        db,
+        tenant_id,
+        started_at,
+        added=added,
+        skipped=skipped,
+        filtered=filtered,
+        errors=errors,
+    )
     return {
         "added": added,
         "skipped": skipped,

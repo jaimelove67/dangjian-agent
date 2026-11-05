@@ -155,6 +155,12 @@ class Settings(BaseSettings):
     MEMBER_REMINDER_SCAN_SECONDS: int = Field(
         default=3600, ge=60, le=86400, description="党员发展提醒扫描周期（秒）"
     )
+    EXTERNAL_UPDATE_SCAN_SECONDS: int = Field(
+        default=21600,
+        ge=3600,
+        le=86400,
+        description="外部党建资料定时抓取周期（秒）",
+    )
     # ==================== 对外通知渠道 ====================
     # 事件→渠道的路由。默认空：不配置渠道就不外发任何消息（系统不替组织决定是否外发）。
     NOTIFICATION_ROUTES: dict[str, list[str]] = Field(
