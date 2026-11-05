@@ -219,6 +219,16 @@ export const backend = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  updateMeetingAgendaItems: (id, payload) =>
+    request(`/meeting/records/${encodeURIComponent(id)}/agenda-items`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  updateMeetingDecisions: (id, payload) =>
+    request(`/meeting/records/${encodeURIComponent(id)}/decisions`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   uploadMeetingImage: (id, file, expectedRevision, reason) => {
     const body = new FormData();
     body.append("file", file);

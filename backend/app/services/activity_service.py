@@ -24,6 +24,8 @@ from app.schemas.meeting import (
     ActivityCreate,
     ActivityUpdate,
     AgendaFromUpdates,
+    AgendaItemsRequest,
+    DecisionsRequest,
     TopicFeedbackRequest,
     TopicSuggestionRequest,
     ImageMutation,
@@ -272,6 +274,24 @@ def _agenda_text(
     )
 
 
+def _agenda_text_from_items(record: MeetingRecord, items: list[dict[str, Any]]) -> str:
+    """按人工编辑后的议题条目生成议题单正文。"""
+    heading = "党课安排（草案）" if record.activity_type == "party_lecture" else "会议议题（草案）"
+    if not items:
+        body = "（尚未添加议题，请人工补充）"
+    else:
+        body = "\n".join(
+            f"{index}. {str(item.get('title', '')).strip()}"
+            for index, item in enumerate(items, 1)
+            if str(item.get("title", "")).strip()
+        )
+    return (
+        f"{heading}：\n会议主题：{record.title}\n{body}\n"
+        "学习资料：见会议资料清单。\n"
+        f"{ORGANIZATION_LIFE_NOTICE}"
+    )
+
+
 def _participant_names(record: MeetingRecord) -> str:
     return (
         "、".join(
@@ -313,7 +333,11 @@ def _meeting_notice(record: MeetingRecord) -> str:
     )
 
 
-def _record_template(record: MeetingRecord, sources: list[dict[str, Any]]) -> str:
+def _record_template(
+    record: MeetingRecord,
+    sources: list[dict[str, Any]],
+    items: list[dict[str, Any]] | None = None,
+) -> str:
     """生成会议记录填写模板；只留占位，不代替真实发言、表决和决议。"""
     context = record.context or {}
     participants = record.participants or []
@@ -329,7 +353,7 @@ def _record_template(record: MeetingRecord, sources: list[dict[str, Any]]) -> st
         )
         or "无或待补"
     )
-    items = _agenda_items(record, sources)
+    items = items if items is not None else _agenda_items(record, sources)
     if record.activity_type == "party_lecture":
         topic_block = f"党课主题：{record.title}"
         body = (
@@ -609,6 +633,35 @@ class ActivityService:
         record.context = context
         reset_review(record)
         await self.save_revision(record, "meeting", "revise", body.reason)
+        return record
+
+    async def update_agenda_items(self, record_id: str, body: AgendaItemsRequest) -> MeetingRecord:
+        """保存人工编辑的议题条目，并同步生成议题单正文。"""
+        record = await self.record(record_id, lock=True)
+        self.check_revision(record, body.expected_revision)
+        if record.archived_at:
+            raise HTTPException(409, "已归档活动不能覆盖")
+        items = [item.model_dump() for item in body.items]
+        context = dict(record.context or {})
+        context["agenda_items"] = items
+        context["agenda"] = _agenda_text_from_items(record, items)
+        context["record_template"] = _record_template(record, record.sources or [], items)
+        record.context = context
+        reset_review(record)
+        await self.save_revision(record, "meeting", "update_agenda_items", body.reason)
+        return record
+
+    async def update_decisions(self, record_id: str, body: DecisionsRequest) -> MeetingRecord:
+        """保存人工登记的决议和表决结果，不根据文本自动推断。"""
+        record = await self.record(record_id, lock=True)
+        self.check_revision(record, body.expected_revision)
+        if record.archived_at:
+            raise HTTPException(409, "已归档活动不能覆盖")
+        context = dict(record.context or {})
+        context["decisions"] = [item.model_dump() for item in body.decisions]
+        record.context = context
+        reset_review(record)
+        await self.save_revision(record, "meeting", "update_decisions", body.reason)
         return record
 
     # ==================== 现场图片 ====================
@@ -1229,6 +1282,7 @@ class ActivityService:
             # 不会用模板冒充真实会议记录、表决结果或会议决议。
             data["documents"] = {
                 "agenda_items": context.get("agenda_items", []),
+                "decisions": context.get("decisions", []),
                 "notice": context.get("notice", ""),
                 "record_template": context.get("record_template")
                 or _record_template(record, data["sources"]),

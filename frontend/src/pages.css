@@ -916,6 +916,107 @@
   gap: 6px;
   margin-bottom: 9px;
 }
+.meeting-item-editor,
+.meeting-decision-editor {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+.meeting-item-editor-row {
+  display: grid;
+  grid-template-columns: 34px 150px minmax(0, 1fr) 150px auto auto;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e6eaf0;
+  border-radius: 4px;
+  background: #fcfdff;
+}
+.meeting-item-editor-row .field.full {
+  grid-column: auto;
+}
+.meeting-item-editor-order {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 6px;
+  color: #7d8594;
+}
+.meeting-item-editor-order .text-button {
+  padding: 2px;
+}
+.meeting-item-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-bottom: 8px;
+  color: #626b78;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.meeting-item-check input {
+  accent-color: var(--red);
+}
+.meeting-decision-row {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e6eaf0;
+  border-radius: 4px;
+  background: #fcfdff;
+}
+.meeting-decision-heading,
+.meeting-decision-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.meeting-decision-heading strong {
+  font-size: 12px;
+  color: #555f6d;
+}
+.meeting-vote-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.meeting-decision-list {
+  display: grid;
+  gap: 8px;
+}
+.meeting-decision-list article {
+  padding: 10px 12px;
+  border: 1px solid #e6eaf0;
+  border-radius: 4px;
+  background: #fcfdff;
+}
+.meeting-decision-title h4 {
+  margin: 0;
+  font-size: 12px;
+  color: #2b3240;
+}
+.meeting-decision-list p {
+  margin: 5px 0 0;
+  color: #626b78;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.meeting-decision-note {
+  color: #8a5360 !important;
+}
+@media (max-width: 980px) {
+  .meeting-item-editor-row {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+  .meeting-item-editor-row .field,
+  .meeting-item-editor-row .field.full,
+  .meeting-item-check,
+  .meeting-item-editor-row > .text-button {
+    grid-column: 2;
+  }
+}
 .meeting-source-list {
   display: grid;
   gap: 8px;

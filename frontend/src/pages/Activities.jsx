@@ -48,6 +48,8 @@ import { courses, DEPARTMENTS, organizations } from "../data";
 import { meetingPayload, meetingParticipants } from "../contracts";
 import { AgendaSourcesDialog } from "../components/AgendaSourcesDialog";
 import { ExternalUpdatesDialog } from "../components/ExternalUpdatesDialog";
+import { MeetingAgendaItemsDialog } from "../components/MeetingAgendaItemsDialog";
+import { MeetingDecisionsDialog } from "../components/MeetingDecisionsDialog";
 import { TopicSuggestionsDialog } from "../components/TopicSuggestionsDialog";
 import {
   PageHeader,
@@ -73,6 +75,12 @@ const TYPE_MAP = {
 const TYPE_NAMES = Object.fromEntries(
   Object.entries(TYPE_MAP).map(([k, v]) => [v, k]),
 );
+const DECISION_RESULTS = {
+  approved: "同意",
+  principled: "原则同意",
+  rejected: "不同意",
+  not_voted: "未表决",
+};
 function normalizeMeeting(m) {
   return {
     ...m,
@@ -98,6 +106,7 @@ function normalizeMeeting(m) {
             : "待召开",
     agenda: m.context?.agenda || "",
     agendaItems: m.documents?.agenda_items || m.context?.agenda_items || [],
+    decisions: m.documents?.decisions || m.context?.decisions || [],
     notice: m.documents?.notice || m.context?.notice || "",
     recordTemplate:
       m.documents?.record_template || m.context?.record_template || "",
@@ -201,6 +210,8 @@ export function Meetings() {
   const [externalOpen, setExternalOpen] = useState(false);
   const [topicOpen, setTopicOpen] = useState(false);
   const [agendaSources, setAgendaSources] = useState(null);
+  const [agendaEditor, setAgendaEditor] = useState(null);
+  const [decisionsEditor, setDecisionsEditor] = useState(null);
   const [docTab, setDocTab] = useState("议题");
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
@@ -653,6 +664,24 @@ export function Meetings() {
                       </button>
                     )}
                     {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
+                      <button
+                        className="button secondary"
+                        disabled={busy}
+                        onClick={() => setAgendaEditor(current)}
+                      >
+                        编辑议题条目
+                      </button>
+                    )}
+                    {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
+                      <button
+                        className="button secondary"
+                        disabled={busy}
+                        onClick={() => setDecisionsEditor(current)}
+                      >
+                        编辑决议与表决
+                      </button>
+                    )}
+                    {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
                       <button className="button secondary" disabled={busy || !current.minutes?.trim()}
                         onClick={() => recordAction("generate-minutes", current, "根据已核对原始会议记录提取纪要")}>
                         提取纪要
@@ -715,6 +744,7 @@ export function Meetings() {
                       ["资料", "学习资料"],
                       ["通知", "会议通知"],
                       ["记录", "会议记录"],
+                      ["决议", "决议与表决"],
                       ["模板", "记录模板"],
                     ].map(([key, label]) => (
                       <button
@@ -737,6 +767,7 @@ export function Meetings() {
                             {current.agendaItems.map((item, index) => (
                               <Badge tone="blue" key={`${item.type}-${index}`}>
                                 {item.type}
+                                {item.decision_required ? " · 需表决" : ""}
                               </Badge>
                             ))}
                           </div>
@@ -790,6 +821,31 @@ export function Meetings() {
                       ) : (
                         <p className="inline-note">
                           会议尚未召开，暂无会议记录。会议结束后请按实际情况填写，不使用模板代替真实记录。
+                        </p>
+                      ))}
+                    {docTab === "决议" &&
+                      (current.decisions?.length > 0 ? (
+                        <div className="meeting-decision-list">
+                          {current.decisions.map((item, index) => (
+                            <article key={`${item.title}-${index}`}>
+                              <div className="meeting-decision-title">
+                                <h4>{item.title}</h4>
+                                <Badge tone={item.result === "approved" ? "green" : "gray"}>
+                                  {DECISION_RESULTS[item.result] || item.result}
+                                </Badge>
+                              </div>
+                              <p>
+                                同意 {item.agree_count || 0} 票 · 反对{" "}
+                                {item.oppose_count || 0} 票 · 弃权{" "}
+                                {item.abstain_count || 0} 票
+                              </p>
+                              {item.note && <p className="meeting-decision-note">{item.note}</p>}
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="inline-note">
+                          尚未登记决议和表决结果。由组织人员点击“编辑决议与表决”按真实会议情况填写，系统不自动推断。
                         </p>
                       ))}
                     {docTab === "模板" && (
@@ -1173,6 +1229,42 @@ export function Meetings() {
             );
             setAgendaSources(null);
             notify("会议通知、议题单和记录模板已生成，请核对资料和实际情况");
+          }}
+        />
+      )}
+      {agendaEditor && (
+        <MeetingAgendaItemsDialog
+          record={agendaEditor}
+          onClose={() => setAgendaEditor(null)}
+          onSaved={(next) => {
+            const normalized = normalizeMeeting(next);
+            update("meetings", (prev) =>
+              prev.map((item) =>
+                item.id === normalized.id ? normalized : item,
+              ),
+            );
+            setSelected(normalized.id);
+            setAgendaEditor(null);
+            setDocTab("议题");
+            notify("会议议题条目已保存，议题单已同步更新");
+          }}
+        />
+      )}
+      {decisionsEditor && (
+        <MeetingDecisionsDialog
+          record={decisionsEditor}
+          onClose={() => setDecisionsEditor(null)}
+          onSaved={(next) => {
+            const normalized = normalizeMeeting(next);
+            update("meetings", (prev) =>
+              prev.map((item) =>
+                item.id === normalized.id ? normalized : item,
+              ),
+            );
+            setSelected(normalized.id);
+            setDecisionsEditor(null);
+            setDocTab("决议");
+            notify("决议与表决信息已保存");
           }}
         />
       )}

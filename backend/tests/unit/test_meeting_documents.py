@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from app.services.activity_service import (
     _agenda_text,
+    _agenda_text_from_items,
     _balanced_topics,
     _meeting_notice,
     _record_template,
@@ -74,6 +75,21 @@ def test_record_template_contains_placeholders_and_never_invents_a_decision():
     assert "会议决议：" in template
     assert "请人工补充具体事项" in template
     assert "会议同意" not in template
+
+
+def test_edited_agenda_items_render_in_order_with_human_titles():
+    record = meeting("branch_committee_meeting")
+    text = _agenda_text_from_items(
+        record,
+        [
+            {"type": "学习类", "title": "传达学习全会精神"},
+            {"type": "研究类", "title": "研究支部贯彻落实措施"},
+        ],
+    )
+    assert "会议议题（草案）" in text
+    assert "1. 传达学习全会精神" in text
+    assert "2. 研究支部贯彻落实措施" in text
+    assert "会议议程（草稿）" not in text
 
 
 def test_notice_includes_formal_meeting_fields():

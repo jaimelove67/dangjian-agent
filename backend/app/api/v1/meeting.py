@@ -34,6 +34,8 @@ from app.schemas.meeting import (
     ActivityCreate,
     ActivityUpdate,
     AgendaFromUpdates,
+    AgendaItemsRequest,
+    DecisionsRequest,
     ImageMutation,
     ReviewRequest,
     RevisionRequest,
@@ -286,6 +288,52 @@ async def update_record(
     record = await service.update(record_id, body)
     return await respond(
         request, service, await service.record_data(record), "revise", "meeting", record_id
+    )
+
+
+@router.patch(
+    "/meeting/records/{record_id}/agenda-items",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage), Depends(_operator)],
+)
+async def update_agenda_items(
+    record_id: str,
+    body: AgendaItemsRequest,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """保存人工编辑的议题条目，并同步更新议题单正文。"""
+    record = await service.update_agenda_items(record_id, body)
+    return await respond(
+        request,
+        service,
+        await service.record_data(record),
+        "update_agenda_items",
+        "meeting",
+        record_id,
+    )
+
+
+@router.patch(
+    "/meeting/records/{record_id}/decisions",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage), Depends(_operator)],
+)
+async def update_decisions(
+    record_id: str,
+    body: DecisionsRequest,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """保存人工登记的会议决议和表决结果。"""
+    record = await service.update_decisions(record_id, body)
+    return await respond(
+        request,
+        service,
+        await service.record_data(record),
+        "update_decisions",
+        "meeting",
+        record_id,
     )
 
 

@@ -101,6 +101,34 @@ class TopicSuggestionRequest(MeetingInput):
     org_unit_id: str | None = Field(default=None, max_length=36)
 
 
+class AgendaItemInput(MeetingInput):
+    """一条会议议题；标题由人工确认，不自动生成表决结果。"""
+
+    type: str = Field(min_length=1, max_length=20)
+    title: Label
+    reporter: str = Field(default="", max_length=100)
+    decision_required: bool = False
+
+
+class AgendaItemsRequest(RevisionRequest):
+    items: list[AgendaItemInput] = Field(default_factory=list, max_length=30)
+
+
+class DecisionInput(MeetingInput):
+    """一条人工登记的会议决议或表决结果。"""
+
+    title: Label
+    result: Literal["approved", "principled", "rejected", "not_voted"] = "not_voted"
+    agree_count: int = Field(default=0, ge=0, le=100000)
+    oppose_count: int = Field(default=0, ge=0, le=100000)
+    abstain_count: int = Field(default=0, ge=0, le=100000)
+    note: str = Field(default="", max_length=2000)
+
+
+class DecisionsRequest(RevisionRequest):
+    decisions: list[DecisionInput] = Field(default_factory=list, max_length=30)
+
+
 class TopicFeedbackRequest(MeetingInput):
     org_unit_id: str | None = Field(default=None, max_length=36)
     topic: Label
