@@ -38,6 +38,8 @@ export function ExternalUpdatesDialog({ orgs = [], canManageSources = false, onC
   const [lastAttempt, setLastAttempt] = useState("");
   const [lastFetchError, setLastFetchError] = useState("");
   const [scopeOrgId, setScopeOrgId] = useState("");
+  const [sourceHealth, setSourceHealth] = useState([]);
+  const [checkingSources, setCheckingSources] = useState(false);
 
   async function load(scope = scopeOrgId) {
     setLoading(true);
@@ -179,6 +181,19 @@ export function ExternalUpdatesDialog({ orgs = [], canManageSources = false, onC
     }
   }
 
+  async function checkSources() {
+    setCheckingSources(true);
+    setError(null);
+    try {
+      const result = await backend.externalSourceHealth();
+      setSourceHealth(result.items || []);
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setCheckingSources(false);
+    }
+  }
+
   async function review(item, decision) {
     setBusy(item.id);
     setError(null);
@@ -253,6 +268,38 @@ export function ExternalUpdatesDialog({ orgs = [], canManageSources = false, onC
                 />
                 {source}
               </label>
+            ))}
+            <button
+              type="button"
+              className="text-button"
+              disabled={checkingSources || Boolean(busy)}
+              onClick={checkSources}
+            >
+              {checkingSources ? "检查中…" : "检查来源连通性"}
+            </button>
+          </div>
+        )}
+        {canManageSources && sourceHealth.length > 0 && (
+          <div className="external-source-health">
+            {sourceHealth.map((item) => (
+              <span key={item.name}>
+                {item.name}
+                <Badge
+                  tone={
+                    item.status === "ok"
+                      ? "green"
+                      : item.status === "error"
+                        ? "orange"
+                        : "gray"
+                  }
+                >
+                  {item.status === "ok"
+                    ? "可访问"
+                    : item.status === "disabled"
+                      ? "已停用"
+                      : "连接失败"}
+                </Badge>
+              </span>
             ))}
           </div>
         )}

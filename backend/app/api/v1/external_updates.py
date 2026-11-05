@@ -23,6 +23,7 @@ from app.schemas.external import (
 from app.services.external_update_service import (
     FOCUS_TOPICS,
     SOURCE_MAP,
+    check_source_health,
     fetch_updates,
     get_external_sources,
     get_focus_topics,
@@ -148,6 +149,20 @@ async def update_external_preferences(
             "sources": sources,
             "available_sources": list(SOURCE_MAP),
         },
+        trace_id=_trace(request),
+    )
+
+
+@router.get("/external-updates/source-health", response_model=APIResponse[dict])
+async def external_source_health(
+    request: Request,
+    user: User = Depends(_manage),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """检查当前学校启用来源的公开页面连通性，不触发资料审核。"""
+    _ensure_school(user)
+    return APIResponse(
+        data={"items": await check_source_health(db, str(user.tenant_id))},
         trace_id=_trace(request),
     )
 

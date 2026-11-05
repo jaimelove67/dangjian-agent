@@ -318,6 +318,55 @@ async def _article(
     }
 
 
+async def check_source_health(db: AsyncSession, tenant_id: str) -> list[dict[str, Any]]:
+    """按当前学校启用的来源做一次只读连通性检查，不写入待审核台账。"""
+    enabled = set(await get_external_sources(db, tenant_id))
+    results: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0),
+        follow_redirects=True,
+        headers={"User-Agent": USER_AGENT},
+    ) as client:
+        for name, url, domain in EXTERNAL_SOURCES:
+            if name not in enabled:
+                results.append(
+                    {
+                        "name": name,
+                        "url": url,
+                        "enabled": False,
+                        "status": "disabled",
+                        "message": "当前学校未启用",
+                    }
+                )
+                continue
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                final_host = (response.url.host or "").lower()
+                if final_host != domain and not final_host.endswith("." + domain):
+                    raise ValueError("重定向到非白名单域名")
+                results.append(
+                    {
+                        "name": name,
+                        "url": url,
+                        "enabled": True,
+                        "status": "ok",
+                        "message": f"HTTP {response.status_code}",
+                    }
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "name": name,
+                        "url": url,
+                        "enabled": True,
+                        "status": "error",
+                        "message": str(exc)[:200],
+                    }
+                )
+    return results
+
+
 async def _record_fetch_state(
     db: AsyncSession,
     tenant_id: str,

@@ -180,6 +180,8 @@ export const backend = {
     }),
   fetchExternalUpdates: () =>
     request("/external-updates/fetch", { method: "POST", timeout: 120000 }),
+  externalSourceHealth: () =>
+    request("/external-updates/source-health", { timeout: 60000 }),
   reviewExternalUpdate: (id, body) =>
     request(`/external-updates/${encodeURIComponent(id)}/review`, {
       method: "POST",
