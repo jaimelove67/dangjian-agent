@@ -262,6 +262,7 @@ async def publish_template(
         select(func.max(MeetingDocumentTemplate.version)).where(
             MeetingDocumentTemplate.tenant_id == tenant_id,
             MeetingDocumentTemplate.org_unit_id == org_unit_id,
+            MeetingDocumentTemplate.status.in_(("published", "superseded")),
             MeetingDocumentTemplate.is_deleted.is_(False),
         )
     )
