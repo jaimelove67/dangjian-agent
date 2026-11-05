@@ -14,6 +14,8 @@ import {
   CheckCircle,
   ArrowRight,
   Flag,
+  CaretRight,
+  WarningCircle,
   CircleNotch,
   Trash,
 } from "@phosphor-icons/react";
@@ -111,6 +113,21 @@ function escapeHtml(value) {
         "'": "&#39;",
       })[character],
   );
+}
+function meetingDateParts(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match
+    ? { day: match[3], month: `${Number(match[2])}月`, year: match[1] }
+    : { day: "--", month: "日期待定", year: "" };
+}
+function meetingStatusTone(status) {
+  return {
+    待审核: "blue",
+    待召开: "orange",
+    已完成: "green",
+    已归档: "green",
+    已退回: "red",
+  }[status] || "gray";
 }
 function normalizeMeeting(m) {
   return {
@@ -250,6 +267,7 @@ export function Meetings() {
   const [documentSettingsOpen, setDocumentSettingsOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [docTab, setDocTab] = useState("议题");
+  const [statusFilter, setStatusFilter] = useState("全部");
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
   );
@@ -350,7 +368,7 @@ export function Meetings() {
   useEffect(() => {
     setDocTab("议题");
   }, [selected]);
-  const filtered = scopedMeetings(data, session, IS_LIVE).filter(
+  const scopedRecords = scopedMeetings(data, session, IS_LIVE).filter(
     (m) =>
       m.title.includes(query) &&
       (tab === "课程管理"
@@ -359,7 +377,29 @@ export function Meetings() {
           ? m.status !== "待召开"
           : true),
   );
+  const statusFilters = ["全部", "待召开", "待审核", "已完成", "已归档", "已退回"];
+  const statusCounts = Object.fromEntries(
+    statusFilters.map((status) => [
+      status,
+      status === "全部"
+        ? scopedRecords.length
+        : scopedRecords.filter((m) => m.status === status).length,
+    ]),
+  );
+  const filtered = scopedRecords.filter(
+    (m) => statusFilter === "全部" || m.status === statusFilter,
+  );
   const current = filtered.find((m) => m.id === selected) || filtered[0];
+  const currentOrgName = current
+    ? orgs.find((org) => org.id === current.orgId)?.name ||
+      (/^[0-9a-f-]{36}$/i.test(current.organization || "")
+        ? "所属支部"
+        : current.organization) ||
+      "所属支部"
+    : "";
+  const currentEditable = Boolean(
+    current && canEdit && ["待召开", "已退回"].includes(current.status),
+  );
   const imageCount = formImages.length + pendingImages.length;
   async function submitReview(e) {
     e.preventDefault();
@@ -703,16 +743,22 @@ ${sectionsHtml}
   }
 
   return (
-    <section className="panel workspace-panel">
+    <section className="panel workspace-panel meetings-page">
       <PageHeader
         title="三会一课"
-        subtitle="落实组织生活制度，提升支部工作质效"
+        subtitle={
+          session.user.role === "organizer"
+            ? "登记会议信息与文书，提交审核由支部书记办理"
+            : session.user.role === "branch_secretary"
+              ? "创建会议、核对记录并提交审核"
+              : "查阅组织生活记录、审核状态与归档文书"
+        }
         action={
           canManageExternal ||
           canSuggestTopics ||
           canConfigureDocuments ||
           (IS_LIVE && canEdit) ? (
-            <div className="page-header-actions">
+            <div className="page-header-actions meeting-page-actions">
               {canConfigureDocuments && (
                 <>
                   <button
@@ -731,27 +777,6 @@ ${sectionsHtml}
                   </button>
                 </>
               )}
-              {IS_LIVE && canEdit && (
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => {
-                    setRebuildError(null);
-                    setRebuildOpen(true);
-                  }}
-                >
-                  批量重建草稿文书
-                </button>
-              )}
-              {canSuggestTopics && (
-                <button
-                  type="button"
-                  className="button primary"
-                  onClick={() => setTopicOpen(true)}
-                >
-                  推荐主题
-                </button>
-              )}
               {canManageExternal && (
                 <button
                   type="button"
@@ -760,6 +785,31 @@ ${sectionsHtml}
                 >
                   最新资料
                 </button>
+              )}
+              {canSuggestTopics && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setTopicOpen(true)}
+                >
+                  推荐主题
+                </button>
+              )}
+              {IS_LIVE && canEdit && (
+                <details className="meeting-overflow">
+                  <summary className="button secondary">更多</summary>
+                  <div className="meeting-overflow-menu">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRebuildError(null);
+                        setRebuildOpen(true);
+                      }}
+                    >
+                      批量重建草稿文书
+                    </button>
+                  </div>
+                </details>
               )}
             </div>
           ) : undefined
@@ -771,210 +821,349 @@ ${sectionsHtml}
         onChange={setTab}
       />
       {error && !editing && <ErrorBox error={error} retry={load} />}
-      <div className="meeting-layout">
-        <aside className="meeting-list-pane">
+      <div className="meeting-workbench">
+        <aside className="meeting-queue">
+          <div className="meeting-queue-head">
+            <div>
+              <span className="meeting-queue-label">会议队列</span>
+              <strong>{filtered.length} 场</strong>
+            </div>
+            {canEdit && (
+              <button
+                type="button"
+                className="button primary meeting-queue-new"
+                onClick={() => openEditor({})}
+              >
+                <Plus size={15} />
+                新增会议
+              </button>
+            )}
+          </div>
           <SearchInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="输入会议名称搜索"
+            placeholder="搜索会议名称"
           />
-          <div className="meeting-record-list">
-            {filtered.map((m) => (
+          <div className="meeting-status-filter" role="tablist" aria-label="按状态筛选">
+            {statusFilters.map((status) => (
               <button
-                key={m.id}
-                className={current?.id === m.id ? "active" : ""}
-                onClick={() => setSelected(m.id)}
+                key={status}
+                type="button"
+                role="tab"
+                aria-selected={statusFilter === status}
+                className={statusFilter === status ? "active" : ""}
+                onClick={() => setStatusFilter(status)}
               >
-                <h3>{m.title}</h3>
-                <p>
-                  {m.date} <span>·</span> {m.type}
-                </p>
-                <Badge>{m.status}</Badge>
+                {status}
+                <span>{statusCounts[status]}</span>
               </button>
             ))}
+          </div>
+          <div className="meeting-record-stack">
+            {filtered.map((m) => {
+              const parts = meetingDateParts(m.date);
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`meeting-record ${current?.id === m.id ? "active" : ""}`}
+                  onClick={() => setSelected(m.id)}
+                >
+                  <span className="meeting-record-date">
+                    <strong>{parts.day}</strong>
+                    <small>{parts.month}</small>
+                  </span>
+                  <span className="meeting-record-main">
+                    <span className="meeting-record-top">
+                      <span className="meeting-record-type">{m.type}</span>
+                      <Badge tone={meetingStatusTone(m.status)}>{m.status}</Badge>
+                    </span>
+                    <strong className="meeting-record-title">{m.title}</strong>
+                    <span className="meeting-record-meta">
+                      <Clock size={12} />
+                      {m.time || "时间待定"}
+                      {m.location ? (
+                        <>
+                          <span>·</span>
+                          {m.location}
+                        </>
+                      ) : null}
+                    </span>
+                  </span>
+                  <CaretRight size={14} className="meeting-record-chevron" />
+                </button>
+              );
+            })}
             {!filtered.length && !busy && (
               <Empty
                 title="暂无会议记录"
-                description="可以新建一条会议计划。"
+                description="调整筛选条件，或新建一条会议计划。"
               />
             )}
             {busy && !editing && <Loading />}
           </div>
+          {canEdit && (
+            <div className="meeting-queue-guide">
+              <div className="meeting-queue-guide-head">
+                <span>办理提示</span>
+                <Flag size={14} />
+              </div>
+              <ol>
+                {session.user.role === "organizer" ? (
+                  <>
+                    <li>登记会议信息、参会人员和现场记录</li>
+                    <li>生成并核对会议文书</li>
+                    <li>交支部书记提交审核</li>
+                  </>
+                ) : (
+                  <>
+                    <li>创建会议并核对会议资料</li>
+                    <li>填写真实记录并提交审核</li>
+                    <li>审核通过后确认归档</li>
+                  </>
+                )}
+              </ol>
+              <p>批量重建只处理草稿文书，不覆盖已审核记录。</p>
+            </div>
+          )}
         </aside>
         <div className="meeting-detail">
           {tab === "统计分析" ? (
-            <>
-              <PanelTitle title="组织生活概况" />
-              <div className="mini-stat-grid">
+            <div className="meeting-statistics">
+              <div className="meeting-statistics-head">
+                <PanelTitle title="组织生活概况" />
+                <p>仅统计当前已加载记录，年度频次以完整的组织生活台账为准。</p>
+              </div>
+              <div className="meeting-stat-grid">
                 {["支部大会", "支委会", "党小组会", "党课"].map((t) => (
                   <div key={t}>
-                    <p>{t}</p>
+                    <span>{t}</span>
                     <strong>
                       {
                         scopedMeetings(data, session, IS_LIVE).filter(
                           (m) => m.type === t,
                         ).length
                       }
-                      <small> 次</small>
                     </strong>
+                    <small>次会议</small>
                   </div>
                 ))}
               </div>
-              <div className="inline-note">
-                仅统计当前已加载记录，年度频次以完整的组织生活台账为准。
-              </div>
-            </>
-          ) : (
+            </div>
+          ) : current ? (
             <>
-              <PanelTitle title="会议详情" />
-              {current ? (
-                <>
+              <header className="meeting-detail-header">
+                <div className="meeting-detail-kicker">
+                  <Badge tone={meetingStatusTone(current.status)}>{current.status}</Badge>
+                  <span>{current.type}</span>
+                  <span className="meeting-kicker-dot">·</span>
+                  <span>{currentOrgName}</span>
+                </div>
+                <div className="meeting-detail-title-row">
+                  <div>
+                    <h2>{current.title}</h2>
+                    <p>
+                      {current.date}
+                      {current.time ? ` · ${current.time}` : ""}
+                      {current.location ? ` · ${current.location}` : ""}
+                    </p>
+                  </div>
                   <div className="meeting-detail-actions">
-                    {canEdit &&
-                      ["待召开", "已退回"].includes(current.status) && (
+                    {canSubmit && currentEditable && (
+                      <button
+                        className="button primary"
+                        disabled={busy || !current.minutes?.trim()}
+                        onClick={() => {
+                          setSubmitting(current);
+                          setError(null);
+                        }}
+                      >
+                        提交审核
+                      </button>
+                    )}
+                    {currentEditable && (
+                      <button
+                        className={canSubmit ? "button secondary" : "button primary"}
+                        onClick={() => openEditor(current)}
+                      >
+                        <PencilSimple size={15} />
+                        编辑会议记录
+                      </button>
+                    )}
+                    {IS_LIVE &&
+                      hasPermission(session, "meeting.archive") &&
+                      current.review_status === "approved" &&
+                      !current.archived_at && (
                         <button
-                          className="button secondary"
-                          onClick={() => openEditor(current)}
+                          className="button primary"
+                          disabled={busy}
+                          onClick={() => {
+                            setArchiving(current);
+                            setError(null);
+                          }}
                         >
-                          <PencilSimple size={16} />
-                          编辑
+                          确认归档
                         </button>
                       )}
                     <button
                       className="button secondary"
                       onClick={IS_LIVE ? exportDocx : exportRecord}
                     >
-                      <DownloadSimple size={16} />
+                      <DownloadSimple size={15} />
                       {IS_LIVE ? "导出 Word" : "导出记录"}
                     </button>
                     <button className="button secondary" onClick={printRecord}>
-                      打印 / 保存 PDF
+                      <FilePdf size={15} />
+                      打印 / PDF
                     </button>
-                    {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
-                      <button
-                        className="button secondary"
-                        disabled={busy}
-                        onClick={() => setAgendaSources(current)}
-                      >
-                        用最新资料生成会议文书
-                      </button>
-                    )}
-                    {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
-                      <button
-                        className="button secondary"
-                        disabled={busy}
-                        onClick={() => setAgendaEditor(current)}
-                      >
-                        编辑议题条目
-                      </button>
-                    )}
-                    {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
-                      <button
-                        className="button secondary"
-                        disabled={busy}
-                        onClick={() => setDecisionsEditor(current)}
-                      >
-                        编辑决议与表决
-                      </button>
-                    )}
-                    {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
-                      <button className="button secondary" disabled={busy || !current.minutes?.trim()}
-                        onClick={() => recordAction("generate-minutes", current, "根据已核对原始会议记录提取纪要")}>
-                        提取纪要
-                      </button>
-                    )}
-                    {canSubmit &&
-                      ["待召开", "已退回"].includes(current.status) && (
-                        <button
-                          className="button primary"
-                          disabled={busy || !current.minutes?.trim()}
-                          onClick={() => {
-                            setSubmitting(current);
-                            setError(null);
-                          }}
-                        >
-                          提交审核
-                        </button>
-                      )}
-                    {IS_LIVE && hasPermission(session, "meeting.archive") && current.review_status === "approved" && !current.archived_at && (
-                      <button className="button primary" disabled={busy} onClick={() => { setArchiving(current); setError(null); }}>
-                        确认归档
-                      </button>
-                    )}
                   </div>
-                  {IS_LIVE && current.missing?.length > 0 && (
-                    <div className="inline-note">核对提示：{current.missing.join("；")}。请核对实际情况、保存记录并提取纪要。</div>
+                </div>
+                {canEdit && !canSubmit && ["待召开", "已退回"].includes(current.status) && (
+                  <div className="meeting-role-note">
+                    <CheckCircle size={15} />
+                    组织员可登记和维护草稿，提交审核由支部书记办理。
+                  </div>
+                )}
+              </header>
+              <div className="meeting-facts">
+                <div>
+                  <CalendarBlank size={16} />
+                  <span>会议时间</span>
+                  <strong>
+                    {current.date}
+                    {current.time ? ` · ${current.time}` : ""}
+                  </strong>
+                </div>
+                <div>
+                  <MapPin size={16} />
+                  <span>会议地点</span>
+                  <strong>{current.location}</strong>
+                </div>
+                <div>
+                  <UsersThree size={16} />
+                  <span>主持人</span>
+                  <strong>{current.host}</strong>
+                </div>
+                <div>
+                  <PencilSimple size={16} />
+                  <span>记录人</span>
+                  <strong>{current.recorder || "待登记"}</strong>
+                </div>
+                <div>
+                  <UsersThree size={16} />
+                  <span>参会人数</span>
+                  <strong>
+                    {current.total
+                      ? `${current.attended} / ${current.total} 人`
+                      : "待登记"}
+                  </strong>
+                </div>
+                {IS_LIVE && (
+                  <div>
+                    <CalendarBlank size={16} />
+                    <span>实际召开</span>
+                    <strong>{current.held_on || "待登记"}</strong>
+                  </div>
+                )}
+              </div>
+              {IS_LIVE && current.missing?.length > 0 && (
+                <div className="meeting-check-note">
+                  <WarningCircle size={16} />
+                  <div>
+                    <strong>资料核对</strong>
+                    <p>
+                      {current.missing.join("；")}。请核对实际情况、保存记录并提取纪要。
+                    </p>
+                  </div>
+                </div>
+              )}
+              <section className="meeting-documents">
+                <div className="meeting-documents-head">
+                  <div>
+                    <h3>会议文书</h3>
+                    <p>按会议实际情况登记和核对，文书不作为会议已经召开的证明。</p>
+                  </div>
+                  {IS_LIVE && currentEditable && (
+                    <button
+                      type="button"
+                      className="button secondary"
+                      disabled={busy}
+                      onClick={() => setAgendaSources(current)}
+                    >
+                      用最新资料生成文书
+                    </button>
                   )}
-                  <dl className="meeting-metadata">
-                    <dt>会议名称</dt>
-                    <dd className="strong-text">{current.title}</dd>
-                    <dt>会议类型</dt>
-                    <dd>
-                      <Badge tone="red">{current.type}</Badge>
-                    </dd>
-                    <dt>{IS_LIVE ? "计划日期" : "召开时间"}</dt>
-                    <dd>
-                      {current.date} <span>{current.time}</span>
-                    </dd>
-                    {IS_LIVE && <><dt>实际召开日期</dt><dd>{current.held_on || "待登记"}</dd></>}
-                    <dt>召开地点</dt>
-                    <dd>{current.location}</dd>
-                    <dt>主 持 人</dt>
-                    <dd>{current.host}</dd>
-                    <dt>记 录 人</dt>
-                    <dd>{current.recorder || "待登记"}</dd>
-                    <dt>参加人数</dt>
-                    <dd>
-                      {current.attended} / {current.total} 人
-                    </dd>
-                  </dl>
-                  <div className="meeting-document-heading">
-                    <div>
-                      <h3>会议文书</h3>
-                      <p>议题、资料、通知、记录和填写模板分开呈现。</p>
-                    </div>
-                  </div>
-                  <div className="meeting-document-tabs" role="tablist" aria-label="会议文书">
-                    {[
-                      ["议题", "会议议题"],
-                      ["资料", "学习资料"],
-                      ["通知", "会议通知"],
-                      ["记录", "会议记录"],
-                      ["决议", "决议与表决"],
-                      ["模板", "记录模板"],
-                    ].map(([key, label]) => (
-                      <button
-                        key={key}
-                        type="button"
-                        role="tab"
-                        aria-selected={docTab === key}
-                        className={docTab === key ? "active" : ""}
-                        onClick={() => setDocTab(key)}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="meeting-document-panel">
-                    {docTab === "议题" && (
-                      <>
-                        {current.agendaItems?.length > 0 && (
-                          <div className="meeting-agenda-types">
-                            {current.agendaItems.map((item, index) => (
-                              <Badge tone="blue" key={`${item.type}-${index}`}>
-                                {item.type}
-                                {item.decision_required ? " · 需表决" : ""}
-                              </Badge>
-                            ))}
-                          </div>
+                </div>
+                <div className="meeting-document-tabs" role="tablist" aria-label="会议文书">
+                  {[
+                    ["议题", "会议议题"],
+                    ["资料", "学习资料"],
+                    ["通知", "会议通知"],
+                    ["记录", "会议记录"],
+                    ["决议", "决议与表决"],
+                    ["模板", "记录模板"],
+                  ].map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      role="tab"
+                      aria-selected={docTab === key}
+                      className={docTab === key ? "active" : ""}
+                      onClick={() => setDocTab(key)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="meeting-document-panel">
+                  {docTab === "议题" && (
+                    <>
+                      <div className="meeting-doc-section-head">
+                        <div>
+                          <h4>会议议题</h4>
+                          <p>
+                            {current.agendaItems?.length
+                              ? `${current.agendaItems.length} 个议题条目`
+                              : current.agenda
+                                ? "已生成议程文本，可继续补充议题条目"
+                                : "尚未登记议题条目"}
+                          </p>
+                        </div>
+                        {IS_LIVE && currentEditable && (
+                          <button
+                            type="button"
+                            className="button secondary"
+                            disabled={busy}
+                            onClick={() => setAgendaEditor(current)}
+                          >
+                            编辑议题条目
+                          </button>
                         )}
-                        <pre className="agenda-box">
-                          {current.agenda || "尚未登记会议议题"}
-                        </pre>
-                      </>
-                    )}
-                    {docTab === "资料" &&
-                      (current.sources?.length > 0 ? (
+                      </div>
+                      {current.agendaItems?.length > 0 && (
+                        <div className="meeting-agenda-types">
+                          {current.agendaItems.map((item, index) => (
+                            <Badge tone="blue" key={`${item.type}-${index}`}>
+                              {item.type}
+                              {item.decision_required ? " · 需表决" : ""}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      <pre className="agenda-box meeting-paper">
+                        {current.agenda || "尚未登记会议议题"}
+                      </pre>
+                    </>
+                  )}
+                  {docTab === "资料" && (
+                    <>
+                      <div className="meeting-doc-section-head">
+                        <div>
+                          <h4>学习资料</h4>
+                          <p>只列名称、来源和日期，详细内容请查阅原文。</p>
+                        </div>
+                      </div>
+                      {current.sources?.length > 0 ? (
                         <ul className="meeting-source-list">
                           {current.sources.map((source, index) => (
                             <li key={`${source.doc_id}-${index}`}>
@@ -999,28 +1188,81 @@ ${sectionsHtml}
                           ))}
                         </ul>
                       ) : (
-                        <p className="inline-note">
+                        <p className="meeting-doc-empty">
                           暂无学习资料。可由院系或学校管理员在“最新资料”中审核采用后，再生成会议文书。
                         </p>
-                      ))}
-                    {docTab === "通知" &&
-                      (current.notice ? (
-                        <pre className="agenda-box">{current.notice}</pre>
+                      )}
+                    </>
+                  )}
+                  {docTab === "通知" && (
+                    <>
+                      <div className="meeting-doc-section-head">
+                        <div>
+                          <h4>会议通知</h4>
+                          <p>会前通知和参会要求，按实际安排核对。</p>
+                        </div>
+                      </div>
+                      {current.notice ? (
+                        <pre className="agenda-box meeting-paper">{current.notice}</pre>
                       ) : (
-                        <p className="inline-note">
-                          尚未生成会议通知。可在会议详情点击“用最新资料生成议程”。
+                        <p className="meeting-doc-empty">
+                          尚未生成会议通知。可点击“用最新资料生成文书”后核对。
                         </p>
-                      ))}
-                    {docTab === "记录" &&
-                      (current.minutes ? (
-                        <pre className="agenda-box">{current.minutes}</pre>
+                      )}
+                    </>
+                  )}
+                  {docTab === "记录" && (
+                    <>
+                      <div className="meeting-doc-section-head">
+                        <div>
+                          <h4>会议记录</h4>
+                          <p>只登记真实会议内容，提交审核前须逐项核对。</p>
+                        </div>
+                        {IS_LIVE && currentEditable && (
+                          <button
+                            type="button"
+                            className="button secondary"
+                            disabled={busy || !current.minutes?.trim()}
+                            onClick={() =>
+                              recordAction(
+                                "generate-minutes",
+                                current,
+                                "根据已核对原始会议记录提取纪要",
+                              )
+                            }
+                          >
+                            提取纪要
+                          </button>
+                        )}
+                      </div>
+                      {current.minutes ? (
+                        <pre className="agenda-box meeting-paper">{current.minutes}</pre>
                       ) : (
-                        <p className="inline-note">
+                        <p className="meeting-doc-empty">
                           会议尚未召开，暂无会议记录。会议结束后请按实际情况填写，不使用模板代替真实记录。
                         </p>
-                      ))}
-                    {docTab === "决议" &&
-                      (current.decisions?.length > 0 ? (
+                      )}
+                    </>
+                  )}
+                  {docTab === "决议" && (
+                    <>
+                      <div className="meeting-doc-section-head">
+                        <div>
+                          <h4>决议与表决</h4>
+                          <p>按真实会议情况登记，不由会议文本自动推断。</p>
+                        </div>
+                        {IS_LIVE && currentEditable && (
+                          <button
+                            type="button"
+                            className="button secondary"
+                            disabled={busy}
+                            onClick={() => setDecisionsEditor(current)}
+                          >
+                            编辑决议与表决
+                          </button>
+                        )}
+                      </div>
+                      {current.decisions?.length > 0 ? (
                         <div className="meeting-decision-list">
                           {current.decisions.map((item, index) => (
                             <article key={`${item.title}-${index}`}>
@@ -1040,73 +1282,71 @@ ${sectionsHtml}
                           ))}
                         </div>
                       ) : (
-                        <p className="inline-note">
-                          尚未登记决议和表决结果。由组织人员点击“编辑决议与表决”按真实会议情况填写，系统不自动推断。
+                        <p className="meeting-doc-empty">
+                          尚未登记决议和表决结果。由组织人员点击“编辑决议与表决”按真实会议情况填写。
                         </p>
-                      ))}
-                    {docTab === "模板" && (
-                      <>
-                        <pre className="agenda-box">
-                          {current.recordTemplate || "暂无可用的会议记录模板"}
-                        </pre>
-                        <p className="inline-note">
-                          模板只提供格式和待填项目，不代表会议已经召开，也不能代替真实发言、表决结果和会议决议。
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  <div className="meeting-images-block">
-                    <div className="meeting-images-heading">
-                      <span>现场图片</span>
-                      <span>{current.images?.length || 0} 张</span>
-                    </div>
-                    {current.images?.length ? (
-                      <div className="meeting-image-grid">
-                        {current.images.map((image) => (
-                          <MeetingImage
-                            key={image.id}
-                            recordId={current.id}
-                            image={image}
-                            onClick={() =>
-                              setPreviewImage({
-                                recordId: current.id,
-                                image,
-                              })
-                            }
-                          />
-                        ))}
+                      )}
+                    </>
+                  )}
+                  {docTab === "模板" && (
+                    <>
+                      <div className="meeting-doc-section-head">
+                        <div>
+                          <h4>记录模板</h4>
+                          <p>只提供格式和待填项目，不代表会议已经召开。</p>
+                        </div>
                       </div>
-                    ) : (
-                      <p className="meeting-images-empty">
-                        尚未上传现场图片
-                        {canEdit && ["待召开", "已退回"].includes(current.status)
-                          ? "，可在编辑会议记录时补充。"
-                          : "。"}
+                      <pre className="agenda-box meeting-paper">
+                        {current.recordTemplate || "暂无可用的会议记录模板"}
+                      </pre>
+                      <p className="meeting-doc-empty">
+                        模板不能代替真实发言、表决结果和会议决议，正式记录仍须人工填写和审核。
                       </p>
-                    )}
+                    </>
+                  )}
+                </div>
+              </section>
+              <section className="meeting-images-block">
+                <div className="meeting-images-heading">
+                  <div>
+                    <h3>现场图片</h3>
+                    <span>{current.images?.length || 0} 张</span>
                   </div>
-                  <div className="meeting-source-note">
-                    <CheckCircle size={15} />
-                    {current.status === "已归档"
-                      ? "已归档记录只读，请保留版本。"
-                      : canEdit && !canSubmit
-                        ? "组织员可登记和维护草稿；提交审核由支部书记办理。"
-                        : "会议记录需经人工审核后归档。"}
+                </div>
+                {current.images?.length ? (
+                  <div className="meeting-image-grid">
+                    {current.images.map((image) => (
+                      <MeetingImage
+                        key={image.id}
+                        recordId={current.id}
+                        image={image}
+                        onClick={() =>
+                          setPreviewImage({
+                            recordId: current.id,
+                            image,
+                          })
+                        }
+                      />
+                    ))}
                   </div>
-                </>
-              ) : (
-                <Empty title="请选择或新建会议" />
-              )}
+                ) : (
+                  <p className="meeting-images-empty">
+                    尚未上传现场图片
+                    {currentEditable ? "，可在编辑会议记录时补充。" : "。"}
+                  </p>
+                )}
+              </section>
+              <div className="meeting-source-note">
+                <CheckCircle size={15} />
+                {current.status === "已归档"
+                  ? "已归档记录只读，请保留版本。"
+                  : "会议记录需经人工审核后归档。"}
+              </div>
             </>
-          )}
-          {canEdit && (
-            <button
-              className="button primary new-meeting"
-              onClick={() => openEditor({})}
-            >
-              <Plus size={17} />
-              新增会议
-            </button>
+          ) : (
+            <div className="meeting-detail-empty">
+              <Empty title="请选择或新建会议" />
+            </div>
           )}
         </div>
       </div>
