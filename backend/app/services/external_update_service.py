@@ -387,3 +387,33 @@ async def review_update(
     row.review_note = note[:2000]
     await db.flush()
     return row, doc
+
+
+async def review_updates_batch(
+    db: AsyncSession,
+    user: User,
+    update_ids: list[str],
+    decision: str,
+    note: str,
+) -> list[tuple[ExternalUpdate, KnowledgeDoc | None]]:
+    """按输入顺序批量审核；任一资料已处理时整体回滚，避免半批状态。"""
+    unique_ids = list(dict.fromkeys(update_ids))
+    existing = (
+        (
+            await db.execute(
+                select(ExternalUpdate).where(
+                    ExternalUpdate.id.in_(unique_ids),
+                    ExternalUpdate.tenant_id == str(user.tenant_id),
+                    ExternalUpdate.is_deleted.is_(False),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(existing) != len(unique_ids):
+        raise HTTPException(404, "部分外部资料不存在")
+    rows: list[tuple[ExternalUpdate, KnowledgeDoc | None]] = []
+    for update_id in unique_ids:
+        rows.append(await review_update(db, user, update_id, decision, note))
+    return rows

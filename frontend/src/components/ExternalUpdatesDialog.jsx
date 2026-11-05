@@ -22,6 +22,7 @@ export function ExternalUpdatesDialog({ onClose }) {
   const [message, setMessage] = useState("");
   const [focus, setFocus] = useState({ topics: [], available: [] });
   const [focusSaving, setFocusSaving] = useState(false);
+  const [selected, setSelected] = useState([]);
 
   async function load() {
     setLoading(true);
@@ -33,6 +34,7 @@ export function ExternalUpdatesDialog({ onClose }) {
       ]);
       setItems(result.items || []);
       setFocus(preferences || { topics: [], available: [] });
+      setSelected([]);
     } catch (failure) {
       setError(failure);
     } finally {
@@ -67,6 +69,46 @@ export function ExternalUpdatesDialog({ onClose }) {
       setError(failure);
     } finally {
       setFocusSaving(false);
+    }
+  }
+
+  const pendingItems = items.filter((item) => item.status === "pending");
+
+  function toggleSelected(id) {
+    setSelected((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id],
+    );
+  }
+
+  function toggleAllSelected() {
+    setSelected((current) =>
+      current.length === pendingItems.length
+        ? []
+        : pendingItems.map((item) => item.id),
+    );
+  }
+
+  async function batchReview(decision) {
+    if (!selected.length) return;
+    setBusy(`batch-${decision}`);
+    setError(null);
+    setMessage("");
+    try {
+      const result = await backend.batchReviewExternalUpdates({
+        ids: selected,
+        decision,
+        note: note.trim(),
+      });
+      await load();
+      setMessage(
+        `已批量${decision === "approve" ? "采用" : "标记不采用"} ${result.count} 条资料。`,
+      );
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setBusy("");
     }
   }
 
@@ -175,8 +217,25 @@ export function ExternalUpdatesDialog({ onClose }) {
           {busy === "fetch" ? "正在抓取…" : "抓取最新资料"}
         </button>
         <span className="toolbar-spacer" />
-        <span className="muted">仅抓取公开页面，不执行登录或绕过访问控制</span>
+        <span className="muted">已选 {selected.length} 条</span>
+        <button
+          className="button secondary"
+          type="button"
+          disabled={Boolean(busy) || !selected.length}
+          onClick={() => batchReview("reject")}
+        >
+          {busy === "batch-reject" ? "处理中…" : "批量不采用"}
+        </button>
+        <button
+          className="button secondary"
+          type="button"
+          disabled={Boolean(busy) || !selected.length}
+          onClick={() => batchReview("approve")}
+        >
+          {busy === "batch-approve" ? "处理中…" : "批量采用"}
+        </button>
       </div>
+      <p className="inline-note">仅抓取公开页面，不执行登录或绕过访问控制。</p>
       {error && <ErrorBox error={error} retry={load} />}
       {message && <p className="inline-note">{message}</p>}
       <div className="form-grid">
@@ -194,6 +253,18 @@ export function ExternalUpdatesDialog({ onClose }) {
         <table>
           <thead>
             <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  aria-label="全选待审核资料"
+                  checked={
+                    pendingItems.length > 0 &&
+                    selected.length === pendingItems.length
+                  }
+                  disabled={Boolean(busy) || !pendingItems.length}
+                  onChange={toggleAllSelected}
+                />
+              </th>
               <th>标题 / 来源</th>
               <th>发布日期</th>
               <th>状态</th>
@@ -208,6 +279,15 @@ export function ExternalUpdatesDialog({ onClose }) {
               };
               return (
                 <tr key={item.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`选择${item.title}`}
+                      checked={selected.includes(item.id)}
+                      disabled={Boolean(busy) || item.status !== "pending"}
+                      onChange={() => toggleSelected(item.id)}
+                    />
+                  </td>
                   <td>
                     <a
                       href={item.source_url}

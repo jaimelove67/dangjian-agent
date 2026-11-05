@@ -26,6 +26,7 @@ export function TopicSuggestionsDialog({
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState(null);
+  const [message, setMessage] = useState("");
 
   async function load(nextOrg = orgId) {
     setLoading(true);
@@ -45,6 +46,7 @@ export function TopicSuggestionsDialog({
   }
 
   useEffect(() => {
+    setMessage("");
     load();
   }, []);
 
@@ -79,6 +81,36 @@ export function TopicSuggestionsDialog({
         external_update_ids: topic.source_ids || [],
       });
       onCreated(next);
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function feedback(topic, decision) {
+    if (!orgId) return;
+    setBusy(`feedback-${topic.id}-${decision}`);
+    setError(null);
+    setMessage("");
+    try {
+      await backend.topicFeedback({
+        org_unit_id: orgId,
+        topic: topic.title,
+        activity_type: topic.activity_type,
+        decision,
+        source_ids: topic.source_ids || [],
+      });
+      if (decision === "useful") {
+        setMessage("已记录为有用主题，后续推荐会优先保留同类方向。");
+      } else {
+        await load(orgId);
+        setMessage(
+          decision === "done"
+            ? "已标记为已开展，后续不再重复推荐该主题。"
+            : "已记录为不相关，后续不再优先推荐该主题。",
+        );
+      }
     } catch (failure) {
       setError(failure);
     } finally {
@@ -140,6 +172,7 @@ export function TopicSuggestionsDialog({
         </p>
       )}
       {error && <ErrorBox error={error} />}
+      {message && <p className="inline-note">{message}</p>}
       {loading ? (
         <Loading />
       ) : topics.length ? (
@@ -170,6 +203,34 @@ export function TopicSuggestionsDialog({
                     {source.title}（{source.source_name} · {dateOnly(source.published_at)}）
                   </a>
                 ))}
+              </div>
+              <div className="topic-feedback-actions">
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={Boolean(busy)}
+                  onClick={() => feedback(topic, "useful")}
+                >
+                  {busy === `feedback-${topic.id}-useful` ? "记录中…" : "有用"}
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={Boolean(busy)}
+                  onClick={() => feedback(topic, "not_relevant")}
+                >
+                  {busy === `feedback-${topic.id}-not_relevant`
+                    ? "记录中…"
+                    : "不相关"}
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={Boolean(busy)}
+                  onClick={() => feedback(topic, "done")}
+                >
+                  {busy === `feedback-${topic.id}-done` ? "记录中…" : "已开展"}
+                </button>
               </div>
               <div className="modal-actions">
                 <button

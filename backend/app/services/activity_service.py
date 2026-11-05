@@ -18,11 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import Permission, has_permission
 from app.models.external import ExternalUpdate
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask
+from app.models.meeting_feedback import MeetingTopicFeedback
 from app.models.user import User
 from app.schemas.meeting import (
     ActivityCreate,
     ActivityUpdate,
     AgendaFromUpdates,
+    TopicFeedbackRequest,
     TopicSuggestionRequest,
     ImageMutation,
     ReviewRequest,
@@ -146,7 +148,11 @@ def _topic_for(title: str) -> tuple[str, str]:
 
 def _balanced_topics(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """优先不同类型，避免推荐结果全是同一种会议形式；资料不足时不强凑。"""
-    remaining = sorted(items, key=lambda item: item["sort"], reverse=True)
+    remaining = sorted(
+        items,
+        key=lambda item: (item.get("feedback_boost", 0), item["sort"]),
+        reverse=True,
+    )
     selected: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
     while remaining and len(selected) < 3:
@@ -792,6 +798,22 @@ class ActivityService:
         recent_titles = set((await self.db.execute(recent_query)).scalars().all())
         # 最近已开过的会议按主题归并，避免同一方向仅换一个标题就重复推荐。
         recent_topics = {_topic_for(title)[0] for title in recent_titles if title}
+        feedback: dict[str, str] = {}
+        if body.org_unit_id:
+            feedback = {
+                row.topic: row.decision
+                for row in (
+                    await self.db.execute(
+                        select(MeetingTopicFeedback).where(
+                            MeetingTopicFeedback.tenant_id == self.tenant_id,
+                            MeetingTopicFeedback.org_unit_id == body.org_unit_id,
+                            MeetingTopicFeedback.is_deleted.is_(False),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            }
         groups: dict[str, dict[str, Any]] = {}
         for row in rows:
             if any(word in row.title for word in TOPIC_IGNORE):
@@ -802,6 +824,8 @@ class ActivityService:
                 continue
             topic, activity_type = _topic_for(row.title)
             if topic in recent_titles or topic in recent_topics:
+                continue
+            if feedback.get(topic) in {"not_relevant", "done"}:
                 continue
             group = groups.setdefault(
                 topic,
@@ -817,6 +841,7 @@ class ActivityService:
                     "sort": datetime.min,
                 },
             )
+            group["feedback_boost"] = 1 if feedback.get(topic) == "useful" else 0
             if len(group["source_ids"]) >= 5:
                 continue
             group["sources"].append(
@@ -855,6 +880,49 @@ class ActivityService:
             "topics": topics,
             "refreshed": refresh,
             "focus_topics": focus_topics,
+        }
+
+    async def topic_feedback(self, body: TopicFeedbackRequest) -> dict[str, Any]:
+        """记录支部对推荐主题的判断，供后续推荐去重；不改变会议业务状态。"""
+        if body.org_unit_id and body.org_unit_id not in self.org_ids:
+            raise HTTPException(403, "所选组织不在当前账号授权范围内")
+        if not body.org_unit_id:
+            raise HTTPException(422, "请选择推荐主题所属组织")
+        row = (
+            await self.db.execute(
+                select(MeetingTopicFeedback)
+                .where(
+                    MeetingTopicFeedback.tenant_id == self.tenant_id,
+                    MeetingTopicFeedback.org_unit_id == body.org_unit_id,
+                    MeetingTopicFeedback.topic == body.topic,
+                    MeetingTopicFeedback.is_deleted.is_(False),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = MeetingTopicFeedback(
+                tenant_id=self.tenant_id,
+                org_unit_id=body.org_unit_id,
+                topic=body.topic,
+                activity_type=body.activity_type,
+                decision=body.decision,
+                source_ids=body.source_ids,
+                user_id=str(self.user.id),
+                note=body.note,
+            )
+            self.db.add(row)
+        else:
+            row.activity_type = body.activity_type
+            row.decision = body.decision
+            row.source_ids = body.source_ids
+            row.user_id = str(self.user.id)
+            row.note = body.note
+        await self.db.flush()
+        return {
+            "org_unit_id": row.org_unit_id,
+            "topic": row.topic,
+            "decision": row.decision,
         }
 
     async def generate_agenda_from_external(

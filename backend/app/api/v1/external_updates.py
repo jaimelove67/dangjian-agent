@@ -15,12 +15,17 @@ from app.deps import require_permissions
 from app.models.external import ExternalUpdate
 from app.models.user import User, UserRole
 from app.schemas.common import APIResponse
-from app.schemas.external import ExternalPreferencesRequest, ExternalReviewRequest
+from app.schemas.external import (
+    ExternalBatchReviewRequest,
+    ExternalPreferencesRequest,
+    ExternalReviewRequest,
+)
 from app.services.external_update_service import (
     FOCUS_TOPICS,
     fetch_updates,
     get_focus_topics,
     review_update,
+    review_updates_batch,
     set_focus_topics,
 )
 
@@ -158,6 +163,43 @@ async def fetch_external_updates(
         await db.rollback()
         raise
     return APIResponse(data=result, trace_id=_trace(request))
+
+
+@router.post("/external-updates/batch-review", response_model=APIResponse[dict])
+async def batch_review_external_updates(
+    body: ExternalBatchReviewRequest,
+    request: Request,
+    user: User = Depends(_manage),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """批量采用或不采用待审核资料；每条资料仍保留独立审核记录。"""
+    _ensure_school(user)
+    try:
+        rows = await review_updates_batch(db, user, body.ids, body.decision, body.note)
+        await audit_operation(
+            db,
+            request,
+            user,
+            action=f"batch_{body.decision}_external_update",
+            resource_type="external_update",
+            data_level="public",
+            new_value={
+                "ids": [str(row.id) for row, _ in rows],
+                "count": len(rows),
+                "note": body.note,
+            },
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    return APIResponse(
+        data={
+            "items": [_payload(row) for row, _ in rows],
+            "count": len(rows),
+        },
+        trace_id=_trace(request),
+    )
 
 
 @router.post("/external-updates/{update_id}/review", response_model=APIResponse[dict])

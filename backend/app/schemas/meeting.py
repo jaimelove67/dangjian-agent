@@ -101,6 +101,20 @@ class TopicSuggestionRequest(MeetingInput):
     org_unit_id: str | None = Field(default=None, max_length=36)
 
 
+class TopicFeedbackRequest(MeetingInput):
+    org_unit_id: str | None = Field(default=None, max_length=36)
+    topic: Label
+    activity_type: ACTIVITY_TYPE_OPTIONS
+    decision: Literal["useful", "not_relevant", "done"]
+    source_ids: list[DocId] = Field(default_factory=list, max_length=20)
+    note: str = Field(default="", max_length=500)
+
+    @field_validator("source_ids")
+    @classmethod
+    def unique_feedback_sources(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(values))
+
+
 class ActivityUpdate(RevisionRequest):
     scheduled_on: date | None = None
     held_on: date | None = None

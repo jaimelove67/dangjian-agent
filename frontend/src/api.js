@@ -181,6 +181,11 @@ export const backend = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  batchReviewExternalUpdates: (body) =>
+    request("/external-updates/batch-review", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   externalSuggestions: (meetingId) =>
     request(
       `/meeting/records/${encodeURIComponent(meetingId)}/external-suggestions`,
@@ -198,6 +203,11 @@ export const backend = {
       method: "POST",
       body: JSON.stringify(body),
       timeout: 120000,
+    }),
+  topicFeedback: (body) =>
+    request("/meeting/topic-feedback", {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
   createMeeting: (payload) =>
     request("/meeting/records", {

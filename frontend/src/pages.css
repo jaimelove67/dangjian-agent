@@ -2437,8 +2437,23 @@ button.meeting-image {
   color: #8b1e24;
   overflow-wrap: anywhere;
 }
+.topic-feedback-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #edf0f5;
+  font-size: 12px;
+}
+.topic-feedback-actions .text-button {
+  color: #7d8594;
+}
+.topic-feedback-actions .text-button:not(:disabled):hover {
+  color: var(--red);
+}
 .topic-suggestion-card .modal-actions {
-  margin-top: 14px;
+  margin-top: 10px;
 }
 .archive-checklist .inline-note span {
   display: block;

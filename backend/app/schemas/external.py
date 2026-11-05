@@ -18,3 +18,11 @@ class ExternalPreferencesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     topics: list[str] = Field(default_factory=list, max_length=12)
+
+
+class ExternalBatchReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    ids: list[str] = Field(min_length=1, max_length=50)
+    decision: Literal["approve", "reject"]
+    note: str = Field(default="", max_length=2000)

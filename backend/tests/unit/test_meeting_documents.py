@@ -98,3 +98,16 @@ def test_topic_selection_prefers_different_meeting_types():
         "party_lecture",
         "branch_committee_meeting",
     ]
+    assert (
+        _balanced_topics(
+            [
+                {"activity_type": "party_lecture", "sort": 1},
+                {
+                    "activity_type": "party_lecture",
+                    "sort": 2,
+                    "feedback_boost": 1,
+                },
+            ]
+        )[0]["sort"]
+        == 2
+    )

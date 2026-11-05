@@ -38,6 +38,7 @@ from app.schemas.meeting import (
     ReviewRequest,
     RevisionRequest,
     TaskCreate,
+    TopicFeedbackRequest,
     TopicSuggestionRequest,
     TaskHandle,
     TaskUpdate,
@@ -324,6 +325,36 @@ async def topic_suggestions(
         "suggest_meeting_topics",
         "meeting",
     )
+
+
+@router.post(
+    "/meeting/topic-feedback",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(_manage), Depends(_operator)],
+)
+async def topic_feedback(
+    body: TopicFeedbackRequest,
+    request: Request,
+    service: ActivityService = Depends(activity_service),
+) -> APIResponse[dict]:
+    """记录“有用 / 不相关 / 已开展”，只影响后续推荐，不自动改变会议状态。"""
+    result = await service.topic_feedback(body)
+    await audit_operation(
+        service.db,
+        request,
+        service.user,
+        action="feedback_meeting_topic",
+        resource_type="meeting_topic",
+        resource_id=None,
+        data_level="internal",
+        new_value={
+            "org_unit_id": body.org_unit_id,
+            "decision": body.decision,
+            "activity_type": body.activity_type,
+        },
+    )
+    await service.db.commit()
+    return APIResponse(data=result, trace_id=getattr(request.state, "trace_id", None))
 
 
 @router.post(
