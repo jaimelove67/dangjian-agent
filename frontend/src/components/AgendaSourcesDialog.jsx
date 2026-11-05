@@ -60,8 +60,8 @@ export function AgendaSourcesDialog({ record, onClose, onGenerated }) {
       const reason =
         note.trim() ||
         (useSources
-          ? "根据已审核的最新资料生成会议议程草稿"
-          : "不使用最新资料，按当前会议信息生成议程草稿");
+          ? "根据已审核的最新资料生成会议通知、议题单和记录模板"
+          : "不使用最新资料，按当前会议信息生成会议通知、议题单和记录模板");
       const next = useSources
         ? await backend.generateAgendaFromUpdates(record.id, {
             expected_revision: record.revision,
@@ -84,13 +84,13 @@ export function AgendaSourcesDialog({ record, onClose, onGenerated }) {
 
   return (
     <Modal
-      title="用最新资料生成议程"
+      title="用最新资料生成会议文书"
       wide
       flat
       onClose={() => !busy && onClose()}
     >
       <p className="inline-note">
-        勾选本次会议需要学习的最新资料，系统会一次性采用所选资料并生成议程草稿。生成内容仅作会前准备，不替代真实会议记录；参会人员、表决结果和会议决议仍由组织人工办理。
+        勾选本次会议需要学习的最新资料，系统会一次性采用所选资料，并分别生成会议通知、会议议题单和会议记录填写模板。生成内容仅作会前准备，不替代真实会议记录；参会人员、表决结果和会议决议仍由组织人工办理。
       </p>
       {error && <ErrorBox error={error} />}
       {loading ? (
@@ -185,7 +185,7 @@ export function AgendaSourcesDialog({ record, onClose, onGenerated }) {
           onClick={() => generate(true)}
         >
           <CheckCircle size={16} />
-          {busy ? "正在生成…" : `采用所选 ${selected.length} 条并生成议程`}
+          {busy ? "正在生成…" : `采用所选 ${selected.length} 条并生成会议文书`}
         </button>
       </div>
     </Modal>

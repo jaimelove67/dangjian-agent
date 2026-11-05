@@ -66,6 +66,9 @@ class ActivityCreate(MeetingInput):
     title: Label
     scheduled_on: date
     host: str = Field(default="", max_length=100)
+    location: str = Field(default="", max_length=200)
+    meeting_time: str = Field(default="", max_length=20)
+    recorder: str = Field(default="", max_length=100)
     participants: list[Participant] = Field(default_factory=list, max_length=500)
     source_doc_ids: list[DocId] = Field(default_factory=list, max_length=20)
     agenda: str = Field(default="", max_length=20000)
@@ -102,6 +105,9 @@ class ActivityUpdate(RevisionRequest):
     scheduled_on: date | None = None
     held_on: date | None = None
     host: str | None = Field(default=None, max_length=100)
+    location: str | None = Field(default=None, max_length=200)
+    meeting_time: str | None = Field(default=None, max_length=20)
+    recorder: str | None = Field(default=None, max_length=100)
     topic: Label | None = None
     participants: list[Participant] | None = Field(default=None, max_length=500)
     transcript: Annotated[str, StringConstraints(strip_whitespace=False)] | None = Field(

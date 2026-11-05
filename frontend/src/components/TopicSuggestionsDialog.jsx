@@ -71,11 +71,11 @@ export function TopicSuggestionsDialog({
         source_doc_ids: [],
         agenda: "",
         notice: "",
-        reason: "根据最新资料推荐创建会议草稿",
+        reason: "根据最新资料推荐创建会议草稿并生成会议文书",
       });
       const next = await backend.generateAgendaFromUpdates(meeting.id, {
         expected_revision: meeting.revision,
-        reason: "根据最新资料推荐创建会议草稿",
+        reason: "根据最新资料推荐创建会议草稿并生成会议文书",
         external_update_ids: topic.source_ids || [],
       });
       onCreated(next);

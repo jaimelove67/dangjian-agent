@@ -241,7 +241,8 @@ async def test_full_record_lifecycle_review_archive_and_stats(life_url):
             f"/meeting/records/{record['id']}/generate-agenda",
             {"expected_revision": record["revision"], "reason": "生成议程草稿"},
         )
-        assert "会议议程（草稿）" in record["context"]["agenda"]
+        assert "会议议题（草案）" in record["context"]["agenda"]
+        assert "会议记录（模板，请按实际填写）" in record["context"]["record_template"]
         assert "供支部委员会研究确定" in record["context"]["notice"]
 
         record = await ok(

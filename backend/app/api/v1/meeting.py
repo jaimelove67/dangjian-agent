@@ -337,7 +337,7 @@ async def generate_agenda(
     request: Request,
     service: ActivityService = Depends(activity_service),
 ) -> APIResponse[dict]:
-    """生成有真实摘录的通知与议程草稿，供支部研究确定。"""
+    """生成会议通知、议题单和记录模板，供支部研究确定。"""
     record = await service.generate_agenda(record_id, body)
     return await respond(
         request, service, await service.record_data(record), "generate_agenda", "meeting", record_id
@@ -370,7 +370,7 @@ async def generate_agenda_from_updates(
     request: Request,
     service: ActivityService = Depends(activity_service),
 ) -> APIResponse[dict]:
-    """批量采用所选外部资料，再生成会议议程草稿。"""
+    """批量采用所选外部资料，再生成通知、议题单和记录模板。"""
     record = await service.generate_agenda_from_external(record_id, body)
     if body.external_update_ids:
         await audit_operation(

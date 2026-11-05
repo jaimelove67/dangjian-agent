@@ -77,10 +77,11 @@ function normalizeMeeting(m) {
   return {
     ...m,
     date: m.scheduled_on,
-    time: "",
+    time: m.context?.meeting_time || m.time || "",
     type: TYPE_NAMES[m.activity_type] || "其他",
     activityType: m.activity_type,
     host: m.host,
+    recorder: m.context?.recorder || m.recorder || "",
     location: m.context?.location || "待登记",
     organization: m.org_name || m.org_unit_id,
     orgId: m.org_unit_id,
@@ -96,6 +97,10 @@ function normalizeMeeting(m) {
             ? "已退回"
             : "待召开",
     agenda: m.context?.agenda || "",
+    agendaItems: m.documents?.agenda_items || m.context?.agenda_items || [],
+    notice: m.documents?.notice || m.context?.notice || "",
+    recordTemplate:
+      m.documents?.record_template || m.context?.record_template || "",
     minutes: typeof m.transcript === "string" ? m.transcript : "",
     images: Array.isArray(m.context?.images)
       ? m.context.images
@@ -196,6 +201,7 @@ export function Meetings() {
   const [externalOpen, setExternalOpen] = useState(false);
   const [topicOpen, setTopicOpen] = useState(false);
   const [agendaSources, setAgendaSources] = useState(null);
+  const [docTab, setDocTab] = useState("议题");
   const [orgs, setOrgs] = useState(() =>
     IS_LIVE ? [] : scopedOrganizations(session),
   );
@@ -291,6 +297,9 @@ export function Meetings() {
   useEffect(() => {
     load();
   }, []);
+  useEffect(() => {
+    setDocTab("议题");
+  }, [selected]);
   const filtered = scopedMeetings(data, session, IS_LIVE).filter(
     (m) =>
       m.title.includes(query) &&
@@ -345,7 +354,7 @@ export function Meetings() {
       notify(
         {
           archive: "会议纪要已归档",
-          "generate-agenda": "会议议程草稿已生成，请核对最新资料与实际情况",
+          "generate-agenda": "会议通知、议题单和记录模板已生成，请核对最新资料与实际情况",
           "generate-minutes": "已从原文提取纪要，请核对后提交审核",
         }[action] || "会议记录已更新",
       );
@@ -379,6 +388,7 @@ export function Meetings() {
         activityType: TYPE_MAP[form.get("type") || editing.type],
         host: form.get("host").trim(),
         location: String(form.get("location") || "未登记").trim(),
+        recorder: String(form.get("recorder") || "").trim(),
         orgId: chosen.id,
         organization: chosen.name,
         agenda: form.get("agenda").trim(),
@@ -503,16 +513,26 @@ export function Meetings() {
     }
   }
   function exportRecord() {
+    const materials = (current.sources || [])
+      .map((source, index) => {
+        const date = source.effective_date
+          ? ` · ${String(source.effective_date).slice(0, 10)}`
+          : "";
+        return `${index + 1}. ${source.title}（${source.issuer || "来源待补"}${date}）${
+          source.source_url ? `\n   原文：${source.source_url}` : ""
+        }`;
+      })
+      .join("\n");
     downloadBlob(
       new Blob(
         [
-          `${current.title}\n\n会议类型：${current.type}\n召开时间：${current.date} ${current.time}\n召开地点：${current.location}\n主持人：${current.host}\n参会人数：${current.attended}/${current.total}\n\n会议议题\n${current.agenda}\n\n会议记录\n${current.minutes || "尚未登记"}\n\n${IS_LIVE ? "" : "本文件为工作记录，归档效力以学校制度及审核结果为准。"}`,
+          `${current.title}\n\n会议类型：${current.type}\n召开时间：${current.date} ${current.time}\n召开地点：${current.location}\n主持人：${current.host}\n记录人：${current.recorder || "待登记"}\n参会人数：${current.attended}/${current.total}\n\n会议通知\n${current.notice || "尚未生成"}\n\n会议议题\n${current.agenda || "尚未登记"}\n\n学习资料\n${materials || "暂无学习资料"}\n\n会议记录\n${current.minutes || "尚未登记"}\n\n${IS_LIVE ? "" : "本文件为工作记录，归档效力以学校制度及审核结果为准。"}`,
         ],
         { type: "text/plain;charset=utf-8" },
       ),
       `${current.title}.txt`,
     );
-    notify("会议记录已导出");
+    notify("会议文书已导出");
   }
   return (
     <section className="panel workspace-panel">
@@ -629,7 +649,7 @@ export function Meetings() {
                         disabled={busy}
                         onClick={() => setAgendaSources(current)}
                       >
-                        用最新资料生成议程
+                        用最新资料生成会议文书
                       </button>
                     )}
                     {IS_LIVE && canEdit && ["待召开", "已退回"].includes(current.status) && (
@@ -676,49 +696,113 @@ export function Meetings() {
                     <dd>{current.location}</dd>
                     <dt>主 持 人</dt>
                     <dd>{current.host}</dd>
+                    <dt>记 录 人</dt>
+                    <dd>{current.recorder || "待登记"}</dd>
                     <dt>参加人数</dt>
                     <dd>
                       {current.attended} / {current.total} 人
                     </dd>
-                    <dt>会议议题</dt>
-                    <dd className="agenda-box">
-                      {current.agenda || "尚未登记"}
-                    </dd>
-                    {current.sources?.length > 0 && (
+                  </dl>
+                  <div className="meeting-document-heading">
+                    <div>
+                      <h3>会议文书</h3>
+                      <p>议题、资料、通知、记录和填写模板分开呈现。</p>
+                    </div>
+                  </div>
+                  <div className="meeting-document-tabs" role="tablist" aria-label="会议文书">
+                    {[
+                      ["议题", "会议议题"],
+                      ["资料", "学习资料"],
+                      ["通知", "会议通知"],
+                      ["记录", "会议记录"],
+                      ["模板", "记录模板"],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        role="tab"
+                        aria-selected={docTab === key}
+                        className={docTab === key ? "active" : ""}
+                        onClick={() => setDocTab(key)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="meeting-document-panel">
+                    {docTab === "议题" && (
                       <>
-                        <dt>学习资料</dt>
-                        <dd>
-                          <ul className="meeting-source-list">
-                            {current.sources.map((source, index) => (
-                              <li key={`${source.doc_id}-${index}`}>
-                                {source.source_url ? (
-                                  <a
-                                    href={source.source_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    {source.title}
-                                  </a>
-                                ) : (
-                                  source.title
-                                )}
-                                <small>
-                                  {source.issuer}
-                                  {source.effective_date
-                                    ? ` · ${String(source.effective_date).slice(0, 10)}`
-                                    : ""}
-                                </small>
-                              </li>
+                        {current.agendaItems?.length > 0 && (
+                          <div className="meeting-agenda-types">
+                            {current.agendaItems.map((item, index) => (
+                              <Badge tone="blue" key={`${item.type}-${index}`}>
+                                {item.type}
+                              </Badge>
                             ))}
-                          </ul>
-                        </dd>
+                          </div>
+                        )}
+                        <pre className="agenda-box">
+                          {current.agenda || "尚未登记会议议题"}
+                        </pre>
                       </>
                     )}
-                    <dt>会议记录</dt>
-                    <dd className="agenda-box">
-                      {current.minutes || "会议尚未召开，暂无记录。"}
-                    </dd>
-                  </dl>
+                    {docTab === "资料" &&
+                      (current.sources?.length > 0 ? (
+                        <ul className="meeting-source-list">
+                          {current.sources.map((source, index) => (
+                            <li key={`${source.doc_id}-${index}`}>
+                              {source.source_url ? (
+                                <a
+                                  href={source.source_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {source.title}
+                                </a>
+                              ) : (
+                                source.title
+                              )}
+                              <small>
+                                {source.issuer}
+                                {source.effective_date
+                                  ? ` · ${String(source.effective_date).slice(0, 10)}`
+                                  : ""}
+                              </small>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="inline-note">
+                          暂无学习资料。可由院系或学校管理员在“最新资料”中审核采用后，再生成会议文书。
+                        </p>
+                      ))}
+                    {docTab === "通知" &&
+                      (current.notice ? (
+                        <pre className="agenda-box">{current.notice}</pre>
+                      ) : (
+                        <p className="inline-note">
+                          尚未生成会议通知。可在会议详情点击“用最新资料生成议程”。
+                        </p>
+                      ))}
+                    {docTab === "记录" &&
+                      (current.minutes ? (
+                        <pre className="agenda-box">{current.minutes}</pre>
+                      ) : (
+                        <p className="inline-note">
+                          会议尚未召开，暂无会议记录。会议结束后请按实际情况填写，不使用模板代替真实记录。
+                        </p>
+                      ))}
+                    {docTab === "模板" && (
+                      <>
+                        <pre className="agenda-box">
+                          {current.recordTemplate || "暂无可用的会议记录模板"}
+                        </pre>
+                        <p className="inline-note">
+                          模板只提供格式和待填项目，不代表会议已经召开，也不能代替真实发言、表决结果和会议决议。
+                        </p>
+                      </>
+                    )}
+                  </div>
                   <div className="meeting-images-block">
                     <div className="meeting-images-heading">
                       <span>现场图片</span>
@@ -888,7 +972,6 @@ export function Meetings() {
                   type="time"
                   defaultValue={editing.time || "14:30"}
                   required
-                  disabled={IS_LIVE}
                 />
               </Field>
               <Field label="主持人" required>
@@ -899,13 +982,20 @@ export function Meetings() {
                   required
                 />
               </Field>
+              <Field label="记录人">
+                <input
+                  name="recorder"
+                  defaultValue={editing.recorder}
+                  maxLength={100}
+                  placeholder="填写会议记录人"
+                />
+              </Field>
               <Field label="召开地点" required>
                 <input
                   name="location"
                   defaultValue={editing.location}
-                  maxLength={100}
+                  maxLength={200}
                   required
-                  disabled={IS_LIVE}
                 />
               </Field>
               <Field label="应到人数">
@@ -934,7 +1024,7 @@ export function Meetings() {
                   rows={3}
                   defaultValue={editing.agenda}
                   maxLength={3000}
-                  placeholder="逐项填写会议议程"
+                  placeholder="逐项填写会议议题；学习资料请在下方单独登记"
                 />
               </Field>
               {IS_LIVE && <Field label="实名参会记录（每行：人员编号 | 姓名 | 出席或缺席）" full>
@@ -1082,7 +1172,7 @@ export function Meetings() {
               ),
             );
             setAgendaSources(null);
-            notify("会议议程草稿已生成，请核对资料和实际情况");
+            notify("会议通知、议题单和记录模板已生成，请核对资料和实际情况");
           }}
         />
       )}

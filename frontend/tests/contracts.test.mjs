@@ -149,6 +149,9 @@ test("meeting create excludes context, transcript, attendance totals and revisio
     [
       "scheduled_on",
       "host",
+      "location",
+      "meeting_time",
+      "recorder",
       "agenda",
       "reason",
       "org_unit_id",

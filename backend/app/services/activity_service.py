@@ -144,6 +144,219 @@ def _topic_for(title: str) -> tuple[str, str]:
     return f"学习《{title[:36]}》", "party_lecture"
 
 
+def _balanced_topics(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """优先不同类型，避免推荐结果全是同一种会议形式；资料不足时不强凑。"""
+    remaining = sorted(items, key=lambda item: item["sort"], reverse=True)
+    selected: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    while remaining and len(selected) < 3:
+        preferred = next(
+            (item for item in remaining if counts.get(item["activity_type"], 0) < 2),
+            remaining[0],
+        )
+        selected.append(preferred)
+        remaining.remove(preferred)
+        activity_type = preferred["activity_type"]
+        counts[activity_type] = counts.get(activity_type, 0) + 1
+    return selected
+
+
+def _quoted_title(value: str) -> str:
+    title = _short_title(value, 60)
+    return title if title.startswith("《") and title.endswith("》") else f"《{title}》"
+
+
+def _learning_item(sources: list[dict[str, Any]]) -> str:
+    """学习事项只写材料名称，完整来源放在会议资料清单。"""
+    if not sources:
+        return "学习资料待补；请人工确定学习内容"
+    first = _quoted_title(sources[0]["title"])
+    if len(sources) == 1:
+        return f"传达学习{first}"
+    return f"传达学习{first}等{len(sources)}项资料"
+
+
+def _agenda_items(record: MeetingRecord, sources: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """按会议类型生成议题草案；未知决议留给人工补充，不自动编造。"""
+    topic = record.title.strip()
+    if record.activity_type == "party_lecture":
+        return [{"type": "党课", "title": f"党课主题：{topic}"}]
+    if record.activity_type == ORG_LIFE_ACTIVITY_TYPE:
+        return [
+            {
+                "type": "会前准备",
+                "title": "组织学习上级要求，开展谈心谈话、听取党员和群众意见",
+            },
+            {
+                "type": "会上安排",
+                "title": "通报上次整改落实情况，查摆问题，开展批评和自我批评，明确整改方向",
+            },
+        ]
+    items = [{"type": "学习类", "title": _learning_item(sources)}]
+    if record.activity_type == "branch_committee_meeting":
+        items.extend(
+            [
+                {
+                    "type": "研究类",
+                    "title": f"围绕“{topic}”研究贯彻落实措施",
+                },
+                {
+                    "type": "待定",
+                    "title": "其他需提交支部委员会讨论的事项（请人工补充）",
+                },
+            ]
+        )
+    elif record.activity_type == "branch_member_meeting":
+        items.extend(
+            [
+                {
+                    "type": "审议类",
+                    "title": "审议支部委员会提请支部党员大会讨论的事项（请人工补充具体事项）",
+                },
+                {
+                    "type": "表决类",
+                    "title": "讨论表决需由支部党员大会决定的事项（请人工补充具体事项）",
+                },
+            ]
+        )
+    elif record.activity_type == "party_group_meeting":
+        items.extend(
+            [
+                {
+                    "type": "讨论类",
+                    "title": f"围绕“{topic}”联系思想和工作实际交流发言",
+                },
+                {
+                    "type": "其他",
+                    "title": "其他需要党小组讨论的事项（请人工补充）",
+                },
+            ]
+        )
+    else:
+        items.extend(
+            [
+                {"type": "讨论类", "title": f"围绕“{topic}”开展讨论"},
+                {"type": "其他", "title": "其他事项（请人工补充）"},
+            ]
+        )
+    return items
+
+
+def _agenda_text(
+    record: MeetingRecord, sources: list[dict[str, Any]]
+) -> tuple[str, list[dict[str, str]]]:
+    items = _agenda_items(record, sources)
+    if record.activity_type == "party_lecture":
+        return (
+            "党课安排（草案）：\n"
+            f"党课主题：{record.title}\n"
+            "主讲人：待补（请人工补充）\n"
+            "学习资料：见会议资料清单\n"
+            "主要内容：请主讲人围绕党课主题补充。\n"
+            "讨论题：请结合学习资料和岗位实际补充。\n"
+            f"{ORGANIZATION_LIFE_NOTICE}",
+            items,
+        )
+    lines = "\n".join(f"{index}. {item['title']}" for index, item in enumerate(items, 1))
+    return (
+        f"会议议题（草案）：\n会议主题：{record.title}\n{lines}\n"
+        "学习资料：见会议资料清单。\n"
+        f"{ORGANIZATION_LIFE_NOTICE}",
+        items,
+    )
+
+
+def _participant_names(record: MeetingRecord) -> str:
+    return (
+        "、".join(
+            str(person.get("name", "")).strip()
+            for person in (record.participants or [])
+            if str(person.get("name", "")).strip()
+        )
+        or "参会人员待补"
+    )
+
+
+def _meeting_notice(record: MeetingRecord) -> str:
+    people = _participant_names(record)
+    context = record.context or {}
+    meeting_time = context.get("meeting_time") or "时间待补"
+    location = context.get("location") or "地点待补"
+    recorder = context.get("recorder") or "记录人待补"
+    if record.activity_type == ORG_LIFE_ACTIVITY_TYPE:
+        requirement = (
+            "会前要求：请参会党员围绕主题查摆问题、准备批评与自我批评发言；"
+            "支部组织谈心谈话并听取意见。"
+        )
+    elif record.activity_type == "party_lecture":
+        requirement = "有关要求：请主讲人提前准备党课内容，党员带着问题参加学习讨论。"
+    else:
+        requirement = "有关要求：请参会人员按时参加，因特殊情况不能参加的，须提前请假。"
+    return (
+        "会议通知（草案）：\n"
+        f"会议名称：{record.title}\n"
+        f"会议类型：{ACTIVITY_TYPES.get(record.activity_type, record.activity_type)}\n"
+        f"会议时间：{record.scheduled_on.isoformat()} {meeting_time}\n"
+        f"会议地点：{location}\n"
+        f"主持人：{record.host or '待补'}\n"
+        f"记录人：{recorder}\n"
+        f"参会范围：{people}\n"
+        "会议议题：见会议议题单。\n"
+        f"{requirement}\n"
+        f"{ORGANIZATION_LIFE_NOTICE}"
+    )
+
+
+def _record_template(record: MeetingRecord, sources: list[dict[str, Any]]) -> str:
+    """生成会议记录填写模板；只留占位，不代替真实发言、表决和决议。"""
+    context = record.context or {}
+    participants = record.participants or []
+    expected = len(participants) or "待补"
+    attended = (
+        sum(1 for person in participants if person.get("attended")) if participants else "待补"
+    )
+    absent = (
+        "、".join(
+            str(person.get("name", "")).strip()
+            for person in participants
+            if not person.get("attended") and str(person.get("name", "")).strip()
+        )
+        or "无或待补"
+    )
+    items = _agenda_items(record, sources)
+    if record.activity_type == "party_lecture":
+        topic_block = f"党课主题：{record.title}"
+        body = (
+            "党课内容：\n（请按主讲人实际讲授内容记录）\n\n"
+            "讨论情况：\n（请记录党员讨论发言和主要认识）"
+        )
+    elif record.activity_type == ORG_LIFE_ACTIVITY_TYPE:
+        topic_block = "\n".join(f"{index}. {item['title']}" for index, item in enumerate(items, 1))
+        body = (
+            "会议内容：\n（请记录通报、查摆问题、批评和自我批评情况）\n\n"
+            "整改方向：\n（请根据会议实际记录整改事项、责任人和完成时限）"
+        )
+    else:
+        topic_block = "\n".join(f"{index}. {item['title']}" for index, item in enumerate(items, 1))
+        body = (
+            "会议内容：\n（请按议题逐项记录实际讨论、发言和形成的意见）\n\n"
+            "会议决议：\n（仅对审议、表决事项填写；学习类议题不填写）"
+        )
+    return (
+        "会议记录（模板，请按实际填写）\n"
+        f"会议名称：{record.title}\n"
+        f"会议时间：{record.scheduled_on.isoformat()} "
+        f"{context.get('meeting_time') or '时间待补'}\n"
+        f"会议地点：{context.get('location') or '地点待补'}\n"
+        f"主持人：{record.host or '待补'}\n"
+        f"记录人：{context.get('recorder') or '记录人待补'}\n"
+        f"应到人数：{expected}；实到人数：{attended}；请假人员：{absent}；列席人员：待补\n"
+        f"会议议题：\n{topic_block}\n\n"
+        f"{body}\n"
+        f"{ORGANIZATION_LIFE_NOTICE}"
+    )
+
+
 def _execution_status(record: MeetingRecord) -> str:
     if record.archived_at:
         return "archived"
@@ -329,7 +542,14 @@ class ActivityService:
             participants=[person.model_dump() for person in body.participants],
             source_doc_ids=list(dict.fromkeys(body.source_doc_ids)),
             sources=sources,
-            context={"agenda": body.agenda, "notice": body.notice, "content_sources": sources},
+            context={
+                "agenda": body.agenda,
+                "notice": body.notice,
+                "location": body.location,
+                "meeting_time": body.meeting_time,
+                "recorder": body.recorder,
+                "content_sources": sources,
+            },
         )
         self.db.add(record)
         await self.db.flush()
@@ -374,6 +594,12 @@ class ActivityService:
             context["agenda"] = body.agenda
         if body.notice is not None:
             context["notice"] = body.notice
+        if body.location is not None:
+            context["location"] = body.location
+        if body.meeting_time is not None:
+            context["meeting_time"] = body.meeting_time
+        if body.recorder is not None:
+            context["recorder"] = body.recorder
         record.context = context
         reset_review(record)
         await self.save_revision(record, "meeting", "revise", body.reason)
@@ -608,7 +834,7 @@ class ActivityService:
             if stamp and stamp > group["sort"]:
                 group["sort"] = stamp
 
-        topics = sorted(groups.values(), key=lambda item: item["sort"], reverse=True)[:3]
+        topics = _balanced_topics(list(groups.values()))
         for topic in topics:
             source_names = list(dict.fromkeys(source["source_name"] for source in topic["sources"]))
             names = "、".join(source_names)
@@ -683,7 +909,7 @@ class ActivityService:
         return await self.generate_agenda(record_id, body)
 
     async def generate_agenda(self, record_id: str, body: RevisionRequest) -> MeetingRecord:
-        """生成通知与议程草稿；依据全部来自已选真实材料摘录。"""
+        """生成会议通知、议题单和会议记录模板；不生成真实决议或表决结果。"""
         record = await self.record(record_id, lock=True)
         self.check_revision(record, body.expected_revision)
         if record.archived_at:
@@ -695,48 +921,17 @@ class ActivityService:
             record.source_doc_ids,
             on=record.held_on or record.scheduled_on or date.today(),
         )
-        materials = (
-            "\n".join(
-                f"{index}. {_short_title(source['title'])}"
-                for index, source in enumerate(sources, 1)
-            )
-            or "学习资料待补；资料不足时不生成政策表述。"
-        )
-        people = "、".join(person["name"] for person in record.participants) or "参会人员待补"
-        if record.activity_type == ORG_LIFE_ACTIVITY_TYPE:
-            # 组织生活会的流程是"会前谈心谈话、会上批评与自我批评、会后整改"，
-            # 与三会一课"学材料—讨论—落实要求"不同，草稿不能互相套用。
-            agenda = (
-                f"会议议程（草稿）：\n一、会议主题：{record.title}\n"
-                f"二、会前准备：组织学习上级要求与本次主题，开展谈心谈话、听取党员和群众意见\n"
-                f"三、会上安排：通报上次整改落实情况，查摆问题，开展批评和自我批评，明确整改方向\n"
-                f"四、学习资料：\n{materials}\n"
-                f"五、参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
-            )
-            notice = (
-                f"会议通知（草稿）：\n会议名称：{record.title}\n"
-                f"计划时间：{record.scheduled_on.isoformat()}\n主持人：{record.host or '待补'}\n"
-                f"参会范围：{people}\n会前要求：请参会党员围绕主题查摆问题、"
-                f"准备批评与自我批评发言；支部组织谈心谈话并听取意见\n{ORGANIZATION_LIFE_NOTICE}"
-            )
-            template_version = "org-life-meeting-1"
-        else:
-            agenda = (
-                f"会议议程（草稿）：\n一、会议主题：{record.title}\n二、学习资料：\n{materials}\n"
-                f"三、讨论安排：请围绕上述资料酝酿意见\n四、参会范围：{people}\n"
-                f"{ORGANIZATION_LIFE_NOTICE}"
-            )
-            notice = (
-                f"会议通知（草稿）：\n会议名称：{record.title}\n"
-                f"计划时间：{record.scheduled_on.isoformat()}\n主持人：{record.host or '待补'}\n"
-                f"参会范围：{people}\n{ORGANIZATION_LIFE_NOTICE}"
-            )
-            template_version = "org-life-1"
+        agenda, agenda_items = _agenda_text(record, sources)
+        notice = _meeting_notice(record)
+        record_template = _record_template(record, sources)
+        template_version = f"{record.activity_type}-formal-1"
         record.sources = sources
         context = dict(record.context or {})
         context.update(
             agenda=agenda,
+            agenda_items=agenda_items,
             notice=notice,
+            record_template=record_template,
             content_sources=sources,
             agenda_template_version=template_version,
         )
@@ -956,10 +1151,19 @@ class ActivityService:
                 tasks=[],
             )
         else:
-            data["context"] = {
+            context = {
                 key: value
                 for key, value in (record.context or {}).items()
                 if key != "content_sources"
+            }
+            data["context"] = context
+            # 旧记录没有新版文书字段时，仍提供只含占位符的记录模板；
+            # 不会用模板冒充真实会议记录、表决结果或会议决议。
+            data["documents"] = {
+                "agenda_items": context.get("agenda_items", []),
+                "notice": context.get("notice", ""),
+                "record_template": context.get("record_template")
+                or _record_template(record, data["sources"]),
             }
         return data
 

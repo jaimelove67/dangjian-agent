@@ -79,6 +79,9 @@ export function meetingPayload(values, existing = {}) {
   const common = {
     scheduled_on: values.date,
     host: values.host,
+    location: values.location || "",
+    meeting_time: values.time || "",
+    recorder: values.recorder || "",
     agenda: values.agenda,
     reason: "组织人员人工维护会议资料",
   };
