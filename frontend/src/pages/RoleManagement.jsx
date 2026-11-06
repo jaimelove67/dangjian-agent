@@ -1836,6 +1836,113 @@ function DevelopmentProcedurePanel({
   );
 }
 
+const CHECKLIST_MATERIAL_TYPES = {
+  m01: "入党申请书",
+  m02: "党组织谈话记录",
+  m03: "群众评议材料",
+  m06: "公示情况报告",
+  m07: "上级审批意见",
+  m08: "培养考察记录",
+  m09: "思想汇报",
+  m10: "党课培训证明",
+  m15: "公示情况报告",
+  m16: "上级审批意见",
+  m18: "政治审查材料",
+  m20: "党课培训证明",
+  m23: "公示情况报告",
+  m25: "支部大会决议",
+  m27: "上级审批意见",
+  m29: "预备期考察记录",
+  m30: "思想汇报",
+  m31: "党课培训证明",
+  m32: "转正申请书",
+  m35: "公示情况报告",
+  m36: "支部大会决议",
+  m38: "上级审批意见",
+};
+
+function checklistMaterialType(item) {
+  return CHECKLIST_MATERIAL_TYPES[item.code] || "";
+}
+
+function MaterialGapSummary({
+  checklist,
+  canRegister,
+  onOpenChecklist,
+  onRegisterItem,
+}) {
+  if (!checklist) return null;
+  const items = (checklist.sections || []).flatMap(
+    (section) => section.items || [],
+  );
+  const missing = items.filter((item) => item.status === "missing");
+  const unconfirmed = items.filter((item) => item.status === "unconfirmed");
+  const attention = [...missing, ...unconfirmed];
+  if (!attention.length) {
+    return (
+      <div className="material-gap-summary is-clear">
+        <CheckCircle size={16} />
+        <span>系统核对：当前阶段材料已齐全，暂未发现缺失或待确认项。</span>
+        {onOpenChecklist && (
+          <button type="button" className="text-button" onClick={onOpenChecklist}>
+            查看完整目录
+          </button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <section className="material-gap-summary">
+      <div className="material-gap-summary-head">
+        <div>
+          <strong>系统自动核对：当前阶段材料缺口</strong>
+          <p>以下结果来自卷内目录，登记材料后会自动更新。</p>
+        </div>
+        <div className="material-gap-summary-meta">
+          <Badge tone="red">缺 {missing.length} 项</Badge>
+          <Badge tone="orange">待确认 {unconfirmed.length} 项</Badge>
+          {onOpenChecklist && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={onOpenChecklist}
+            >
+              完整目录
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="material-gap-list">
+        {attention.slice(0, 6).map((item) => {
+          const materialType = checklistMaterialType(item);
+          return (
+            <div className="material-gap-item" key={item.code}>
+              <Badge tone={item.status === "missing" ? "red" : "orange"}>
+                {item.status_label || (item.status === "missing" ? "缺失" : "待确认")}
+              </Badge>
+              <span>{item.name}</span>
+              {canRegister && item.status === "missing" && materialType && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => onRegisterItem(item)}
+                >
+                  去登记
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {attention.length > 6 && (
+        <p className="material-gap-more">
+          还有 {attention.length - 6} 项，请查看完整目录。
+        </p>
+      )}
+    </section>
+  );
+}
+
 function ArchiveChecklistPanel({ checklist, materials, onOpenMaterials, onDownload }) {
   if (!checklist) {
     return (
@@ -2039,6 +2146,15 @@ export function DevelopmentWorkbench() {
   const procedureState = detail?.procedures || emptyProcedureState();
   const policyChecks = detail?.policy_checks || {};
   const archiveChecklist = policyChecks.archive_checklist || null;
+  const materialGapItems = (archiveChecklist?.sections || []).flatMap(
+    (section) => section.items || [],
+  );
+  const materialGapMissing = materialGapItems.filter(
+    (item) => item.status === "missing",
+  );
+  const materialGapUnconfirmed = materialGapItems.filter(
+    (item) => item.status === "unconfirmed",
+  );
   const flowBoardData = IS_LIVE
     ? board
     : buildDemoFlowBoard(
@@ -2187,6 +2303,15 @@ export function DevelopmentWorkbench() {
         policyChecks.secondary_review?.status === "pending",
     );
   }
+  function openMaterialForChecklist(item) {
+    materialDraft.reset();
+    const materialType = checklistMaterialType(item);
+    if (materialType) materialDraft.edit("material_type", materialType);
+    setTab("材料清单");
+    setModal("material");
+    setError(null);
+  }
+
   function openTransitionShortcut(shortcut) {
     setError(null);
     if (shortcut.type === "procedure") {
@@ -3079,6 +3204,12 @@ export function DevelopmentWorkbench() {
                 />
               ) : tab === "材料清单" ? (
                 <>
+                  <MaterialGapSummary
+                    checklist={archiveChecklist}
+                    canRegister={canRegisterMaterials}
+                    onOpenChecklist={() => setTab("卷内目录")}
+                    onRegisterItem={openMaterialForChecklist}
+                  />
                   <div className="sub-toolbar">
                     <span>按组织要求核对具体材料</span>
                     {session.user.role !== "school_admin" && (
@@ -3495,8 +3626,27 @@ export function DevelopmentWorkbench() {
           onClose={() => !busy && setModal(null)}
         >
           <form onSubmit={save}>
-            <div className="form-grid">
-              {modal === "profile" ? (
+            {modal === "material" &&
+              (materialGapMissing.length > 0 ||
+                materialGapUnconfirmed.length > 0) && (
+                <div className="material-gap-modal-note">
+                  <strong>系统自动核对</strong>
+                  <p>
+                    {materialGapMissing.length
+                     ? `当前阶段还缺 ${materialGapMissing.length} 项：${materialGapMissing
+                         .slice(0, 6)
+                         .map((item) => item.name)
+                         .join("、")}${materialGapMissing.length > 6 ? "等" : ""}。`
+                     : "当前阶段没有缺失材料。"}
+                   {materialGapUnconfirmed.length
+                     ? `另有 ${materialGapUnconfirmed.length} 项待人工确认。`
+                     : ""}
+                 </p>
+                 <small>保存后材料清单和缺口数量会自动更新。</small>
+               </div>
+             )}
+           <div className="form-grid">
+             {modal === "profile" ? (
                 <>
                   <Field label="出生年月">
                     <input
