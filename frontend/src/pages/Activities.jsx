@@ -123,6 +123,9 @@ function escapeHtml(value) {
       })[character],
   );
 }
+function defaultMeetingDate() {
+  return new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+}
 function meetingDateParts(value) {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return match
@@ -1616,7 +1619,7 @@ ${sectionsHtml}
                 <input
                   name="date"
                   type="date"
-                  defaultValue={editing.date || "2026-10-28"}
+                  defaultValue={editing.date || defaultMeetingDate()}
                   required
                 />
               </Field>
@@ -1796,6 +1799,18 @@ ${sectionsHtml}
           orgs={orgs}
           session={session}
           onClose={() => setTopicOpen(false)}
+          onManualCreate={() => {
+            setTopicOpen(false);
+            openEditor({});
+          }}
+          onReviewMaterials={
+            canManageExternal
+              ? () => {
+                  setTopicOpen(false);
+                  setExternalOpen(true);
+                }
+              : undefined
+          }
           onCreated={(next) => {
             const normalized = normalizeMeeting(next);
             update("meetings", (prev) =>

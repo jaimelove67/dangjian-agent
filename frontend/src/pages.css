@@ -4262,3 +4262,72 @@ button.meeting-image {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+
+/* ????????????? */
+.topic-empty-state .empty {
+  padding-bottom: 22px;
+}
+.topic-empty-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -10px 0 20px;
+}
+.topic-recent-topics {
+  max-width: 560px;
+  margin: 0 auto 8px;
+  padding: 13px 15px;
+  border: 1px solid #e8ebf0;
+  border-radius: 7px;
+  background: #fbfcfd;
+}
+.topic-recent-topics h4 {
+  margin: 0 0 9px;
+  color: #4d5766;
+  font-size: 12px;
+  font-weight: 600;
+}
+.topic-recent-topics ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.topic-recent-topics li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #f0f2f5;
+}
+.topic-recent-topics li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.topic-recent-topics li strong {
+  color: #4d5766;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.topic-recent-topics li span {
+  flex: 0 0 auto;
+  color: #9aa2af;
+  font-size: 9.5px;
+}
+.topic-recent-topics p {
+  margin: 9px 0 0;
+  color: #9aa2af;
+  font-size: 10px;
+  line-height: 1.55;
+}
+@media (max-width: 560px) {
+  .topic-recent-topics li {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}

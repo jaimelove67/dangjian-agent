@@ -918,16 +918,46 @@ class ActivityService:
             .scalars()
             .all()
         )
-        recent_query = select(MeetingRecord.title).where(
+        # 去重只统计实际召开且已进入审核流程的会议；草稿和未来计划不占用推荐主题。
+        recent_query = select(
+            MeetingRecord.title,
+            MeetingRecord.held_on,
+            MeetingRecord.activity_type,
+        ).where(
             MeetingRecord.tenant_id == self.tenant_id,
             MeetingRecord.is_deleted.is_(False),
-            MeetingRecord.scheduled_on >= date.today() - timedelta(days=60),
+            MeetingRecord.held_on.is_not(None),
+            MeetingRecord.held_on >= date.today() - timedelta(days=60),
+            MeetingRecord.review_status.in_(("pending", "approved")),
         )
         if body.org_unit_id:
             recent_query = recent_query.where(MeetingRecord.org_unit_id == body.org_unit_id)
-        recent_titles = set((await self.db.execute(recent_query)).scalars().all())
+        recent_rows = (await self.db.execute(recent_query)).all()
+        recent_titles = {row.title for row in recent_rows if row.title}
         # 最近已开过的会议按主题归并，避免同一方向仅换一个标题就重复推荐。
         recent_topics = {_topic_for(title)[0] for title in recent_titles if title}
+        recent_topic_list: list[dict[str, Any]] = []
+        seen_recent_topics: set[str] = set()
+        for row in sorted(
+            recent_rows,
+            key=lambda item: item.held_on or date.min,
+            reverse=True,
+        ):
+            if not row.title:
+                continue
+            topic_title, _ = _topic_for(row.title)
+            if topic_title in seen_recent_topics:
+                continue
+            seen_recent_topics.add(topic_title)
+            recent_topic_list.append(
+                {
+                    "title": topic_title,
+                    "held_on": row.held_on,
+                    "activity_type_label": ACTIVITY_TYPES.get(row.activity_type, row.activity_type),
+                }
+            )
+            if len(recent_topic_list) >= 5:
+                break
         feedback: dict[str, str] = {}
         if body.org_unit_id:
             feedback = {
@@ -1008,6 +1038,7 @@ class ActivityService:
             topic.pop("sort", None)
         return {
             "topics": topics,
+            "recent_topics": recent_topic_list,
             "refreshed": refresh,
             "focus_topics": focus_topics,
         }

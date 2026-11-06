@@ -16,11 +16,14 @@ export function TopicSuggestionsDialog({
   session,
   onClose,
   onCreated,
+  onManualCreate,
+  onReviewMaterials,
 }) {
   const [orgId, setOrgId] = useState(
     orgs.find((org) => org.org_type === "branch")?.id || orgs[0]?.id || "",
   );
   const [topics, setTopics] = useState([]);
+  const [recentTopics, setRecentTopics] = useState([]);
   const [refreshed, setRefreshed] = useState(null);
   const [focusTopics, setFocusTopics] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -36,6 +39,7 @@ export function TopicSuggestionsDialog({
         org_unit_id: nextOrg || null,
       });
       setTopics(result.topics || []);
+      setRecentTopics(result.recent_topics || []);
       setRefreshed(result.refreshed || null);
       setFocusTopics(result.focus_topics || []);
     } catch (failure) {
@@ -247,10 +251,51 @@ export function TopicSuggestionsDialog({
           ))}
         </div>
       ) : (
-        <Empty
-          title="暂无合适的推荐主题"
-          description="可能还没有已审核的最新资料、与本校关注方向不匹配，或最近已开过相同主题。可以先在“最新资料”中抓取、审核并调整关注方向，或稍后重新推荐。"
-        />
+        <div className="topic-empty-state">
+          <Empty
+            title="暂无新的推荐主题"
+            description="系统不会重复推荐最近已开展的主题，也不会为凑数量生成主题。可以手动新建会议，或先补充、审核最新资料。"
+          />
+          <div className="topic-empty-actions">
+            {onManualCreate && (
+              <button
+                type="button"
+                className="button primary"
+                onClick={onManualCreate}
+              >
+                手动新建会议
+              </button>
+            )}
+            {onReviewMaterials && (
+              <button
+                type="button"
+                className="button secondary"
+                onClick={onReviewMaterials}
+              >
+                去审核最新资料
+              </button>
+            )}
+          </div>
+          {recentTopics.length > 0 && (
+            <div className="topic-recent-topics">
+              <h4>近期已开展主题</h4>
+              <ul>
+                {recentTopics.map((item) => (
+                  <li key={`${item.title}-${item.held_on || ""}`}>
+                    <strong>{item.title}</strong>
+                    <span>
+                      {item.activity_type_label || "组织生活"}
+                      {item.held_on
+                        ? ` · ${String(item.held_on).slice(0, 10)}`
+                        : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p>为避免重复，这些主题暂不放入新的推荐；如确需再次开展，可手动新建会议。</p>
+            </div>
+          )}
+        </div>
       )}
     </Modal>
   );
