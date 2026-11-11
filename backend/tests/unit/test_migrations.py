@@ -69,3 +69,13 @@ def test_self_service_migration_has_explicit_account_and_retry_constraints(offli
         "uq_member_material_submission UNIQUE (tenant_id, user_id, submission_key)" in offline_sql
     )
     assert "DROP TABLE member_profiles" not in offline_sql
+
+
+def test_material_review_migration_renders_reviewer_and_resubmission_fields(offline_sql):
+    assert "ALTER TABLE member_materials ADD COLUMN reviewed_by VARCHAR(36)" in offline_sql
+    assert "ALTER TABLE member_materials ADD COLUMN reviewed_at TIMESTAMP WITHOUT TIME ZONE" in offline_sql
+    assert (
+        "ALTER TABLE member_materials ADD COLUMN previous_material_id VARCHAR(36)"
+        in offline_sql
+    )
+    assert "ix_member_materials_previous" in offline_sql

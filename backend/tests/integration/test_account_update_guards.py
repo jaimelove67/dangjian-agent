@@ -59,7 +59,7 @@ def test_platform_cannot_remove_last_effective_school_administrator(workspace, c
 
 def test_linked_account_cannot_move_ahead_of_its_personal_archive(workspace):
     register_updates(workspace)
-    MemberProfile.__table__.create(workspace.session.get_bind())
+    MemberProfile.__table__.create(workspace.session.get_bind(), checkfirst=True)
     workspace.actor.role = UserRole.SCHOOL_ADMIN
     workspace.actor.org_unit_id = "school-a"
     workspace.session.add(

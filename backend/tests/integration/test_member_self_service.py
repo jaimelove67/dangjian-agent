@@ -18,7 +18,8 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.deps import get_current_user
 from app.models.audit import AuditLog
-from app.models.member import MemberMaterial, MemberProfile
+from app.models.meeting import ContentRevision
+from app.models.member import MemberMaterial, MemberMaterialReceipt, MemberProfile
 from app.models.org import OrgUnit
 from app.models.qa_session import QASession
 from app.models.user import User, UserRole
@@ -76,6 +77,8 @@ def workspace():
             OrgUnit.__table__,
             MemberProfile.__table__,
             MemberMaterial.__table__,
+            MemberMaterialReceipt.__table__,
+            ContentRevision.__table__,
             AuditLog.__table__,
             QASession.__table__,
         ],
@@ -461,6 +464,149 @@ def test_organization_can_bind_account_and_read_only_authorized_submissions(work
         workspace.client.get("/api/v1/member/self/archive").json()["data"]["profile"]["id"]
         == "unlinked-profile"
     )
+
+
+def test_material_receipt_records_current_viewer_and_owner_sees_latest(workspace):
+    identifier = submit(workspace).json()["data"]["id"]
+    workspace.user = actor("secretary", UserRole.BRANCH_SECRETARY)
+    listed = workspace.client.get(
+        "/api/v1/member/roster/self-profile/materials"
+    ).json()["data"]["items"]
+    assert listed[0]["my_viewed_at"] is None
+
+    first = workspace.client.post(
+        f"/api/v1/member/roster/self-profile/materials/{identifier}/receipt"
+    )
+    assert first.status_code == 200
+    assert first.json()["data"]["view_count"] == 1
+    listed = workspace.client.get(
+        "/api/v1/member/roster/self-profile/materials"
+    ).json()["data"]["items"]
+    assert listed[0]["my_viewed_at"]
+    assert listed[0]["last_viewed_at"]
+
+    # 材料所有者看到“组织已查阅”，但不会把组织回执当成自己的查阅。
+    workspace.user = actor("self")
+    own = workspace.client.get("/api/v1/member/self/materials").json()["data"]["items"]
+    assert own[0]["my_viewed_at"] is None
+    assert own[0]["last_viewed_at"]
+
+    workspace.user = actor("secretary", UserRole.BRANCH_SECRETARY)
+    second = workspace.client.post(
+        f"/api/v1/member/roster/self-profile/materials/{identifier}/receipt"
+    )
+    assert second.status_code == 200
+    assert second.json()["data"]["view_count"] == 2
+
+    workspace.user = actor("other", UserRole.BRANCH_SECRETARY, org="branch-b")
+    assert (
+        workspace.client.post(
+            f"/api/v1/member/roster/self-profile/materials/{identifier}/receipt"
+        ).status_code
+        == 404
+    )
+
+
+def test_branch_secretary_can_return_and_owner_can_resubmit_with_history(workspace):
+    identifier = submit(workspace).json()["data"]["id"]
+    workspace.session.add(
+        User(
+            id="secretary",
+            username="secretary",
+            name="支部书记",
+            password_hash="synthetic",
+            role=UserRole.BRANCH_SECRETARY,
+            tenant_id="tenant-a",
+            org_unit_id="branch-a",
+        )
+    )
+    workspace.session.commit()
+    workspace.user = actor("secretary", UserRole.BRANCH_SECRETARY)
+
+    returned = workspace.client.post(
+        f"/api/v1/member/roster/self-profile/materials/{identifier}/review",
+        json={"decision": "returned", "opinion": "请补充落款日期"},
+    )
+    assert returned.status_code == 200
+    data = returned.json()["data"]
+    assert data["material"]["review_status"] == "returned"
+    assert data["material"]["review_note"] == "请补充落款日期"
+    assert data["material"]["reviewer_name"] == "支部书记"
+    assert data["reviews"][0]["decision"] == "returned"
+    assert data["reviews"][0]["opinion"] == "请补充落款日期"
+
+    duplicate = workspace.client.post(
+        f"/api/v1/member/roster/self-profile/materials/{identifier}/review",
+        json={"decision": "approved", "opinion": "重复审核"},
+    )
+    assert duplicate.status_code == 409
+
+    workspace.user = actor("self")
+    listed = workspace.client.get("/api/v1/member/self/materials").json()["data"]["items"]
+    row = next(item for item in listed if item["id"] == identifier)
+    assert row["review_status"] == "returned"
+    assert row["review_note"] == "请补充落款日期"
+    assert row["reviewer_name"] == "支部书记"
+    history = workspace.client.get(
+        f"/api/v1/member/self/materials/{identifier}/reviews"
+    ).json()["data"]
+    assert history["reviews"][0]["opinion"] == "请补充落款日期"
+
+    resubmitted = submit(workspace, previous_material_id=identifier)
+    assert resubmitted.status_code == 200
+    new_id = resubmitted.json()["data"]["id"]
+    assert new_id != identifier
+    assert resubmitted.json()["data"]["previous_material_id"] == identifier
+    listed = workspace.client.get("/api/v1/member/self/materials").json()["data"]["items"]
+    assert {item["id"] for item in listed} >= {identifier, new_id}
+    new_history = workspace.client.get(
+        f"/api/v1/member/self/materials/{new_id}/reviews"
+    ).json()["data"]
+    assert new_history["previous_material"]["id"] == identifier
+    assert (
+        new_history["previous_material"]["reviews"][0]["opinion"]
+        == "请补充落款日期"
+    )
+
+
+def test_personal_material_review_requires_reviewer_and_rejects_self_review(workspace):
+    identifier = submit(workspace).json()["data"]["id"]
+    workspace.user = actor("organizer", UserRole.ORGANIZER)
+    assert (
+        workspace.client.post(
+            f"/api/v1/member/roster/self-profile/materials/{identifier}/review",
+            json={"decision": "approved"},
+        ).status_code
+        == 403
+    )
+    workspace.user = actor("other", UserRole.BRANCH_SECRETARY, org="branch-b")
+    assert (
+        workspace.client.post(
+            f"/api/v1/member/roster/self-profile/materials/{identifier}/review",
+            json={"decision": "approved"},
+        ).status_code
+        == 404
+    )
+    workspace.user = actor("self", UserRole.BRANCH_SECRETARY)
+    assert (
+        workspace.client.post(
+            f"/api/v1/member/roster/self-profile/materials/{identifier}/review",
+            json={"decision": "approved"},
+        ).status_code
+        == 403
+    )
+    workspace.user = actor("secretary", UserRole.BRANCH_SECRETARY)
+    missing_reason = workspace.client.post(
+        f"/api/v1/member/roster/self-profile/materials/{identifier}/review",
+        json={"decision": "returned", "opinion": ""},
+    )
+    assert missing_reason.status_code == 422
+    approved = workspace.client.post(
+        f"/api/v1/member/roster/self-profile/materials/{identifier}/review",
+        json={"decision": "approved", "opinion": "材料齐全"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["data"]["material"]["review_status"] == "approved"
 
 
 def test_binding_cannot_overwrite_or_duplicate_existing_account(workspace):

@@ -31,6 +31,9 @@ class QASession(Base):
     #: 本次回答参考的本人资料来源（档案 / 采集表 / 个人材料）元数据；
     # 只存名称和编号，不存个人材料正文。
     personal_sources: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    #: 本次回答使用的角色与权限范围快照（角色、业务范围、知识库范围）；
+    # 只存标签，不存账号姓名、组织名称或个人材料正文。
+    access_context: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     # 版本指纹（SEC-11 / T-SEC-11）：这条答案由哪个提示词版本、哪个工作流契约版本产出。
     # 允许为空：本功能上线前的历史记录没有留痕，界面显示"未留痕"而不是假装知道。
     versions: Mapped[Any | None] = mapped_column(JSON, nullable=True)

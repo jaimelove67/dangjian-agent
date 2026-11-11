@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   Sparkle,
   ShieldCheck,
@@ -66,6 +66,7 @@ import {
   exportCsv,
   downloadBlob,
 } from "../components";
+const AnswerContent = lazy(() => import("../components/AnswerContent"));
 const services = [
   {
     title: "政策法规解读",
@@ -120,6 +121,59 @@ const commonQuestions = [
   "分析本学期党员参与活动情况",
   "如何做好党员教育管理工作？",
 ];
+const SCOPE_LABELS = {
+  all: "平台范围",
+  school: "本校",
+  department: "本院系",
+  branch: "本支部",
+  self: "本人",
+};
+// 管理角色默认带入授权范围统计；平台管理员保持独立运维，不默认读取学校数据。
+const PERSONAL_DEFAULT_ROLES = new Set([
+  "school_admin",
+  "department_admin",
+  "branch_secretary",
+  "organizer",
+  "member",
+  "applicant",
+]);
+const ROLE_QUICK_PROMPTS = {
+  system_admin: [
+    "平台账号与权限管理有哪些要求？",
+    "如何检查系统运行状态？",
+    "知识库内容审核发布的要求是什么？",
+  ],
+  school_admin: [
+    "全校党员发展阶段分布如何？",
+    "全校还有多少材料待审核？",
+    "如何开展学校层面的三会一课督导？",
+  ],
+  department_admin: [
+    "本院系党员发展阶段分布如何？",
+    "本院系还有多少材料待审核？",
+    "如何指导支部开展组织生活？",
+  ],
+  branch_secretary: [
+    "支部党员大会、支委会、党小组会和党课的频次要求是什么？",
+    "本支部党员发展阶段分布如何？",
+    "组织员能代替我提交会议吗？",
+  ],
+  organizer: [
+    "三会一课记录模板有哪些必填内容？",
+    "支部会议提交前要核对什么？",
+    "本支部还有多少材料待核验？",
+  ],
+  member: [
+    "我现在还缺哪些材料？",
+    "我的发展阶段和下一步是什么？",
+    "发展对象转预备党员需要哪些材料？",
+  ],
+  applicant: [
+    "我现在还缺哪些材料？",
+    "我的登记进度到哪一步？",
+    "发展党员需要哪些材料？",
+  ],
+};
 function answerKindMeta(message) {
   const kind =
     message.answerKind ||
@@ -130,6 +184,9 @@ function answerKindMeta(message) {
         : message.personalSources?.length
           ? "personal"
           : "advisory");
+  const scopeOnly =
+    message.personalSources?.length > 0 &&
+    message.personalSources.every((item) => item.kind === "organization_scope");
   return (
     {
       grounded: {
@@ -140,15 +197,19 @@ function answerKindMeta(message) {
       },
       grounded_personal: {
         kind,
-        label: "制度依据 + 本人情况",
+        label: scopeOnly ? "制度依据 + 组织统计" : "制度依据 + 本人情况",
         tone: "blue",
-        next: "已结合本人资料；请核对引用原文和本人记录，敏感材料未参与本次回答。",
+        next: scopeOnly
+          ? "已结合当前账号授权范围内的汇总统计；不包含其他党员姓名或材料正文。"
+          : "已结合本人资料；请核对引用原文和本人记录，敏感材料未参与本次回答。",
       },
       personal: {
         kind,
-        label: "本人资料",
+        label: scopeOnly ? "授权范围统计" : "本人资料",
         tone: "blue",
-        next: "本次只依据本人资料整理；如需政策依据，可以继续追问对应的制度问题。",
+        next: scopeOnly
+          ? "本次只依据当前账号授权范围内的汇总统计；如需政策依据，可以继续追问制度问题。"
+          : "本次只依据本人资料整理；如需政策依据，可以继续追问对应的制度问题。",
       },
       advisory: {
         kind,
@@ -169,6 +230,46 @@ function answerKindMeta(message) {
       next: "请结合正式文件和组织意见核对。",
     }
   );
+}
+function noAnswerMeta(message) {
+  if (message.noAnswerReason)
+    return {
+      reason: message.noAnswerReason,
+      note:
+        message.noAnswerNote ||
+        "本次未检索到可直接引用的制度内容，请核对文件状态或补充文件名称、文号。",
+    };
+  if (message.citations?.length) return null;
+  const kind =
+    message.answerKind ||
+    (message.refused
+      ? "refused"
+      : message.personalSources?.length
+        ? "personal"
+        : "advisory");
+  if (kind === "grounded" || kind === "grounded_personal") return null;
+  if (kind === "personal")
+    return {
+      reason: "material_only",
+      note: "本次只依据你提供的材料或本人资料整理，不作为制度依据。",
+    };
+  const failedCitation = (message.warnings || []).some((warning) =>
+    /引用核验|非权威|已失效/.test(warning),
+  );
+  if (failedCitation)
+    return {
+      reason: "citation_failed",
+      note: "已找到相关内容，但未通过引用核验，暂不能作为结论。",
+    };
+  if ((message.retrievedCount || 0) > 0)
+    return {
+      reason: "low_score",
+      note: "已找到相关文件，但没有达到可引用阈值的段落；可补充文件名称、文号或具体条款后再问。",
+    };
+  return {
+    reason: "no_candidates",
+    note: "本次没有检索到可直接引用的制度片段。这不等于文件未上传：可能未发布、不在当前可见范围或已失效，请到党建工作库核对文件状态。",
+  };
 }
 function demoAnswer(q) {
   if (/方案|起草|模板|生成/.test(q))
@@ -242,7 +343,10 @@ function conversationFromRecords(conversationKey, records) {
       disclaimer: r.disclaimer,
       refused: r.refused,
       hasSufficientEvidence: r.has_sufficient_evidence,
+      retrievedCount: r.retrieved_count || 0,
       warnings: r.warnings || [],
+      noAnswerReason: r.no_answer_reason || "",
+      noAnswerNote: r.no_answer_note || "",
       personalSources: r.personal_sources || [],
       createdAt: new Date(r.created_at).getTime() || Date.now(),
     });
@@ -286,9 +390,8 @@ export function Assistant() {
   const { data, update, notify } = useStore();
   const [input, setInput] = useState(routeParams.prompt || "");
   const [includePersonal, setIncludePersonal] = useState(
-    ["member", "applicant", "branch_secretary", "organizer"].includes(
-      session.user.role,
-    ) || Boolean(session.user.profile_id),
+    PERSONAL_DEFAULT_ROLES.has(session.user.role) ||
+      Boolean(session.user.profile_id),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -391,6 +494,11 @@ export function Assistant() {
           (IS_LIVE || m.owner_id === session.user.id),
       )
     : [];
+  const roleInfo = ROLE_INFO[session.user.role];
+  const roleScope =
+    SCOPE_LABELS[roleInfo?.scope] || (session.user.profile_id ? "本人" : "当前账号");
+  const quickPrompts =
+    ROLE_QUICK_PROMPTS[session.user.role] || ROLE_QUICK_PROMPTS.member;
   useEffect(() => {
     if (routeParams.prompt) setInput(routeParams.prompt);
   }, [routeParams.prompt]);
@@ -447,7 +555,11 @@ export function Assistant() {
         disclaimer: answer.disclaimer,
         refused: answer.refused,
         hasSufficientEvidence: answer.has_sufficient_evidence,
+        retrievedCount: answer.retrieved_count || 0,
         warnings: answer.warnings || [],
+        noAnswerReason: answer.no_answer_reason || "",
+        noAnswerNote: answer.no_answer_note || "",
+        accessContext: answer.access_context || null,
         personalSources: answer.personal_sources || [],
         createdAt: Date.now(),
       });
@@ -583,6 +695,7 @@ export function Assistant() {
           <div className="chat-messages">
             {messages.map((m) => {
               const kindMeta = answerKindMeta(m);
+              const reasonMeta = noAnswerMeta(m);
               return (
               <div key={m.id} className={`message ${m.role}`}>
                 <div className="message-avatar">
@@ -596,20 +709,59 @@ export function Assistant() {
                   <div className="message-label">
                     {m.role === "assistant" ? "党建智能体" : "您"}
                     {m.role === "assistant" && (
-                      <Badge tone={kindMeta.tone}>{kindMeta.label}</Badge>
+                      <Badge tone={kindMeta.tone}>
+                        {reasonMeta?.reason === "citation_failed"
+                          ? "未通过核验"
+                          : kindMeta.label}
+                      </Badge>
                     )}
                   </div>
-                  <div className="message-text">{m.content}</div>
+                  <div
+                    className={`message-text ${
+                      m.role === "assistant" ? "assistant-text" : ""
+                    }`}
+                  >
+                    {m.role === "assistant" ? (
+                      <Suspense
+                        fallback={
+                          <span className="answer-loading">正在排版回答…</span>
+                        }
+                      >
+                        <AnswerContent
+                          content={m.content}
+                          citations={m.citations || []}
+                          onCitation={setCitation}
+                        />
+                      </Suspense>
+                    ) : (
+                      m.content
+                    )}
+                  </div>
                   {m.citations?.length > 0 && (
                     <div className="citations">
                       {m.citations.map((c, i) => (
                         <button
-                          key={c.doc_id || i}
+                          key={`${c.doc_id || "citation"}-${c.index ?? i}-${c.chunk_id || i}`}
                           onClick={() => setCitation(c)}
                         >
                           <FileText size={14} />[{c.index || i + 1}] {c.title}
                         </button>
                       ))}
+                    </div>
+                  )}
+                  {m.accessContext && (
+                    <div className="personal-sources access-context">
+                      <span>本次权限范围</span>
+                      <small>{m.accessContext.role_label}</small>
+                      <small>
+                        数据范围：{m.accessContext.business_scope_label}
+                      </small>
+                      <small>
+                        制度范围：
+                        {(m.accessContext.knowledge_scope_labels || []).join(
+                          "、",
+                        ) || "未配置"}
+                      </small>
                     </div>
                   )}
                   {m.personalSources?.length > 0 && (
@@ -631,7 +783,13 @@ export function Assistant() {
                       {w}
                     </p>
                   ))}
-                  {m.role === "assistant" && kindMeta.next && (
+                  {IS_LIVE && m.role === "assistant" && reasonMeta && (
+                    <div className={`answer-reason ${reasonMeta.reason}`}>
+                      <Info size={14} />
+                      <span>{reasonMeta.note}</span>
+                    </div>
+                  )}
+                  {m.role === "assistant" && kindMeta.next && !reasonMeta && (
                     <p className="answer-next-step">
                       <Info size={14} />
                       {kindMeta.next}
@@ -655,31 +813,15 @@ export function Assistant() {
         {error && <ErrorBox error={error} />}
         <div className="ai-quick-prompts">
           <span>可以这样问</span>
-          <button
-            type="button"
-            onClick={() => choose("发展对象转预备党员需要哪些材料？")}
-          >
-            查制度
-          </button>
-          {IS_LIVE && (
+          {quickPrompts.map((prompt) => (
             <button
               type="button"
-              onClick={() => {
-                setIncludePersonal(true);
-                choose("我现在还缺哪些材料？");
-              }}
+              key={prompt}
+              onClick={() => choose(prompt)}
             >
-              问我的情况
+              {prompt}
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() =>
-              choose("支部党员大会、支委会、党小组会和党课的频次要求是什么？")
-            }
-          >
-            问三会一课
-          </button>
+          ))}
         </div>
         <form className="ai-composer" onSubmit={send}>
           {IS_LIVE && (
@@ -690,7 +832,10 @@ export function Assistant() {
                 onChange={(event) => setIncludePersonal(event.target.checked)}
               />
               <span>参考我的资料</span>
-              <small>本人档案、材料和发展记录；管理角色另含授权范围统计</small>
+              <small>
+                {roleInfo?.label || "当前角色"} · {roleScope}；知识库按当前角色授权过滤，
+                管理角色另含授权范围统计
+              </small>
             </label>
           )}
           {IS_LIVE && (
@@ -797,12 +942,12 @@ export function Assistant() {
                   <p>检索到现行制度原文，结论带引用编号，可点开核对。</p>
                 </div>
                 <div>
-                  <Badge tone="blue">制度依据 + 本人情况</Badge>
-                  <p>制度依据之外，还参考了当前账号本人的档案或流程记录。</p>
+                  <Badge tone="blue">制度依据 + 本人/组织情况</Badge>
+                  <p>制度依据之外，还参考了本人档案、流程记录或当前账号授权范围内的汇总统计。</p>
                 </div>
                 <div>
-                  <Badge tone="blue">本人资料</Badge>
-                  <p>只回答“我是谁、我的阶段、我的支部”等本人事实，不作为制度依据。</p>
+                  <Badge tone="blue">本人资料 / 授权范围统计</Badge>
+                  <p>只回答本人事实或授权范围内的汇总数字，不作为制度依据；管理角色不返回其他党员姓名和材料正文。</p>
                 </div>
                 <div>
                   <Badge tone="orange">办理参考</Badge>
@@ -817,7 +962,13 @@ export function Assistant() {
             <section>
               <h3>本人资料边界</h3>
               <p>
-                只读取当前登录账号绑定的本人档案、材料清单、阶段流转、发展程序和待办提醒；不读取其他党员材料。身份证号、手机号等会脱敏，政治审查结论、支部大会票决等敏感详情不进入问答上下文。
+                只读取当前登录账号绑定的本人档案、材料清单、阶段流转、发展程序和待办提醒；不读取其他党员材料。管理角色开启后另读取授权范围内的汇总统计，只给数字和事项类型，不返回其他党员姓名或材料正文。身份证号、手机号等会脱敏，政治审查结论、支部大会票决等敏感详情不进入问答上下文。
+              </p>
+            </section>
+            <section>
+              <h3>角色权限怎么参与回答</h3>
+              <p>
+                系统按当前账号角色确定业务数据范围和知识库范围，并把角色职责交给模型：办理建议必须落在职责内，超出范围的事项会说明应由哪个角色办理。角色权限不会限制正常的制度提问，也不会因为提问中的“已授权”说法而放宽。回答下方的“本次权限范围”显示本条回答实际使用的角色、数据范围和制度范围。
               </p>
             </section>
             <section>
@@ -827,7 +978,7 @@ export function Assistant() {
               </p>
             </section>
             <div className="inline-note">
-              一句话：问制度带文号，问自己开开关，看答案先看标签，再看引用。
+              一句话：问制度带文号，问自己开开关，看答案先看标签和权限范围，再看引用。
             </div>
           </div>
         </Modal>
@@ -1625,7 +1776,7 @@ export function Knowledge() {
         {!filtered.length && !busy && <Empty />}
       </div>
       <div className="page-note">
-        正式制度以现行有效原文为准，知识库内容需审核后方可参与问答。
+        正式制度以现行有效原文为准。公开范围内容须审核后发布；本校/院系/支部范围上传即发布，并记录发布人、发布时间。
       </div>
       {detail && (
         <Modal title="文件信息" wide onClose={() => setDetail(null)}>

@@ -163,7 +163,7 @@ export function RoleHome() {
                 "核对材料与人工阶段办理",
                 IdentificationCard,
               ],
-              ["inbox", "材料接收", "查阅本支部党员提交原件", FileText],
+              ["inbox", "材料接收", "查阅并审核本支部党员提交材料", FileText],
             ]
           : [
               ["inbox", "材料接收", "逐人接收与下载个人材料", FileText],

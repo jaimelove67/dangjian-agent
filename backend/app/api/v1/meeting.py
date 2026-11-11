@@ -44,15 +44,15 @@ from app.schemas.meeting import (
     ReviewRequest,
     RevisionRequest,
     TaskCreate,
-    TopicFeedbackRequest,
-    TopicSuggestionRequest,
     TaskHandle,
     TaskUpdate,
+    TopicFeedbackRequest,
+    TopicSuggestionRequest,
 )
 from app.services.activity_service import ACTIVITY_TYPES, ActivityService
+from app.services.archive_service import archive_policy, archive_policy_ready
 from app.services.file_store import read_original
 from app.services.meeting_document_export import build_meeting_docx
-from app.services.meeting_word_template import render_word_template, validate_word_template
 from app.services.meeting_document_settings import (
     get_meeting_document_settings,
     save_meeting_document_settings,
@@ -63,6 +63,7 @@ from app.services.meeting_template_service import (
     save_draft,
     save_word_template,
 )
+from app.services.meeting_word_template import render_word_template, validate_word_template
 from app.services.org_scope import accessible_org_units
 
 router = APIRouter()
@@ -121,6 +122,28 @@ async def organizations(
             ]
         },
         "read_orgs",
+    )
+
+
+@router.get("/meeting/archive-status", response_model=APIResponse[dict])
+async def archive_status(
+    request: Request,
+    user: User = Depends(_query),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """会议页提前读取本校归档前置条件；只回是否可用与原因，不回确认依据。"""
+    policy = await archive_policy(db, str(user.tenant_id))
+    enabled = archive_policy_ready(policy)
+    return APIResponse(
+        data={
+            "enabled": enabled,
+            "reason": (
+                None
+                if enabled
+                else "学校组织部门尚未确认电子记录效力，归档、历史归档查询及导出暂不可用"
+            ),
+        },
+        trace_id=getattr(request.state, "trace_id", None),
     )
 
 

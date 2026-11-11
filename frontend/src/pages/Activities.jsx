@@ -18,6 +18,7 @@ import {
   WarningCircle,
   CircleNotch,
   Trash,
+  ShieldCheck,
 } from "@phosphor-icons/react";
 import { useStore } from "../store";
 import { useApp } from "../app-context";
@@ -252,7 +253,7 @@ function MeetingImage({ recordId, image, className = "", onClick }) {
 }
 export function Meetings() {
   const { data, update, notify } = useStore();
-  const { routeParams, session } = useApp();
+  const { routeParams, session, navigate } = useApp();
   const [tab, setTab] = useState("会议管理");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(
@@ -264,6 +265,10 @@ export function Meetings() {
   const [archiving, setArchiving] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [archiveStatus, setArchiveStatus] = useState({
+    enabled: !IS_LIVE,
+    reason: "",
+  });
   const [formImages, setFormImages] = useState([]);
   const [participantRows, setParticipantRows] = useState([]);
   const [editorOrgId, setEditorOrgId] = useState("");
@@ -402,6 +407,30 @@ export function Meetings() {
   useEffect(() => {
     load();
   }, []);
+  useEffect(() => {
+    if (!IS_LIVE) return;
+    let active = true;
+    backend
+      .archiveStatus()
+      .then((value) => {
+        if (active)
+          setArchiveStatus({
+            enabled: Boolean(value?.enabled),
+            reason: value?.reason || "",
+          });
+      })
+      .catch(() => {
+        if (active)
+          setArchiveStatus({
+            enabled: false,
+            reason:
+              "暂时无法读取学校电子记录效力确认状态，请刷新后重试；确认前归档与正式导出不可用。",
+          });
+      });
+    return () => {
+      active = false;
+    };
+  }, [session.user.id]);
   useEffect(() => {
     setDocTab("议题");
   }, [selected]);
@@ -673,6 +702,21 @@ export function Meetings() {
       const blob = await backend.exportMeetingDocx(current.id);
       downloadBlob(blob, `${current.title}-会议文书.docx`);
       notify("会议文书 Word 已导出");
+    } catch (failure) {
+      setError(failure);
+    }
+  }
+
+  async function exportArchive() {
+    try {
+      const data = await backend.exportMeetingArchive(current.id);
+      downloadBlob(
+        new Blob([JSON.stringify(data, null, 2)], {
+          type: "application/json;charset=utf-8",
+        }),
+        `${current.title}-正式归档记录.json`,
+      );
+      notify("正式归档记录已导出");
     } catch (failure) {
       setError(failure);
     }
@@ -1043,8 +1087,15 @@ ${sectionsHtml}
                       !current.archived_at && (
                         <button
                           className="button primary"
-                          disabled={busy}
+                          disabled={busy || !archiveStatus.enabled}
+                          title={
+                            archiveStatus.enabled
+                              ? ""
+                              : archiveStatus.reason ||
+                                "学校尚未确认电子记录效力，暂不能归档"
+                          }
                           onClick={() => {
+                            if (!archiveStatus.enabled) return;
                             setArchiving(current);
                             setError(null);
                           }}
@@ -1054,11 +1105,26 @@ ${sectionsHtml}
                       )}
                     <button
                       className="button secondary"
+                      title={
+                        IS_LIVE
+                          ? "导出会议通知、议题、记录和决议；不代表已归档或正式归档导出"
+                          : ""
+                      }
                       onClick={IS_LIVE ? exportDocx : exportRecord}
                     >
                       <DownloadSimple size={15} />
-                      {IS_LIVE ? "导出 Word" : "导出记录"}
+                      {IS_LIVE ? "导出会议文书" : "导出记录"}
                     </button>
+                    {IS_LIVE && current.archived_at && archiveStatus.enabled && (
+                      <button
+                        className="button secondary"
+                        title="导出已归档记录、修订版本和电子记录效力确认证据"
+                        onClick={exportArchive}
+                      >
+                        <ShieldCheck size={15} />
+                        导出正式归档记录
+                      </button>
+                    )}
                     <button className="button secondary" onClick={printRecord}>
                       <FilePdf size={15} />
                       打印 / PDF
@@ -1072,6 +1138,31 @@ ${sectionsHtml}
                   </div>
                 )}
               </header>
+              {IS_LIVE && !current.archived_at && !archiveStatus.enabled && (
+                <div className="meeting-archive-note" role="status">
+                  <WarningCircle size={16} />
+                  <div>
+                    <strong>归档前置条件未满足</strong>
+                    <span>
+                      {archiveStatus.reason ||
+                        "学校组织部门尚未确认电子记录效力，归档、历史归档查询及导出暂不可用。"}
+                    </span>
+                    {session.user.role === "school_admin" ? (
+                      <button
+                        type="button"
+                        className="text-button link"
+                        onClick={() => navigate("school-rules")}
+                      >
+                        去学校业务参数确认
+                      </button>
+                    ) : (
+                      <span>
+                        请联系学校管理员在“校级管理 → 学校业务参数”登记确认依据。
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="meeting-facts">
                 <div>
                   <CalendarBlank size={16} />
@@ -1444,7 +1535,7 @@ ${sectionsHtml}
               <div className="meeting-source-note">
                 <CheckCircle size={15} />
                 {current.status === "已归档"
-                  ? "已归档记录只读，请保留版本。"
+                  ? "已归档记录只读，可在“已归档”筛选中回看历史，并导出含版本和确认证据的正式归档记录。"
                   : "会议记录需经人工审核后归档。"}
               </div>
             </>

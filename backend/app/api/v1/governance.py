@@ -252,7 +252,7 @@ async def update_org_leader(
     return await changed(db, request, user, row, "update", "org_leader")
 
 
-# 开户（POST /admin/users）由平台系统管理员专用接口承担（app/api/v1/admin.py）。
+# 开户（POST /admin/users）由平台管理员或本校学校管理员使用（app/api/v1/admin.py）。
 # 治理侧刻意不注册同方法+同路径：重复注册会按 include_router 顺序静默遮蔽其中一方，
 # 这里只保留学校管理员（IDENTITY_MANAGE）可用的读取与维护。
 @router.get("/admin/users")

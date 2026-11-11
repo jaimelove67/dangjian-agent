@@ -36,7 +36,7 @@ from app.schemas.auth import UserInfo
 from app.schemas.common import APIResponse, ErrorCode
 from app.services.audit_export import MAX_EXPORT_ROWS, build_audit_package
 from app.services.identity_service import ROLE_ORG_TYPES, IdentityService, is_platform_admin
-from app.services.org_scope import accessible_org_units
+from app.services.org_scope import account_org_units as assignable_account_orgs
 
 router = APIRouter()
 _require_config = require_permissions(Permission.CONFIG_MANAGE)
@@ -64,7 +64,7 @@ async def account_org_units(
     显式传入时先校验该租户确实归当前平台管辖，否则 403。
     """
     target = await IdentityService(db, user).tenant(tenant_id)
-    organizations = await accessible_org_units(db, user, str(target.id))
+    organizations = await assignable_account_orgs(db, user, str(target.id))
     return APIResponse(
         data=[
             AccountOrgOption(

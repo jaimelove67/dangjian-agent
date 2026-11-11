@@ -123,6 +123,25 @@ def test_admin_question_uses_content_level_not_role_clearance(qa_client):
     assert generate.await_args.kwargs["data_level"] == DataLevel.INTERNAL
 
 
+def test_role_scope_is_in_prompt_and_response_without_personal_switch(qa_client):
+    """角色权限上下文始终生效；关闭“参考我的资料”只影响本人档案，不影响角色范围。"""
+    client, retrieve, generate = qa_client
+    retrieve.return_value = [chunk()]
+    response = client.post(
+        "/api/v1/qa", json={"question": "申请需要什么材料？", "include_personal": False}
+    )
+    assert response.status_code == 200
+    prompt = generate.await_args.kwargs["prompt"]
+    assert "当前账号角色与权限范围" in prompt
+    assert "角色：普通党员" in prompt
+    assert "不得声称当前账号可以直接操作" in prompt
+    assert "[本人档案]" not in prompt
+    data = response.json()["data"]
+    assert data["access_context"]["role"] == "member"
+    assert data["access_context"]["business_scope"] == "self"
+    assert data["access_context"]["knowledge_scope_labels"] == ["公开制度", "学校制度"]
+
+
 def test_answer_is_stamped_with_version_fingerprint_and_citation_revision(qa_client):
     """SEC-11：回答产生时留痕提示词 / 工作流版本，引用带被引文档修订号（事后可追溯）。"""
     client, retrieve, generate = qa_client
@@ -138,10 +157,15 @@ def test_answer_is_stamped_with_version_fingerprint_and_citation_revision(qa_cli
     assert data["versions"]["prompt"]["qa"] == "v1"
     assert data["versions"]["prompt"]["rewrite"] == "v1"
     assert data["versions"]["workflow"] == {"WF-03": "wf-03/1", "WF-04": "wf-04/1"}
+    assert data["versions"]["context"] == {"role": "v1", "format": "v1"}
     # 同一个会话也承载审计写入，这里只看问答记录本身
     record = next(item for item in saved if isinstance(item, QASession))
     # 落库的就是回答那一刻的指纹：留着将来按当前配置倒推就不是留痕了
     assert record.versions == data["versions"]
+    # 角色与范围快照随回答一起保存，后续角色调整不改变旧回答
+    assert data["access_context"]["role"] == "member"
+    assert data["access_context"]["role_label"] == "普通党员"
+    assert record.access_context == data["access_context"]
     # 知识库版本跟着引用走：这条答案引的是第 2 版
     assert data["citations"][0]["content_revision"] == 2
     assert record.citations[0]["content_revision"] == 2

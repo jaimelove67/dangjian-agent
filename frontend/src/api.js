@@ -158,6 +158,8 @@ export const backend = {
     }
   },
   logout: () => request("/auth/logout", { method: "POST" }),
+  loginHelp: () => request("/auth/login-help"),
+  archiveStatus: () => request("/meeting/archive-status"),
   organizations: () => request("/member/org-units"),
   members: () => request("/member/roster?page=1&page_size=100"),
   createMember: (payload) =>
@@ -240,6 +242,8 @@ export const backend = {
       download: true,
       timeout: 120000,
     }),
+  exportMeetingArchive: (id) =>
+    request(`/meeting/records/${encodeURIComponent(id)}/export`),
   rebuildMeetingDocuments: (body) =>
     request("/meeting/records/rebuild-documents", {
       method: "POST",

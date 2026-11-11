@@ -1517,6 +1517,33 @@
     padding: 12px;
     line-height: 1.9;
   }
+  .answer-content {
+    font-size: 12.5px;
+    line-height: 1.8;
+  }
+  .answer-content h1 {
+    font-size: 16px;
+  }
+  .answer-content h2 {
+    font-size: 14px;
+  }
+  .answer-content h3 {
+    font-size: 13.5px;
+  }
+  .answer-content h4 {
+    font-size: 12.5px;
+  }
+  .answer-content ul,
+  .answer-content ol {
+    padding-left: 19px;
+  }
+  .answer-content table {
+    font-size: 11px;
+  }
+  .answer-content th,
+  .answer-content td {
+    padding: 5px 6px;
+  }
   .message-label {
     font-size: 10px;
   }

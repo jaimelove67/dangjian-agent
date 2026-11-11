@@ -1383,6 +1383,9 @@ class ActivityService:
     async def record_data(self, record: MeetingRecord) -> dict[str, Any]:
         """生成当前授权的活动响应，缺项明确待补。"""
         data = row_data(record)
+        data["org_name"] = {str(org.id): org.name for org in self.orgs}.get(
+            str(record.org_unit_id), ""
+        )
         data["sources"], warnings, restricted = await visible_sources(
             self.db, self.user, record.org_unit_id, await self.content_sources(record)
         )

@@ -33,7 +33,7 @@ export const roleApi = {
     }),
   ownMaterials: (page = 1) =>
     request(`/member/self/materials?page=${page}&page_size=20`),
-  submitMaterial: ({ file, title, category, description, submission_key }) => {
+  submitMaterial: ({ file, title, category, description, submission_key, previous_material_id }) => {
     const body = new FormData();
     for (const [key, value] of Object.entries({
       file,
@@ -41,10 +41,20 @@ export const roleApi = {
       category,
       description,
       submission_key,
+      previous_material_id,
     }))
-      body.append(key, value);
+      if (value != null && value !== "") body.append(key, value);
     return request("/member/self/materials", { method: "POST", body });
   },
+  ownMaterialReviews: (material) =>
+    request(`/member/self/materials/${id(material)}/reviews`),
+  receivedMaterialReviews: (profile, material) =>
+    request(`/member/roster/${id(profile)}/materials/${id(material)}/reviews`),
+  reviewPersonalMaterial: (profile, material, body) =>
+    request(
+      `/member/roster/${id(profile)}/materials/${id(material)}/review`,
+      json("POST", body),
+    ),
   ownFile: (materialId) =>
     request(`/member/self/materials/${id(materialId)}/file`, {
       download: true,
@@ -57,6 +67,11 @@ export const roleApi = {
   receivedFile: (profile, material) =>
     request(`/member/roster/${id(profile)}/materials/${id(material)}/file`, {
       download: true,
+    }),
+  receiptMaterial: (profile, material) =>
+    request(`/member/roster/${id(profile)}/materials/${id(material)}/receipt`, {
+      method: "POST",
+      body: JSON.stringify({}),
     }),
   profile: (profile) => request(`/member-full/profiles/${id(profile)}`),
   updateProfile: (profile, body) =>

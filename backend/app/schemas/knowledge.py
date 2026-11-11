@@ -53,9 +53,14 @@ class DocumentResponse(BaseModel):
     validity: str = Field("effective", description="效力状态")
     review_status: str = Field("published", description="公共库审核发布状态")
     reviewed_by: Optional[str] = None
+    reviewed_by_name: Optional[str] = None
     reviewed_at: Optional[datetime] = None
     review_note: Optional[str] = None
     uploaded_by: Optional[str] = None
+    uploaded_by_name: Optional[str] = None
+    #: direct=非公开范围上传即发布；review=公开范围审核后发布。
+    publish_mode: str = Field("review", description="发布方式")
+    published_at: Optional[datetime] = None
     field_levels: Dict[str, str] = Field(default_factory=dict, description="字段级敏感等级")
     owner_unit: Optional[str] = Field(None, description="供给责任部门（取自学校供给机制）")
     owner_name: Optional[str] = Field(None, description="供给责任人（取自学校供给机制）")
@@ -76,14 +81,21 @@ class DocumentResponse(BaseModel):
         document: Any,
         page_count: Optional[int] = None,
         supply: Optional[Dict[str, Any]] = None,
+        user_names: Optional[Dict[str, str]] = None,
     ) -> "DocumentResponse":
         """文档出参
 
         ``supply`` 是该条目权威来源对应的供给机制
         （``{"owner_unit": ..., "owner_name": ..., "review_cycle_days": ...}``），
         由调用方按租户配置解析后传入——出参不在这里查库。
+
+        ``user_names`` 是发布人/审核人的账号姓名映射，由调用方批量解析后传入；
+        未提供时只回账号编号，界面须显示“待核对”而不是把编号当姓名。
         """
         rule = dict(supply or {})
+        uploaded_by = (document.doc_metadata or {}).get("uploaded_by")
+        names = user_names or {}
+        publish_mode = "direct" if document.visibility != "public" else "review"
         return cls(
             id=str(document.id),
             doc_id=document.doc_id,
@@ -99,9 +111,15 @@ class DocumentResponse(BaseModel):
             validity=document.validity or "effective",
             review_status=document.review_status or "published",
             reviewed_by=document.reviewed_by,
+            reviewed_by_name=names.get(document.reviewed_by) if document.reviewed_by else None,
             reviewed_at=document.reviewed_at,
             review_note=document.review_note,
-            uploaded_by=(document.doc_metadata or {}).get("uploaded_by"),
+            uploaded_by=uploaded_by,
+            uploaded_by_name=names.get(uploaded_by) if uploaded_by else None,
+            publish_mode=publish_mode,
+            published_at=(
+                document.reviewed_at if publish_mode == "review" else document.created_at
+            ),
             field_levels=dict(document.field_levels or {}),
             owner_unit=rule.get("owner_unit"),
             owner_name=rule.get("owner_name"),

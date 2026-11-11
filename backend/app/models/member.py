@@ -80,6 +80,7 @@ class MemberMaterial(Base):
     __table_args__ = (
         Index("ix_member_materials_profile", "tenant_id", "profile_id", "stage"),
         Index("ix_member_materials_owner", "tenant_id", "user_id", "created_at"),
+        Index("ix_member_materials_previous", "tenant_id", "previous_material_id"),
         UniqueConstraint(
             "tenant_id", "user_id", "submission_key", name="uq_member_material_submission"
         ),
@@ -99,6 +100,11 @@ class MemberMaterial(Base):
     submit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     submitter_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    #: 支部书记审核个人材料的时间与人员；审核结论只作用于材料本身，不改发展阶段。
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: 退回后重交时指向前一条材料；旧记录和旧审核记录继续保留。
+    previous_material_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     category: Mapped[str] = mapped_column(String(30), nullable=False, default="other")
@@ -119,6 +125,35 @@ class MemberMaterial(Base):
     # 结构化抽取建议值（材料类型/所属人/落款日期/出具单位/要点）：只是核对辅助，
     # 不写台账字段——材料类型仍由归档人选定，模型判断不能直接变成组织记录。
     extracted_fields: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class MemberMaterialReceipt(Base):
+    """组织人员查阅个人材料的回执。
+
+    查阅状态按查看账号分别记录：同一份材料可以被多名组织人员查阅，但每个人只看
+    到自己的“已查阅”状态；材料所有者在本人材料详情中看到组织最近一次查阅时间。
+    回执不改变材料内容、审核状态或发展阶段，只证明“这个账号在何时看过”。
+    """
+
+    __tablename__ = "member_material_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "material_id", "viewer_id", name="uq_member_material_receipt"
+        ),
+        Index(
+            "ix_member_material_receipts_material",
+            "tenant_id",
+            "material_id",
+            "viewed_at",
+        ),
+    )
+
+    material_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    viewer_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    viewed_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class MemberPoliticalReview(Base):

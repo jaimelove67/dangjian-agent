@@ -37,6 +37,7 @@ from app.api.audit import audit_operation
 from app.core.config import settings
 from app.core.constants import AuditAction, DocumentStatus, DocumentValidity
 from app.core.security import BS_ALL, Permission, get_role_profile, has_permission
+from app.core.tenant import bypass_tenant_filter
 from app.db.session import get_db
 from app.deps import get_current_tenant, require_permissions
 from app.llm.base import DataLevel
@@ -408,6 +409,7 @@ async def create_knowledge_document(
                 document,
                 page_count=page_count,
                 supply=await _supply_rule(db, document),
+                user_names={str(user.id): user.name},
             ),
             chunk_count=chunk_count,
         ),
@@ -483,13 +485,18 @@ async def list_knowledge_documents(
     )
     # 供给机制按租户读取（管理端可能跨租户查看），每个租户只查一次（T-KB-13）。
     supply_cache: dict[str, dict[str, Any]] = {}
+    user_names = await _user_names(db, list(documents))
     items: list[DocumentResponse] = []
     for doc in documents:
         tenant_key = str(doc.tenant_id)
         if tenant_key not in supply_cache:
             supply_cache[tenant_key] = await supply_rules(db, tenant_key)
         items.append(
-            DocumentResponse.from_document(doc, supply=supply_cache[tenant_key].get(doc.authority))
+            DocumentResponse.from_document(
+                doc,
+                supply=supply_cache[tenant_key].get(doc.authority),
+                user_names=user_names,
+            )
         )
     return APIResponse(
         data=DocumentListResponse(
@@ -530,8 +537,39 @@ async def _supply_rule(db: AsyncSession, document: KnowledgeDoc) -> dict[str, An
 
 
 async def _document_response(db: AsyncSession, document: KnowledgeDoc) -> DocumentResponse:
-    """单条文档出参：并入该条目权威来源的供给责任与复核日程"""
-    return DocumentResponse.from_document(document, supply=await _supply_rule(db, document))
+    """单条文档出参：并入该条目权威来源的供给责任、复核日程与发布人姓名"""
+    return DocumentResponse.from_document(
+        document,
+        supply=await _supply_rule(db, document),
+        user_names=await _user_names(db, [document]),
+    )
+
+
+async def _user_names(
+    db: AsyncSession, documents: list[KnowledgeDoc]
+) -> dict[str, str]:
+    """批量解析上传人/审核人姓名；只读展示，不改变发布或审核状态。"""
+    user_ids = {
+        str(identifier)
+        for document in documents
+        for identifier in (
+            (document.doc_metadata or {}).get("uploaded_by"),
+            document.reviewed_by,
+        )
+        if identifier
+    }
+    if not user_ids:
+        return {}
+    # 平台管理员可能查看跨租户条目；姓名只用于展示，绕过租户过滤避免显示成编号。
+    with bypass_tenant_filter():
+        rows = (
+            await db.execute(
+                select(User.id, User.name).where(
+                    User.id.in_(user_ids), User.is_deleted.is_(False)
+                )
+            )
+        ).all()
+    return {str(row.id): row.name for row in rows}
 
 
 @router.put(

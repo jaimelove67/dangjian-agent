@@ -28,6 +28,7 @@
 | 本人档案   | `GET /member/self/archive`                                                                               | 已适配；不通过同名人员猜测本人档案                                      |
 | 个人原件 | GET /member/self/materials、POST /member/self/materials、GET /member/self/materials/{id}/file | 列表 / 分页、multipart 原件与 submission_key、本人下载 |
 | 材料接收 | GET /member/roster/{profile}/materials、GET /member/roster/{profile}/materials/{id}/file | 绑定请求所属档案与分页，不重用上一提交人的列表 |
+| 个人材料办理 | POST /member/roster/{profile}/materials/{id}/receipt、POST /member/roster/{profile}/materials/{id}/review、GET /member/roster/{profile}/materials/{id}/reviews、GET /member/self/materials/{id}/reviews | 组织查阅回执、支部书记审核、退回重交与前次记录；审核不改变发展阶段 |
 | 明确关联 | PUT /member/roster/{profile}/account | 只提交 username，由后端核对组织、租户与既有归属 |
 | 人工发展 | GET /member-full/profiles/{id}、POST /member-full/profiles/{id}/materials、POST /member-full/materials/{id}/review、POST /member-full/profiles/{id}/cultivation、POST /member-full/profiles/{id}/transition、POST /member-full/archive-check | 人工登记、核验、培养、阶段依据与材料核对 |
 | 纪要审核 | POST /meeting/records/{id}/submit、POST /meeting/records/{id}/review | expected_revision、reason，审核附 decision；不可自审 |
@@ -58,7 +59,7 @@
 
 上述路径均附加 `/api/v1` 前缀，表中的分组路径不是穷尽的 OpenAPI 清单。年度考核当前还包括指标版本、责任任务、真实文件佐证、独立审核、年度计划、提醒办理和单独归档。页面可打开、接口存在与完整业务闭环分别验收，执行结果及限制见联调报告。
 
-个人原件使用 multipart 的 file、title、category、description、submission_key，不由前端指定所属账号。类别为 thought_report、study_note、certificate、other，上传上限从本人档案响应取得；无明确档案关联时禁止提交。
+个人原件使用 multipart 的 file、title、category、description、submission_key，退回重交时另带可选 previous_material_id；不由前端指定所属账号。类别为 thought_report、study_note、certificate、other，上传上限从本人档案响应取得；无明确档案关联时禁止提交。
 
 新增账号使用 username、name、password、role、org_unit_id 以及可选 member_id。不附加租户、启用状态或其他禁止字段。独立会议审核使用 approved / rejected；综合审核使用 approved / returned，二者不混用。
 

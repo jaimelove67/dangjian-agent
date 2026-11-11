@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1 import knowledge
 from app.core.tenant import tenant_context
+from app.models.education import EducationEnrollment, EducationOffering
 from app.models.meeting import ContentRevision, MeetingRecord, MeetingTask
 from app.models.member import (
     MemberCultivation,
@@ -76,6 +77,9 @@ def member_data():
         MemberStageHistory,
         MemberTraining,
         ContentRevision,
+        EducationEnrollment,
+        EducationOffering,
+        MeetingRecord,
     ):
         model.__table__.create(engine)
     with Session(engine, expire_on_commit=False) as db, tenant_context("review-a"):
@@ -1679,6 +1683,7 @@ async def test_personal_qa_context_is_own_data_and_masks_identifiers(member_data
     assert {item["kind"] for item in context.sources} == {
         "profile",
         "info_collection",
+        "material_list",
         "material",
     }
 

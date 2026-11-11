@@ -5,7 +5,45 @@ import { hasPermission } from "../roles";
 import { request } from "../api";
 import { PageHeader, SearchInput, Select, Modal, Pagination, downloadBlob } from "../components";
 import { get, send, key, rows } from "../business-api";
+import { formatBusinessTime } from "../business-time";
 import { BusinessForm, BusinessTable, BusinessToolbar, RecordTrace, ResourceState, Status, useResource } from "../components/BusinessForms";
+
+const VISIBILITY_LABELS = { public: "公开", school: "本校", department: "院系", branch: "支部" };
+
+function publishInfo(doc) {
+  const direct = doc.publish_mode === "direct" || (doc.publish_mode == null && doc.visibility !== "public");
+  if (doc.review_status === "pending")
+    return {
+      label: "待审核",
+      detail: "审核通过前不参与制度问答",
+      byLabel: "上传人",
+      by: doc.uploaded_by_name || "上传人待核对",
+      at: doc.created_at,
+    };
+  if (doc.review_status === "rejected")
+    return {
+      label: "已退回",
+      detail: doc.review_note || "修正后重新提交",
+      byLabel: "审核人",
+      by: doc.reviewed_by_name || "审核人待核对",
+      at: doc.reviewed_at,
+    };
+  if (direct)
+    return {
+      label: "直接发布",
+      detail: `${doc.uploaded_by_name || "上传人待核对"} · ${formatBusinessTime(doc.published_at || doc.created_at)}`,
+      byLabel: "发布人",
+      by: doc.uploaded_by_name || "上传人待核对",
+      at: doc.published_at || doc.created_at,
+    };
+  return {
+    label: "审核发布",
+    detail: `${doc.reviewed_by_name || "审核人待核对"} · ${formatBusinessTime(doc.published_at || doc.reviewed_at)}`,
+    byLabel: "审核人",
+    by: doc.reviewed_by_name || "审核人待核对",
+    at: doc.published_at || doc.reviewed_at,
+  };
+}
 
 export function LiveKnowledge() {
   const { session } = useApp(), { notify } = useStore();
@@ -25,7 +63,7 @@ export function LiveKnowledge() {
       { name: "doc_id", label: "稳定文件编号", value: `DOC-${crypto.randomUUID().slice(0, 12)}`, maxLength: 100 },
       { name: "title", label: "文件标题" }, { name: "issuer", label: "发文机关" },
       { name: "level", label: "制度层级", options: [["central", "中央"], ["provincial", "省级"], ["school", "校级"], ["department", "院系级"]], value: "school" },
-      { name: "visibility", label: "可见范围", options: [["public", "公开"], ["school", "本校"], ["department", "本院系"], ["branch", "本支部"]], value: "school" },
+      { name: "visibility", label: "可见范围", options: [["public", "公开"], ["school", "本校"], ["department", "本院系"], ["branch", "本支部"]], value: "school", help: "公开范围入库后待审核，审核通过后发布；本校/院系/支部范围上传即发布，并记录上传人和发布时间。" },
       { name: "security_level", label: "数据级别", options: [["public", "公开资料"], ["internal", "内部资料"], ["sensitive", "敏感资料（仅本地模型）"], ["classified", "涉密材料（仅人工归档）"]], value: "public" },
       { name: "authority", label: "权威来源", options: [["party_constitution", "党章"], ["party_regulation", "党内法规"], ["superior_document", "上级文件"], ["school_policy", "学校制度"], ["reference", "参考资料"]], value: "school_policy" },
       { name: "effective_date", label: "生效日期", type: "date" }, { name: "expiration_date", label: "失效日期（长期有效可留空）", type: "date", required: false },
@@ -38,7 +76,7 @@ export function LiveKnowledge() {
       body.append("file_name", values.file.name);
       const result = await request("/knowledge-docs", { method: "POST", body });
       reload(); setSelected(result.document.doc_id); notify(`入库成功，解析为${result.chunk_count}个片段；向量化及发布状态请单独核对`);
-    }, {}, "选择文件后系统会读取正文，自动识别标题、发文字号、发文机关等信息并预填空白项，识别不到的请人工填写。上传后保存加密原件并解析正文。公开库内容经审核后发布；向量化需要已配置的模型，处理失败会显示实际原因。", {
+    }, {}, "选择文件后系统会读取正文，自动识别标题、发文字号、发文机关等信息并预填空白项，识别不到的请人工填写。上传后保存加密原件并解析正文。公开范围须审核后发布；本校/院系/支部范围上传即发布，并记录上传人、发布时间。向量化需要已配置的模型，处理失败会显示实际原因。", {
       fileField: "file",
       run: file => {
         const body = new FormData();
@@ -78,9 +116,12 @@ export function LiveKnowledge() {
   }); }
   return <section className="panel workspace-panel"><PageHeader title="党建工作库" subtitle="制度原件、解析片段、人工复核及检索处理状态" action={can("knowledge.manage") && <button className="button primary" onClick={upload}>上传制度文件</button>} />
     <BusinessToolbar actions={<button className="button secondary" onClick={reload}>刷新</button>}><SearchInput value={q} placeholder="搜索文件标题、机关或编号" onChange={e => { setQ(e.target.value); setPage(1); }} />{can("knowledge.manage") && <Select label="发布状态" value={filter} onChange={e => { setFilter(e.target.value); setPage(1); }}><option value="">全部发布状态</option><option value="pending">待审核</option><option value="published">已发布</option><option value="rejected">已退回</option></Select>}</BusinessToolbar>
-    <ResourceState resource={documents} /><BusinessTable items={rows(documents.value)} columns={[["制度文件", r => <strong>{r.title}</strong>], ["发文机关 / 生效日", r => `${r.issuer} · ${r.effective_date || "待确认"}`], ["范围 / 级别", r => `${({ public: "公开", school: "本校", department: "院系", branch: "支部" })[r.visibility]} · ${r.security_level}`], ["发布状态", r => <Status value={r.review_status} />], ["原件版本", r => r.content_revision], ["操作", r => <button className="text-button link" onClick={() => setSelected(r.doc_id)}>原件与处理</button>]]} />
+    <ResourceState resource={documents} /><BusinessTable items={rows(documents.value)} columns={[["制度文件", r => <strong>{r.title}</strong>], ["发文机关 / 生效日", r => `${r.issuer} · ${r.effective_date || "待确认"}`], ["范围 / 级别", r => `${VISIBILITY_LABELS[r.visibility] || r.visibility} · ${r.security_level}`], ["发布状态", r => <Status value={r.review_status} />], ["发布信息", r => { const info = publishInfo(r); return <span className="cell-subtext"><strong>{info.label}</strong><br />{info.detail}</span>; }], ["原件版本", r => r.content_revision], ["操作", r => <button className="text-button link" onClick={() => setSelected(r.doc_id)}>原件与处理</button>]]} />
     <Pagination page={page} total={documents.value?.total || 0} pages={Math.max(1, Math.ceil((documents.value?.total || 0) / 20))} onChange={setPage} />
+    <p className="page-note">平台管理员、学校管理员、院系管理员可上传知识文件；公开范围须经知识库审核权限人员审核后发布，本校/院系/支部范围上传即发布并记录发布人、发布时间。</p>
     {selected && <Modal title="制度原件与入库处理" wide flat onClose={() => setSelected(null)}><ResourceState resource={detail} />{d && <><h3>{d.title}</h3><p>{d.doc_number} · {d.issuer}</p><Status value={d.review_status} /><RecordTrace record={d} /><p className="business-content">{d.summary || "未填写摘要"}</p><p>原件版本：{d.content_revision}；效力：{d.status !== "effective" ? ({ expired: "已失效", abolished: "已废止" })[d.status] || d.status : ({ effective: "现行有效", pending: "待生效", superseded: "已被替代", repealed: "已废止" })[d.validity] || d.validity}</p>
+      {(() => { const info = publishInfo(d); return <dl className="detail-list"><dt>发布方式</dt><dd>{info.label}</dd><dt>{info.byLabel}</dt><dd>{info.by}</dd><dt>处理时间</dt><dd>{formatBusinessTime(info.at)}</dd>{d.review_note && <><dt>审核意见</dt><dd>{d.review_note}</dd></>}</dl>; })()}
+      <p className="inline-note">{d.visibility === "public" ? "公开范围内容须经审核发布；审核通过前不参与制度问答。" : "非公开范围内容上传即发布，仅授权范围可见；发布人、发布时间已记录。"}</p>
       <div className="business-actions"><button className="button secondary" onClick={() => open("下载授权原件", [{ name: "confirm", label: "按授权用途使用原件", type: "checkbox" }], async values => { if (!values.confirm) throw new Error("请先确认用途"); downloadBlob(await request(`/knowledge-docs/${key(d.doc_id)}/file`, { download: true }), d.file_name); })}>下载原件</button>{can("knowledge.manage") && <><button className="button secondary" onClick={metadata}>修正文件信息</button><button className="button secondary" onClick={replace}>更新原件版本</button><button className="button secondary" onClick={maintenance}>供给复核</button><button className="button secondary" onClick={changeStatus}>变更效力状态</button><button className="button secondary" onClick={embed}>建立 / 重试检索向量</button></>}{can("knowledge.review") && d.review_status !== "published" && <button className="button primary" onClick={review}>审核发布</button>}</div>
       <ResourceState resource={processing} />{processing.value && <p className="inline-note">检索处理：{processing.value.status || processing.value.embedding_status || "已读取处理状态"}；已入库片段：{processing.value.chunk_count ?? processing.value.total_chunks ?? rows(chunks.value).length}。未建立向量时不能据此认定语义检索已就绪。</p>}
       {processing.value?.error && <p className="inline-note" role="alert">检索处理未完成：{typeof processing.value.error === "string" ? processing.value.error : processing.value.error.message || "请按请求记录核查处理原因"}</p>}

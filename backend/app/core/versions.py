@@ -22,8 +22,10 @@ from typing import Any
 
 from app.prompts.qa import (
     ADVISORY_PROMPT_VERSION,
+    ANSWER_FORMAT_VERSION,
     QA_SYSTEM_PROMPT_VERSION,
     REWRITE_PROMPT_VERSION,
+    ROLE_CONTEXT_VERSION,
 )
 from app.schemas.wf import WF03_VERSION, WF03_WORKFLOW, WF04_VERSION, WF04_WORKFLOW
 
@@ -47,6 +49,9 @@ WORKFLOW_VERSIONS: tuple[dict[str, str], ...] = (
     {"workflow": WF04_WORKFLOW, "name": "敏感信息检查", "version": WF04_VERSION},
 )
 
+#: 回答上下文种类的显示名。当前只有角色权限上下文，后续新增时在这里登记。
+CONTEXT_LABELS: dict[str, str] = {"role": "角色权限", "format": "回答排版"}
+
 
 def prompt_versions(tenant_id: str | None) -> dict[str, str]:
     """当前租户生效的提示词版本（配置覆盖 + 出厂默认）
@@ -68,11 +73,15 @@ def workflow_versions() -> list[dict[str, str]]:
 
 
 def version_fingerprint(tenant_id: str | None) -> dict[str, Any]:
-    """一次问答的版本指纹：提示词 + 工作流；知识库版本随每条引用单独记录
+    """一次问答的版本指纹：提示词 + 工作流 + 角色/排版规则；知识库版本随每条引用单独记录
 
     大小写与键名固定，便于后续比对"同一条问题在不同版本下的回答"。
     """
     return {
         "prompt": prompt_versions(tenant_id),
         "workflow": {item["workflow"]: item["version"] for item in WORKFLOW_VERSIONS},
+        "context": {
+            "role": ROLE_CONTEXT_VERSION,
+            "format": ANSWER_FORMAT_VERSION,
+        },
     }

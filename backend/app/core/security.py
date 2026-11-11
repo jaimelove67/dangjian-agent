@@ -231,6 +231,7 @@ class Permission(str, Enum):
     MEMBER_QUERY = "member.query"  # 党员发展查询：支部书记及以上
     SELF_QUERY = "member.self_query"  # 普通党员查询本人档案和材料
     MATERIAL_SUBMIT = "member.material_submit"  # 普通党员提交本人材料
+    MATERIAL_REVIEW = "member.material_review"  # 个人材料审核：支部书记
     STAGE_TRANSITION = "member.stage_transition"  # 阶段流转：支部书记及以上
     SCORING = "member.scoring"  # 辅助评分：支部书记及以上
     MEETING_QUERY = "meeting.query"  # 组织生活查询：支部书记及以上
@@ -379,7 +380,8 @@ ROLE_PROFILES: dict[UserRole, RoleProfile] = {
         role=UserRole.BRANCH_SECRETARY,
         knowledge_scopes=frozenset({KS_PUBLIC, KS_SCHOOL, KS_DEPARTMENT, KS_BRANCH}),
         business_scope=BS_BRANCH,
-        permissions=_BRANCH_PERMISSIONS | frozenset({Permission.ASSESSMENT_REVIEW}),
+        permissions=_BRANCH_PERMISSIONS
+        | frozenset({Permission.ASSESSMENT_REVIEW, Permission.MATERIAL_REVIEW}),
         data_level=DataLevel.SENSITIVE,
     ),
     UserRole.ORGANIZER: RoleProfile(

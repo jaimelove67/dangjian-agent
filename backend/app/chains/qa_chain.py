@@ -325,7 +325,7 @@ class QAChain:
             answer=answer,
             citations=[],
             warnings=[
-                "以下内容仅依据你提供的材料（含本人资料）整理，"
+                "以下内容仅依据当前账号可参考的本人资料、授权范围统计或上传材料整理，"
                 "不作为制度依据，请以正式文件与组织意见为准。"
             ],
             disclaimer=DEFAULT_DISCLAIMER,

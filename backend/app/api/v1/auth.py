@@ -27,10 +27,12 @@ from app.core.security import (
     identity_stamp,
     verify_password,
 )
+from app.core.tenant import bypass_tenant_filter
 from app.core.token_revocation import get_token_revocation_store
 from app.db.session import get_db
 from app.deps import get_current_user, get_token_payload
 from app.models.account_security import LoginSession
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.auth import LoginRequest, TokenResponse, UserInfo
 from app.schemas.common import APIResponse
@@ -40,6 +42,44 @@ router = APIRouter()
 
 def _trace_id(request: Request) -> str | None:
     return getattr(request.state, "trace_id", None)
+
+
+@router.get(
+    "/auth/login-help",
+    response_model=APIResponse[dict],
+    summary="登录帮助与联系方式",
+    description="无需登录的找回密码帮助；只返回平台租户已登记的联系方式。",
+    tags=["鉴权"],
+)
+async def login_help(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> APIResponse[dict]:
+    """公开接口：不返回租户配置、账号列表或任何个人材料。"""
+    with bypass_tenant_filter():
+        platform = (
+            await db.execute(
+                select(Tenant)
+                .where(
+                    Tenant.tenant_type == "platform",
+                    Tenant.is_deleted.is_(False),
+                    Tenant.is_active.is_(True),
+                )
+                .order_by(Tenant.created_at)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    return APIResponse(
+        data={
+            "contact_name": platform.contact_name if platform else None,
+            "contact_phone": platform.contact_phone if platform else None,
+            "contact_email": platform.contact_email if platform else None,
+            "note": (
+                "请联系所属学校党务管理员核验身份后重置密码；"
+                "平台联系方式未登记时，请通过学校通知渠道联系管理员。"
+            ),
+        },
+        trace_id=_trace_id(request),
+    )
 
 
 @router.post(

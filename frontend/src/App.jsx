@@ -376,6 +376,28 @@ function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [help, setHelp] = useState(false);
+  const [loginHelp, setLoginHelp] = useState(null);
+  const [loginHelpError, setLoginHelpError] = useState("");
+  useEffect(() => {
+    if (!help || !IS_LIVE) return;
+    let active = true;
+    setLoginHelp(null);
+    setLoginHelpError("");
+    backend
+      .loginHelp()
+      .then((value) => {
+        if (active) setLoginHelp(value || {});
+      })
+      .catch(() => {
+        if (active)
+          setLoginHelpError(
+            "暂时无法读取平台联系方式，请联系所属学校党务管理员核验身份后重置密码。",
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [help]);
   async function submit(e) {
     e.preventDefault();
     setError(null);
@@ -428,6 +450,9 @@ function Login() {
             </button>
           ))}
         </div>
+        <p className="login-scan-note">
+          扫码认证暂未开放，请使用账号密码登录。
+        </p>
         {mode === "账号登录" ? (
           <form onSubmit={submit}>
             <Field label="账号">
@@ -488,8 +513,48 @@ function Login() {
       {help && (
         <Modal title="找回账号与密码" onClose={() => setHelp(false)}>
           <p className="body-copy">
-            请联系学校管理员或平台管理员核验身份后重置密码。
+            请联系所属学校党务管理员核验身份后重置密码。平台管理员不会通过消息索取密码。
           </p>
+          {IS_LIVE ? (
+            loginHelpError ? (
+              <p className="inline-note">{loginHelpError}</p>
+            ) : loginHelp ? (
+              loginHelp.contact_name ||
+              loginHelp.contact_phone ||
+              loginHelp.contact_email ? (
+                <dl className="detail-list">
+                  {loginHelp.contact_name && (
+                    <>
+                      <dt>联系人</dt>
+                      <dd>{loginHelp.contact_name}</dd>
+                    </>
+                  )}
+                  {loginHelp.contact_phone && (
+                    <>
+                      <dt>联系电话</dt>
+                      <dd>{loginHelp.contact_phone}</dd>
+                    </>
+                  )}
+                  {loginHelp.contact_email && (
+                    <>
+                      <dt>联系邮箱</dt>
+                      <dd>{loginHelp.contact_email}</dd>
+                    </>
+                  )}
+                </dl>
+              ) : (
+                <p className="inline-note">{loginHelp.note}</p>
+              )
+            ) : (
+              <Loading />
+            )
+          ) : (
+            <p className="inline-note">
+              {data.platform?.config?.general?.support_email
+                ? `平台支持邮箱：${data.platform.config.general.support_email}`
+                : "学校尚未登记找回密码联系方式，请通过学校通知渠道联系党务管理员。"}
+            </p>
+          )}
         </Modal>
       )}
     </div>

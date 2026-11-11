@@ -93,7 +93,7 @@ async def test_personal_identity_material_only_skips_retrieval_and_citations():
     assert response.refused is False
     assert response.citations == []
     assert "陈晓明" in response.answer
-    assert any("仅依据你提供的材料" in warning for warning in response.warnings)
+    assert any("仅依据当前账号可参考的本人资料" in warning for warning in response.warnings)
 
 
 async def test_reference_only_basis_refused():

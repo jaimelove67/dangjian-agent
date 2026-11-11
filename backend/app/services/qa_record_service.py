@@ -21,7 +21,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timeutil import local_time
-from app.core.versions import PROMPT_LABELS
+from app.core.versions import CONTEXT_LABELS, PROMPT_LABELS
 from app.models.qa_session import QASession
 from app.models.user import User
 
@@ -123,6 +123,7 @@ def versions_text(versions: dict[str, Any] | None) -> str:
     data = versions or {}
     prompt = data.get("prompt") or {}
     workflow = data.get("workflow") or {}
+    context = data.get("context") or {}
     parts = []
     if prompt:
         parts.append(
@@ -133,6 +134,13 @@ def versions_text(versions: dict[str, Any] | None) -> str:
         )
     if workflow:
         parts.append("工作流：" + " / ".join(f"{wid} {value}" for wid, value in workflow.items()))
+    if context:
+        parts.append(
+            "上下文："
+            + " / ".join(
+                f"{CONTEXT_LABELS.get(kind, kind)} {value}" for kind, value in context.items()
+            )
+        )
     return "；".join(parts)
 
 

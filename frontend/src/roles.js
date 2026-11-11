@@ -65,7 +65,7 @@ export const ROLE_INFO = {
     label: "支部书记",
     scope: "branch",
     subtitle: "抓好组织生活与人工审核，让支部工作落到实处",
-    permissions: [...branchPermissions, "assessment.review"],
+    permissions: [...branchPermissions, "assessment.review", "member.material_review"],
   },
   organizer: {
     label: "组织员",

@@ -1,7 +1,7 @@
 """本人档案、私有材料提交及组织人员的账号关联。"""
 
 import hashlib
-from datetime import date
+from datetime import date, datetime
 from pathlib import PurePath
 from typing import cast
 from urllib.parse import quote
@@ -29,7 +29,8 @@ from app.core.config import settings
 from app.core.security import Permission
 from app.db.session import get_db
 from app.deps import require_permissions
-from app.models.member import MemberMaterial, MemberProfile
+from app.models.meeting import ContentRevision
+from app.models.member import MemberMaterial, MemberMaterialReceipt, MemberProfile
 from app.models.org import OrgUnit
 from app.models.user import User, UserRole
 from app.schemas.common import APIResponse
@@ -38,6 +39,11 @@ from app.schemas.member_self import (
     AccountLinkRequest,
     MaterialCategory,
     MaterialList,
+    MaterialPrevious,
+    MaterialReceipt,
+    MaterialReviewHistory,
+    MaterialReviewItem,
+    MaterialReviewRequest,
     MaterialSubmission,
     PersonalArchive,
     PersonalMaterial,
@@ -46,12 +52,14 @@ from app.services.file_store import read_member_archive
 from app.services.material_preview import preview_upload
 from app.services.member_review_service import own_reviews as own_review_records
 from app.services.org_scope import accessible_org_units
+from app.utils.snapshot import record_snapshot as row_data
 
 router = APIRouter()
 _self_query = require_permissions(Permission.SELF_QUERY)
 _self_submit = require_permissions(Permission.MATERIAL_SUBMIT)
 _manage = require_permissions(Permission.STAGE_TRANSITION)
 _query = require_permissions(Permission.MEMBER_QUERY)
+_review = require_permissions(Permission.MATERIAL_REVIEW)
 
 
 async def _own_profile(db: AsyncSession, user: User) -> MemberProfile | None:
@@ -108,6 +116,131 @@ async def _managed_profile(
 
 def _trace(request: Request) -> str | None:
     return getattr(request.state, "trace_id", None)
+
+
+def _personal_material(
+    record: MemberMaterial, reviewer_name: str | None = None
+) -> PersonalMaterial:
+    """把 ORM 材料转成出参；审核意见在库内复用 note 列。"""
+    data = PersonalMaterial.model_validate(record).model_dump()
+    data.update(
+        review_status=(
+            record.review_status
+            if record.review_status in ("pending", "approved", "returned")
+            else "pending"
+        ),
+        review_note=record.note or "",
+        reviewer_name=reviewer_name,
+    )
+    return PersonalMaterial(**data)
+
+
+async def _reviewer_names(
+    db: AsyncSession, records: list[MemberMaterial]
+) -> dict[str, str]:
+    """批量解析材料审核人姓名；只用于本人和授权组织查看办理记录。"""
+    user_ids = {str(record.reviewed_by) for record in records if record.reviewed_by}
+    if not user_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(User.id, User.name).where(
+                User.id.in_(user_ids), User.is_deleted.is_(False)
+            )
+        )
+    ).all()
+    return {str(row.id): row.name for row in rows}
+
+
+async def _review_items(
+    db: AsyncSession, material: MemberMaterial, names: dict[str, str]
+) -> list[MaterialReviewItem]:
+    """读取材料的人工审核记录；服务只追加，不覆盖旧记录。"""
+    revisions = (
+        (
+            await db.execute(
+                select(ContentRevision)
+                .where(
+                    ContentRevision.tenant_id == str(material.tenant_id),
+                    ContentRevision.resource_type == "member_material",
+                    ContentRevision.resource_id == str(material.id),
+                    ContentRevision.action == "review",
+                    ContentRevision.is_deleted.is_(False),
+                )
+                .order_by(ContentRevision.revision.asc(), ContentRevision.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    items: list[MaterialReviewItem] = []
+    for revision in revisions:
+        snapshot = revision.snapshot if isinstance(revision.snapshot, dict) else {}
+        decision = snapshot.get("review_status")
+        if decision not in ("approved", "returned"):
+            decision = "returned" if snapshot.get("note") else "approved"
+        items.append(
+            MaterialReviewItem(
+                id=str(revision.id),
+                decision=decision,
+                opinion=revision.reason or "",
+                reviewer_name=names.get(str(revision.actor_id)) or "审核人待核对",
+                created_at=revision.created_at,
+            )
+        )
+    return items
+
+
+async def _material_history(
+    db: AsyncSession, material: MemberMaterial
+) -> MaterialReviewHistory:
+    """材料当前状态、全部审核记录以及退回前一条材料的记录。"""
+    names = await _reviewer_names(db, [material])
+    previous: MaterialPrevious | None = None
+    if material.previous_material_id:
+        prior = (
+            await db.execute(
+                select(MemberMaterial).where(
+                    MemberMaterial.id == material.previous_material_id,
+                    MemberMaterial.tenant_id == str(material.tenant_id),
+                    MemberMaterial.profile_id == str(material.profile_id),
+                    MemberMaterial.user_id == material.user_id,
+                    MemberMaterial.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if prior is not None:
+            prior_names = await _reviewer_names(db, [prior])
+            previous = MaterialPrevious(
+                id=str(prior.id),
+                title=prior.title,
+                created_at=prior.created_at,
+                review_status=(
+                    prior.review_status
+                    if prior.review_status in ("pending", "approved", "returned")
+                    else "pending"
+                ),
+                review_note=prior.note or "",
+                reviewed_at=prior.reviewed_at,
+                reviewer_name=(
+                    (prior_names.get(str(prior.reviewed_by)) or "审核人待核对")
+                    if prior.reviewed_by
+                    else None
+                ),
+                reviews=await _review_items(db, prior, prior_names),
+            )
+    return MaterialReviewHistory(
+        material=_personal_material(
+            material,
+            (
+                (names.get(str(material.reviewed_by)) or "审核人待核对")
+                if material.reviewed_by
+                else None
+            ),
+        ),
+        reviews=await _review_items(db, material, names),
+        previous_material=previous,
+    )
 
 
 @router.get("/member/self/archive", response_model=APIResponse[PersonalArchive], summary="本人档案")
@@ -205,6 +338,8 @@ async def _materials(
     tenant_id: str,
     page: int,
     page_size: int,
+    *,
+    viewer_id: str,
 ) -> MaterialList:
     if profile is None:
         return MaterialList(items=[], total=0, page=page, page_size=page_size)
@@ -230,8 +365,48 @@ async def _materials(
         .scalars()
         .all()
     )
+    material_ids = [str(record.id) for record in records]
+    receipt_rows = (
+        (
+            await db.execute(
+                select(MemberMaterialReceipt).where(
+                    MemberMaterialReceipt.tenant_id == tenant_id,
+                    MemberMaterialReceipt.material_id.in_(material_ids),
+                    MemberMaterialReceipt.is_deleted.is_(False),
+                )
+            )
+        )
+        .scalars()
+        .all()
+        if material_ids
+        else []
+    )
+    receipts: dict[str, list[MemberMaterialReceipt]] = {}
+    for receipt in receipt_rows:
+        receipts.setdefault(str(receipt.material_id), []).append(receipt)
+    reviewer_names = await _reviewer_names(db, list(records))
+    items: list[PersonalMaterial] = []
+    for record in records:
+        record_receipts = receipts.get(str(record.id), [])
+        mine = next(
+            (receipt for receipt in record_receipts if str(receipt.viewer_id) == viewer_id),
+            None,
+        )
+        latest = max(record_receipts, key=lambda receipt: receipt.viewed_at, default=None)
+        item = _personal_material(
+            record,
+            (
+                (reviewer_names.get(str(record.reviewed_by)) or "审核人待核对")
+                if record.reviewed_by
+                else None
+            ),
+        )
+        item.my_viewed_at = mine.viewed_at if mine else None
+        item.last_viewed_at = latest.viewed_at if latest else None
+        item.viewer_count = len(record_receipts)
+        items.append(item)
     return MaterialList(
-        items=[PersonalMaterial.model_validate(record) for record in records],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
@@ -251,7 +426,13 @@ async def own_materials(
     """仅列出当前账号在其本人档案下的提交。"""
     return APIResponse(
         data=await _materials(
-            db, await _own_profile(db, user), str(user.id), str(user.tenant_id), page, page_size
+            db,
+            await _own_profile(db, user),
+            str(user.id),
+            str(user.tenant_id),
+            page,
+            page_size,
+            viewer_id=str(user.id),
         ),
         trace_id=_trace(request),
     )
@@ -282,6 +463,7 @@ async def submit_material(
     category: str = Form(...),
     description: str = Form(""),
     submission_key: UUID = Form(...),
+    previous_material_id: str | None = Form(None),
     file: UploadFile = File(...),
     user: User = Depends(_self_submit),
     db: AsyncSession = Depends(get_db),
@@ -336,15 +518,43 @@ async def submit_material(
             existing.is_deleted
             or existing.profile_id != profile_id
             or existing.content_sha256 != checksum
-            or (existing.title, existing.category, existing.description, existing.file_name)
-            != (body.title, body.category, body.description, name)
+            or (
+                existing.title,
+                existing.category,
+                existing.description,
+                existing.file_name,
+                existing.previous_material_id,
+            )
+            != (
+                body.title,
+                body.category,
+                body.description,
+                name,
+                previous_material_id,
+            )
         ):
             raise HTTPException(409, "该提交编号已用于其他材料，请重新提交")
-        return APIResponse(data=PersonalMaterial.model_validate(existing), trace_id=_trace(request))
+        return APIResponse(
+            data=_personal_material(existing), trace_id=_trace(request)
+        )
 
-    previous = await existing_submission()
-    if previous is not None:
-        return previous
+    existing_response = await existing_submission()
+    if existing_response is not None:
+        return existing_response
+    if previous_material_id:
+        prior = (
+            await db.execute(
+                select(MemberMaterial).where(
+                    MemberMaterial.id == previous_material_id,
+                    MemberMaterial.tenant_id == tenant_id,
+                    MemberMaterial.user_id == user_id,
+                    MemberMaterial.profile_id == profile_id,
+                    MemberMaterial.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if prior is None or prior.review_status != "returned":
+            raise HTTPException(422, "前次材料不存在、尚未退回或不在本人名下")
     record = MemberMaterial(
         tenant_id=tenant_id,
         user_id=user_id,
@@ -361,6 +571,11 @@ async def submit_material(
         content=content,
         submission_key=str(submission_key),
         content_sha256=checksum,
+        previous_material_id=previous_material_id or None,
+        review_status="pending",
+        reviewed_by=None,
+        reviewed_at=None,
+        note="",
     )
     db.add(record)
     try:
@@ -379,10 +594,18 @@ async def submit_material(
         resource_type="member_material",
         resource_id=record.id,
         data_level="sensitive",
-        new_value={"category": record.category, "file_size": record.file_size},
+        new_value={
+            "category": record.category,
+            "file_size": record.file_size,
+            **(
+                {"previous_material_id": record.previous_material_id}
+                if record.previous_material_id
+                else {}
+            ),
+        },
     )
     await db.commit()
-    return APIResponse(data=PersonalMaterial.model_validate(record), trace_id=_trace(request))
+    return APIResponse(data=_personal_material(record), trace_id=_trace(request))
 
 
 async def _download(
@@ -460,6 +683,37 @@ async def download_own_material(
 
 
 @router.get(
+    "/member/self/materials/{material_id}/reviews",
+    response_model=APIResponse[MaterialReviewHistory],
+    summary="本人材料审核记录",
+)
+async def own_material_reviews(
+    material_id: str,
+    request: Request,
+    user: User = Depends(_self_query),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[MaterialReviewHistory]:
+    """本人查看当前材料的审核记录及退回前一条材料的记录。"""
+    profile = await _own_profile(db, user)
+    if profile is None:
+        raise HTTPException(404, "材料不存在")
+    material = (
+        await db.execute(
+            select(MemberMaterial).where(
+                MemberMaterial.id == material_id,
+                MemberMaterial.tenant_id == str(user.tenant_id),
+                MemberMaterial.profile_id == str(profile.id),
+                MemberMaterial.user_id == str(user.id),
+                MemberMaterial.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if material is None:
+        raise HTTPException(404, "材料不存在")
+    return APIResponse(data=await _material_history(db, material), trace_id=_trace(request))
+
+
+@router.get(
     "/member/roster/{profile_id}/materials",
     response_model=APIResponse[MaterialList],
     summary="授权档案的提交材料",
@@ -476,10 +730,212 @@ async def managed_materials(
     profile = await _managed_profile(db, user, profile_id)
     return APIResponse(
         data=await _materials(
-            db, profile, str(profile.user_id), str(user.tenant_id), page, page_size
+            db,
+            profile,
+            str(profile.user_id),
+            str(user.tenant_id),
+            page,
+            page_size,
+            viewer_id=str(user.id),
         ),
         trace_id=_trace(request),
     )
+
+
+@router.post(
+    "/member/roster/{profile_id}/materials/{material_id}/receipt",
+    response_model=APIResponse[MaterialReceipt],
+    summary="记录个人材料查阅回执",
+)
+async def record_material_receipt(
+    profile_id: str,
+    material_id: str,
+    request: Request,
+    user: User = Depends(_query),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[MaterialReceipt]:
+    """记录当前组织账号的查阅时间；只对个人提交材料生效，不改变材料核验状态。"""
+    profile = await _managed_profile(db, user, profile_id)
+    material = (
+        await db.execute(
+            select(MemberMaterial).where(
+                MemberMaterial.id == material_id,
+                MemberMaterial.tenant_id == str(user.tenant_id),
+                MemberMaterial.profile_id == str(profile.id),
+                MemberMaterial.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if material is None:
+        raise HTTPException(404, "材料不存在或不在授权范围内")
+    # 发展材料由组织登记、走材料核验；查阅回执只针对本人提交的私有材料。
+    if not material.user_id or not material.submission_key:
+        raise HTTPException(422, "发展材料请在材料核验流程中办理")
+    if str(material.user_id) == str(user.id):
+        raise HTTPException(403, "本人查阅不计入组织查阅记录")
+    receipt = (
+        await db.execute(
+            select(MemberMaterialReceipt)
+            .where(
+                MemberMaterialReceipt.tenant_id == str(user.tenant_id),
+                MemberMaterialReceipt.material_id == str(material.id),
+                MemberMaterialReceipt.viewer_id == str(user.id),
+                MemberMaterialReceipt.is_deleted.is_(False),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    now = datetime.utcnow()
+    if receipt is None:
+        receipt = MemberMaterialReceipt(
+            tenant_id=str(user.tenant_id),
+            material_id=str(material.id),
+            viewer_id=str(user.id),
+            viewed_at=now,
+            view_count=1,
+        )
+        db.add(receipt)
+        count = 1
+    else:
+        receipt.viewed_at = now
+        receipt.view_count += 1
+        count = receipt.view_count
+    await db.flush()
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="view_member_material",
+        resource_type="member_material",
+        resource_id=str(material.id),
+        data_level="internal",
+        new_value={"view_count": count},
+    )
+    await db.commit()
+    return APIResponse(
+        data=MaterialReceipt(
+            material_id=str(material.id), viewed_at=now, view_count=count
+        ),
+        trace_id=_trace(request),
+    )
+
+
+@router.get(
+    "/member/roster/{profile_id}/materials/{material_id}/reviews",
+    response_model=APIResponse[MaterialReviewHistory],
+    summary="授权档案材料审核记录",
+)
+async def managed_material_reviews(
+    profile_id: str,
+    material_id: str,
+    request: Request,
+    user: User = Depends(_query),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[MaterialReviewHistory]:
+    """组织人员查看授权档案材料的审核记录。"""
+    profile = await _managed_profile(db, user, profile_id)
+    material = (
+        await db.execute(
+            select(MemberMaterial).where(
+                MemberMaterial.id == material_id,
+                MemberMaterial.tenant_id == str(user.tenant_id),
+                MemberMaterial.profile_id == str(profile.id),
+                MemberMaterial.user_id == profile.user_id,
+                MemberMaterial.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if material is None:
+        raise HTTPException(404, "材料不存在或不在授权范围内")
+    if not material.user_id or not material.submission_key:
+        raise HTTPException(422, "发展材料请在材料核验流程中办理")
+    return APIResponse(data=await _material_history(db, material), trace_id=_trace(request))
+
+
+@router.post(
+    "/member/roster/{profile_id}/materials/{material_id}/review",
+    response_model=APIResponse[MaterialReviewHistory],
+    summary="支部书记审核个人材料",
+)
+async def review_personal_material(
+    profile_id: str,
+    material_id: str,
+    body: MaterialReviewRequest,
+    request: Request,
+    user: User = Depends(_review),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[MaterialReviewHistory]:
+    """支部书记对本人提交材料作出通过或退回决定；不改发展阶段或发展材料核验。"""
+    profile = await _managed_profile(db, user, profile_id)
+    material = (
+        await db.execute(
+            select(MemberMaterial)
+            .where(
+                MemberMaterial.id == material_id,
+                MemberMaterial.tenant_id == str(user.tenant_id),
+                MemberMaterial.profile_id == str(profile.id),
+                MemberMaterial.user_id == profile.user_id,
+                MemberMaterial.is_deleted.is_(False),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if material is None:
+        raise HTTPException(404, "材料不存在或不在授权范围内")
+    if not material.user_id or not material.submission_key:
+        raise HTTPException(422, "发展材料请在材料核验流程中办理")
+    if not material.file_name:
+        raise HTTPException(422, "材料没有可核对的原件，不能审核")
+    if str(material.user_id) == str(user.id):
+        raise HTTPException(403, "不能审核本人提交的材料")
+    if material.review_status == "approved":
+        raise HTTPException(409, "该材料已审核通过，不能重复审核")
+    if material.review_status == "returned":
+        raise HTTPException(409, "该材料已退回，等待本人修改重交后再审核")
+    opinion = body.opinion.strip()
+    if body.decision == "returned" and len(opinion) < 2:
+        raise HTTPException(422, "退回时必须填写退回原因")
+    now = datetime.utcnow()
+    material.review_status = body.decision
+    material.note = opinion
+    material.reviewed_by = str(user.id)
+    material.reviewed_at = now
+    latest = (
+        await db.execute(
+            select(func.max(ContentRevision.revision)).where(
+                ContentRevision.tenant_id == str(user.tenant_id),
+                ContentRevision.resource_type == "member_material",
+                ContentRevision.resource_id == str(material.id),
+            )
+        )
+    ).scalar() or 0
+    db.add(
+        ContentRevision(
+            tenant_id=str(user.tenant_id),
+            resource_type="member_material",
+            resource_id=str(material.id),
+            revision=latest + 1,
+            action="review",
+            actor_id=str(user.id),
+            reason=opinion or ("审核通过" if body.decision == "approved" else "退回补充"),
+            snapshot=row_data(material),
+            created_at=now,
+        )
+    )
+    await db.flush()
+    history = await _material_history(db, material)
+    await audit_operation(
+        db,
+        request,
+        user,
+        action="review_member_material",
+        resource_type="member_material",
+        resource_id=str(material.id),
+        data_level="sensitive",
+        new_value={"decision": body.decision, "opinion": opinion},
+    )
+    await db.commit()
+    return APIResponse(data=history, trace_id=_trace(request))
 
 
 @router.get(

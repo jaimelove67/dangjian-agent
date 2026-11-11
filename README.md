@@ -35,7 +35,7 @@ worker/、.openai/    Sites 兼容打包入口
 1. 在根目录执行 `npm ci` 安装当前 React 前端依赖。
 2. 在 `backend/` 建立虚拟环境，使用 `requirements-dev.lock` 安装开发环境，或使用 `requirements.lock` 安装运行环境；安装时使用 `pip install --require-hashes -r <锁文件>`。
 3. 从 `backend/.env.example` 准备 `backend/.env`，配置数据库、Redis、认证及原件加密参数。模型凭据只在服务端配置。
-4. 新环境按 [迁移说明](backend/migrations/README.md) 准备数据库；已有数据库升级前先确认目标并完成备份。当前迁移头为 `031_backup_jobs`。
+4. 新环境按 [迁移说明](backend/migrations/README.md) 准备数据库；已有数据库升级前先确认目标并完成备份。当前迁移头为 `047_member_material_review`。
 5. 配置完成后，在根目录执行 `npm run dev:all`，统一启动 FastAPI 和 React；前端代理自动指向该次启动的后端。
 
 `npm run dev:frontend` 和 `npm run dev:backend` 可分别启动两端。单独启动前端时，默认使用浏览器工作区数据；连接后端须设置 `VITE_DATA_MODE=live`。后端模式按登录账号校验角色和租户，不回退到浏览器工作区记录。正式账号及初始权限按实际部署流程准备。
@@ -62,6 +62,7 @@ worker/、.openai/    Sites 兼容打包入口
 - [角色、权限与办理流程](docs/role-access.md)
 - [密码、申请与会话安全](docs/password-security.md)
 - [材料填写建议](docs/material-suggestions.md)
+- [测试业务数据清理](docs/test-data-cleanup.md)
 - [加密备份与隔离恢复](docs/backup-operations.md)
 - [素材来源](docs/assets.md)
 

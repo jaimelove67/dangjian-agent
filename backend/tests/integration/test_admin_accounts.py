@@ -182,6 +182,15 @@ def create(workspace, **overrides):
     )
 
 
+def test_login_help_is_public_and_does_not_expose_account_data(workspace):
+    response = workspace.client.get("/api/v1/auth/login-help")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert set(data) == {"contact_name", "contact_phone", "contact_email", "note"}
+    assert "password" not in response.text
+    assert "account-root" not in response.text
+
+
 def test_organization_options_exclude_foreign_deleted_and_invalid_units(workspace):
     response = workspace.client.get("/api/v1/admin/org-units", headers=workspace.headers)
     assert response.status_code == 200
@@ -264,6 +273,29 @@ def test_school_admin_can_create_and_read_only_own_school_accounts(workspace):
     )
     assert cross_tenant.status_code == 403
     assert workspace.session.scalar(select(func.count(User.id))) == 2
+
+
+def test_school_admin_can_create_department_account_without_tree_parent(workspace):
+    """院系未挂在学校的下级时，账号管理仍应能选择并创建院系账号。"""
+    workspace.actor.role = UserRole.SCHOOL_ADMIN
+    workspace.actor.org_unit_id = "school-a"
+    workspace.session.commit()
+    # 本 fixture 的 department-a 没有 parent_id，正好覆盖历史组织树不完整的情况。
+    options = workspace.client.get("/api/v1/admin/org-units", headers=workspace.headers)
+    assert options.status_code == 200
+    assert "department-a" in {org["id"] for org in options.json()["data"]}
+    response = workspace.client.post(
+        "/api/v1/admin/users",
+        headers=workspace.headers,
+        json=payload(
+            username="department-admin",
+            name="合成院系管理员",
+            role="department_admin",
+            org_unit_id="department-a",
+        ),
+    )
+    assert response.status_code == 201
+    assert response.json()["data"]["org_name"] == "合成department-a"
 
 
 def test_created_account_is_hashed_audited_and_can_log_in(workspace):

@@ -16,6 +16,7 @@ import {
 import { useApp } from "../app-context";
 import { useStore } from "../store";
 import { IS_LIVE, backend, getSession } from "../api";
+import { formatBusinessTime } from "../business-time";
 import { roleApi } from "../role-api";
 import { MaterialSuggestions, useMaterialDraft } from "../components/MaterialSuggestions";
 import { validateMaterialFile } from "../material-validation";
@@ -98,6 +99,13 @@ export function MaterialInbox() {
   const [preview, setPreview] = useState({ status: "idle" });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [receiptBusy, setReceiptBusy] = useState(false);
+  const [reviewing, setReviewing] = useState(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewError, setReviewError] = useState(null);
+  const [reviewHistory, setReviewHistory] = useState(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     if (!selected && w.members.length) setSelected(w.members[0].id);
   }, [w.members.length, selected]);
@@ -133,7 +141,7 @@ export function MaterialInbox() {
     return () => {
       active = false;
     };
-  }, [selected, page, session.user.id]);
+  }, [selected, page, session.user.id, reloadKey]);
   useEffect(() => {
     let active = true;
     let objectUrl = "";
@@ -182,6 +190,77 @@ export function MaterialInbox() {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [detail, selected, session.user.id]);
+  useEffect(() => {
+    let active = true;
+    if (!detail) {
+      setReviewHistory(null);
+      setReviewLoading(false);
+      return () => {};
+    }
+    const profile = detail.profile_id || selected;
+    if (!profile) {
+      setReviewHistory(null);
+      return () => {};
+    }
+    if (!IS_LIVE) {
+      const reviews = (data.materialReviews || []).filter(
+        (review) => review.material_id === detail.id,
+      );
+      const prior = detail.previous_material_id
+        ? data.personalMaterials.find(
+            (material) => material.id === detail.previous_material_id,
+          )
+        : null;
+      setReviewHistory({
+        reviews,
+        previous_material: prior
+          ? {
+              ...prior,
+              reviews: (data.materialReviews || []).filter(
+                (review) => review.material_id === prior.id,
+              ),
+            }
+          : null,
+      });
+      return () => {};
+    }
+    setReviewLoading(true);
+    setReviewHistory(null);
+    roleApi
+      .receivedMaterialReviews(profile, detail.id)
+      .then((value) => {
+        if (!active) return;
+        setReviewHistory(value);
+        if (value?.material) {
+          setDetail((prev) =>
+            prev && prev.id === value.material.id
+              ? { ...prev, ...value.material }
+              : prev,
+          );
+          setItems((prev) =>
+            prev.map((item) =>
+              item.id === value.material.id
+                ? { ...item, ...value.material }
+                : item,
+            ),
+          );
+        }
+      })
+      .catch(() => {
+        if (active)
+          setReviewHistory({
+            reviews: [],
+            previous_material: null,
+            error: "暂时无法读取审核记录，请刷新后重试。",
+          });
+      })
+      .finally(() => {
+        if (active) setReviewLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [detail?.id, selected, session.user.id]);
   const ids = new Set(w.members.map((m) => m.id));
   const all = IS_LIVE
     ? loadedKey === `${selected}:${page}`
@@ -197,21 +276,157 @@ export function MaterialInbox() {
         )),
   );
   function view(m) {
+    setError(null);
     setDetail(m);
-    if (
-      !IS_LIVE &&
-      !data.materialReceipts.some(
+  }
+  function viewedAtFor(m) {
+    if (IS_LIVE) return m.my_viewed_at || "";
+    return (
+      data.materialReceipts.find(
         (r) => r.material_id === m.id && r.viewer_id === session.user.id,
+      )?.viewed_at || ""
+    );
+  }
+  function reviewStatusMeta(m) {
+    if (m.review_status === "approved")
+      return { label: "已通过", tone: "green" };
+    if (m.review_status === "returned")
+      return { label: "已退回", tone: "red" };
+    return { label: "待审核", tone: "orange" };
+  }
+  const canReviewSelected =
+    hasPermission(session, "member.material_review") &&
+    detail?.has_file !== false &&
+    detail?.review_status !== "approved" &&
+    detail?.review_status !== "returned" &&
+    !(
+      session.user.profile_id &&
+      (detail?.profile_id || selected) === session.user.profile_id
+    );
+  async function completeReview() {
+    if (!detail) return;
+    setError(null);
+    if (!IS_LIVE) {
+      if (
+        !data.materialReceipts.some(
+          (r) =>
+            r.material_id === detail.id && r.viewer_id === session.user.id,
+        )
       )
-    )
-      update("materialReceipts", (prev) => [
-        ...prev,
-        {
-          material_id: m.id,
-          viewer_id: session.user.id,
-          viewed_at: new Date().toISOString(),
-        },
-      ]);
+        update("materialReceipts", (prev) => [
+          ...prev,
+          {
+            material_id: detail.id,
+            viewer_id: session.user.id,
+            viewed_at: new Date().toISOString(),
+          },
+        ]);
+      notify("材料查阅时间已记录");
+      setDetail(null);
+      return;
+    }
+    setReceiptBusy(true);
+    try {
+      const result = await roleApi.receiptMaterial(
+        detail.profile_id || selected,
+        detail.id,
+      );
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === detail.id
+            ? {
+                ...item,
+                my_viewed_at: result.viewed_at,
+                last_viewed_at: result.viewed_at,
+              }
+            : item,
+        ),
+      );
+      notify("材料查阅时间已记录");
+      setDetail(null);
+    } catch (e) {
+      notify(e.message, "error");
+    } finally {
+      setReceiptBusy(false);
+    }
+  }
+  async function submitReview(e) {
+    e.preventDefault();
+    if (!reviewing?.material) return;
+    const opinion = String(
+      new FormData(e.currentTarget).get("opinion") || "",
+    ).trim();
+    if (reviewing.decision === "returned" && !opinion) {
+      setReviewError(new Error("退回时必须填写退回原因。"));
+      return;
+    }
+    setReviewBusy(true);
+    setReviewError(null);
+    try {
+      const material = reviewing.material;
+      if (IS_LIVE) {
+        const result = await roleApi.reviewPersonalMaterial(
+          material.profile_id || selected,
+          material.id,
+          { decision: reviewing.decision, opinion },
+        );
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === material.id ? { ...item, ...result.material } : item,
+          ),
+        );
+        setDetail((prev) =>
+          prev && prev.id === material.id
+            ? { ...prev, ...result.material }
+            : prev,
+        );
+        setReviewHistory(result);
+      } else {
+        const now = new Date().toISOString();
+        const record = {
+          id: crypto.randomUUID(),
+          material_id: material.id,
+          decision: reviewing.decision,
+          opinion,
+          reviewer_name: session.user.name,
+          created_at: now,
+        };
+        const patch = {
+          review_status: reviewing.decision,
+          review_note: opinion,
+          reviewed_at: now,
+          reviewer_name: session.user.name,
+        };
+        update("personalMaterials", (prev) =>
+          prev.map((item) =>
+            item.id === material.id ? { ...item, ...patch } : item,
+          ),
+        );
+        update("materialReviews", (prev) => [record, ...prev]);
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === material.id ? { ...item, ...patch } : item,
+          ),
+        );
+        setDetail((prev) =>
+          prev && prev.id === material.id ? { ...prev, ...patch } : prev,
+        );
+        setReviewHistory((prev) => ({
+          ...(prev || {}),
+          reviews: [record, ...(prev?.reviews || [])],
+        }));
+      }
+      notify(
+        reviewing.decision === "approved"
+          ? "材料审核已通过"
+          : "材料已退回，本人可修改重交",
+      );
+      setReviewing(null);
+    } catch (failure) {
+      setReviewError(failure);
+    } finally {
+      setReviewBusy(false);
+    }
   }
   async function download(m) {
     try {
@@ -263,6 +478,19 @@ export function MaterialInbox() {
           </Select>
         )}
         <span className="toolbar-spacer" />
+        <button
+          type="button"
+          className="button secondary"
+          disabled={loading}
+          onClick={() => {
+            setPage(1);
+            setReloadKey((value) => value + 1);
+            w.reload();
+          }}
+        >
+          <ArrowsClockwise size={16} />
+          刷新
+        </button>
         <Badge tone="blue">组织授权接收</Badge>
       </div>
       {(error || w.error) && (
@@ -276,6 +504,7 @@ export function MaterialInbox() {
               <th>提交人</th>
               <th>所属组织</th>
               <th>提交时间</th>
+              <th>审核状态</th>
               <th>接收记录</th>
               <th>操作</th>
             </tr>
@@ -302,25 +531,24 @@ export function MaterialInbox() {
                 </td>
                 <td>{m.created_at.slice(0, 10)}</td>
                 <td>
-                  <Badge
-                    tone={
-                      data.materialReceipts.some(
-                        (r) =>
-                          r.material_id === m.id &&
-                          r.viewer_id === session.user.id,
-                      )
-                        ? "green"
-                        : "blue"
-                    }
-                  >
-                    {data.materialReceipts.some(
-                      (r) =>
-                        r.material_id === m.id &&
-                        r.viewer_id === session.user.id,
-                    )
-                      ? "已查阅"
-                      : "已提交"}
+                  <Badge tone={reviewStatusMeta(m).tone}>
+                    {reviewStatusMeta(m).label}
                   </Badge>
+                  {m.reviewed_at && (
+                    <small className="cell-subtext">
+                      {formatBusinessTime(m.reviewed_at)}
+                    </small>
+                  )}
+                </td>
+                <td>
+                  <Badge tone={viewedAtFor(m) ? "green" : "blue"}>
+                    {viewedAtFor(m) ? "已查阅" : "已提交"}
+                  </Badge>
+                  {viewedAtFor(m) && (
+                    <small className="cell-subtext">
+                      {formatBusinessTime(viewedAtFor(m))}
+                    </small>
+                  )}
                 </td>
                 <td>
                   <button className="text-button link" onClick={() => view(m)}>
@@ -357,9 +585,9 @@ export function MaterialInbox() {
         </div>
       )}
       <div className="page-note">
-        查阅状态仅表示当前账号已打开材料。材料核验、归档和党员发展决定须按相应业务流程办理。
+        点击“完成查阅”记录当前账号的查阅时间；支部书记可审核通过或退回。查阅和审核均不代表发展材料核验、归档或党员发展决定。
       </div>
-      {detail && (
+      {detail && !reviewing && (
         <Modal title="查阅个人材料" wide flat onClose={() => setDetail(null)}>
           <div className="document-heading">
             <FileText size={35} />
@@ -371,6 +599,89 @@ export function MaterialInbox() {
             </div>
           </div>
           <p className="body-copy">{detail.description || "无补充说明"}</p>
+          <div className="material-review-status">
+            <Badge tone={reviewStatusMeta(detail).tone}>
+              {reviewStatusMeta(detail).label}
+            </Badge>
+            {detail.reviewed_at && (
+              <small>
+                {formatBusinessTime(detail.reviewed_at)}
+                {detail.reviewer_name ? ` · ${detail.reviewer_name}` : ""}
+              </small>
+            )}
+          </div>
+          {detail.review_status === "returned" && (
+            <div className="material-returned-note" role="alert">
+              <WarningCircle size={18} />
+              <div>
+                <strong>材料已退回</strong>
+                <p>{detail.review_note || "请按审核意见修改后重新提交。"}</p>
+              </div>
+            </div>
+          )}
+          <div className="material-review-records" aria-label="审核记录">
+            <div className="material-review-records-title">
+              <FileText size={17} />
+              <strong>审核记录</strong>
+            </div>
+            {reviewLoading ? (
+              <Loading />
+            ) : reviewHistory?.error ? (
+              <p className="inline-note">{reviewHistory.error}</p>
+            ) : reviewHistory?.reviews?.length ? (
+              <ul className="material-review-list">
+                {reviewHistory.reviews.map((review) => (
+                  <li key={review.id}>
+                    <div className="material-review-item-head">
+                      <Badge tone={review.decision === "approved" ? "green" : "red"}>
+                        {review.decision === "approved" ? "审核通过" : "已退回"}
+                      </Badge>
+                      <small>
+                        {formatBusinessTime(review.created_at)} ·{" "}
+                        {review.reviewer_name || "审核人待核对"}
+                      </small>
+                    </div>
+                    <p>{review.opinion || "未填写审核意见"}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="inline-note">尚未审核，等待支部书记办理。</p>
+            )}
+            {reviewHistory?.previous_material && (
+              <div className="material-previous">
+                <strong>前次提交：{reviewHistory.previous_material.title}</strong>
+                <small>
+                  {formatBusinessTime(reviewHistory.previous_material.created_at)} ·{" "}
+                  {reviewHistory.previous_material.review_status === "returned"
+                    ? "已退回"
+                    : reviewHistory.previous_material.review_status === "approved"
+                      ? "审核通过"
+                      : "已提交"}
+                </small>
+                {reviewHistory.previous_material.reviews?.length ? (
+                  <ul className="material-review-list">
+                    {reviewHistory.previous_material.reviews.map((review) => (
+                      <li key={review.id}>
+                        <div className="material-review-item-head">
+                          <Badge tone={review.decision === "approved" ? "green" : "red"}>
+                            {review.decision === "approved" ? "审核通过" : "已退回"}
+                          </Badge>
+                          <small>
+                            {formatBusinessTime(review.created_at)} ·{" "}
+                            {review.reviewer_name || "审核人待核对"}
+                          </small>
+                        </div>
+                        <p>{review.opinion || "未填写审核意见"}</p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="inline-note">前次材料暂无审核记录。</p>
+                )}
+              </div>
+            )}
+          </div>
           <div className="material-inbox-preview">
             {preview.status === "loading" && <Loading />}
             {preview.status === "missing" && (
@@ -420,10 +731,88 @@ export function MaterialInbox() {
               <DownloadSimple size={17} />
               下载原件
             </button>
-            <button className="button primary" onClick={() => setDetail(null)}>
-              完成查阅
+            <button
+              className={canReviewSelected ? "button secondary" : "button primary"}
+              disabled={receiptBusy}
+              onClick={completeReview}
+            >
+              {receiptBusy ? "正在记录…" : "完成查阅"}
             </button>
+            {canReviewSelected && (
+              <>
+                <button
+                  className="button secondary"
+                  onClick={() => {
+                    setReviewError(null);
+                    setReviewing({ material: detail, decision: "returned" });
+                  }}
+                >
+                  退回补充
+                </button>
+                <button
+                  className="button primary"
+                  onClick={() => {
+                    setReviewError(null);
+                    setReviewing({ material: detail, decision: "approved" });
+                  }}
+                >
+                  审核通过
+                </button>
+              </>
+            )}
           </div>
+        </Modal>
+      )}
+      {reviewing && (
+        <Modal
+          title={reviewing.decision === "approved" ? "审核通过个人材料" : "退回个人材料"}
+          onClose={() => !reviewBusy && setReviewing(null)}
+        >
+          <form onSubmit={submitReview}>
+            <p className="body-copy">
+              {reviewing.material.title} · 提交人{" "}
+              {w.members.find(
+                (p) => p.id === (reviewing.material.profile_id || selected),
+              )?.name || "—"}
+            </p>
+            <Field
+              label={reviewing.decision === "approved" ? "审核意见（可选）" : "退回原因"}
+              required={reviewing.decision === "returned"}
+            >
+              <textarea
+                name="opinion"
+                rows={4}
+                maxLength={2000}
+                required={reviewing.decision === "returned"}
+                placeholder={
+                  reviewing.decision === "approved"
+                    ? "可填写核对情况或补充说明"
+                    : "请说明需补充或修改的内容，本人可据此重交"
+                }
+              />
+            </Field>
+            {reviewError && <ErrorBox error={reviewError} />}
+            <div className="inline-note">
+              审核结果只作用于本次个人材料，不改变党员发展阶段或发展材料核验状态。
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={reviewBusy}
+                onClick={() => setReviewing(null)}
+              >
+                取消
+              </button>
+              <button className="button primary" disabled={reviewBusy}>
+                {reviewBusy
+                  ? "正在提交…"
+                  : reviewing.decision === "approved"
+                    ? "确认通过"
+                    : "确认退回"}
+              </button>
+            </div>
+          </form>
         </Modal>
       )}
     </section>
@@ -471,7 +860,11 @@ export function ReviewCenter() {
                       ? "已完成"
                       : "已退回",
                 orgId: m.org_unit_id,
-                organization: m.org_unit_id,
+                organization:
+                  m.org_name ||
+                  (m.organization && !/^[0-9a-f-]{36}$/i.test(m.organization)
+                    ? m.organization
+                    : "所属组织待核对"),
                 minutes: m.transcript,
                 review_kind: "meeting",
               })),
@@ -602,13 +995,23 @@ export function ReviewCenter() {
       <div className="table-scroll">
         <table>
           <thead>
-            <tr>
-              <th>审核事项</th>
-              <th>业务类型</th>
-              <th>所属组织 / 来源</th>
-              <th>状态</th>
-              <th>操作</th>
-            </tr>
+            {tab === "综合审核" ? (
+              <tr>
+                <th>审核事项</th>
+                <th>来源记录</th>
+                <th>提交时间</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            ) : (
+              <tr>
+                <th>审核事项</th>
+                <th>业务类型</th>
+                <th>所属组织 / 来源</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            )}
           </thead>
           <tbody>
             {tab === "综合审核"
@@ -630,7 +1033,9 @@ export function ReviewCenter() {
                           meeting: "组织生活",
                         }[r.source_kind] || "业务审核"}
                       </td>
-                      <td>{r.source_id}</td>
+                      <td>
+                        <small className="cell-subtext">{r.source_id}</small>
+                      </td>
                       <td>{r.created_at?.slice(0, 10)}</td>
                       <td>
                         <Badge tone={r.stale ? "red" : "orange"}>

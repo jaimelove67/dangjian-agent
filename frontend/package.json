@@ -11,7 +11,7 @@
     "build": "vite build",
     "build:sites": "vite build --outDir ../dist/client --emptyOutDir",
     "preview": "vite preview",
-    "test": "node --test tests/contracts.test.mjs tests/organization-tree.test.mjs tests/roles.test.mjs tests/demo-courses.test.mjs tests/api.test.mjs tests/platform.test.mjs tests/platform-health.test.mjs tests/school.test.mjs tests/dev-proxy.test.mjs tests/api-config.test.mjs tests/meeting-images.test.mjs tests/meeting-participants.test.mjs tests/meeting-minutes.test.mjs tests/member-info.test.mjs tests/publications.test.mjs tests/education.test.mjs tests/education-heartbeat.test.mjs"
+    "test": "node --test tests/contracts.test.mjs tests/organization-tree.test.mjs tests/roles.test.mjs tests/demo-courses.test.mjs tests/api.test.mjs tests/platform.test.mjs tests/platform-health.test.mjs tests/school.test.mjs tests/dev-proxy.test.mjs tests/api-config.test.mjs tests/meeting-images.test.mjs tests/meeting-participants.test.mjs tests/meeting-minutes.test.mjs tests/member-info.test.mjs tests/publications.test.mjs tests/education.test.mjs tests/education-heartbeat.test.mjs tests/answer-markdown.test.mjs"
   },
   "dependencies": {
     "@iconify-icons/mdi": "^2.0.0",
@@ -21,7 +21,9 @@
     "pinyin-pro": "^3.26.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "react-markdown": "^10.1.0",
     "recharts": "^3.10.1",
+    "remark-gfm": "^4.0.1",
     "vite": "6.4.2"
   }
 }

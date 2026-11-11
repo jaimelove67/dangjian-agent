@@ -251,3 +251,38 @@ async def accessible_org_units(
         return list(
             (await db.execute(statement.order_by(OrgUnit.path, OrgUnit.id))).scalars().all()
         )
+
+
+async def account_org_units(
+    db: AsyncSession, user: User, tenant_id: str | None = None
+) -> list[OrgUnit]:
+    """账号管理可分配的组织范围。
+
+    学校管理员的业务范围覆盖本校，但账号管理不能只依赖组织树的父子关系：历史数据
+    里院系可能没有挂到学校节点，按后代计算会让“新增院系账号”选不到组织。这里对
+    学校管理员放开本校全部有效学校/院系/支部，仅用于账号管理入口；会议、名册等
+    业务范围仍使用 ``accessible_org_units``。
+    """
+    if get_role_profile(user.role).business_scope != BS_SCHOOL:
+        return await accessible_org_units(db, user, tenant_id)
+    scope_tenant = str(tenant_id or user.tenant_id)
+    conditions = (
+        OrgUnit.tenant_id == scope_tenant,
+        OrgUnit.is_deleted.is_(False),
+        OrgUnit.is_active.is_(True),
+        OrgUnit.org_type.in_(["school", "department", "branch"]),
+    )
+    cross_tenant = scope_tenant != str(user.tenant_id)
+    context = bypass_tenant_filter() if cross_tenant else nullcontext()
+    with context:
+        return list(
+            (
+                await db.execute(
+                    select(OrgUnit)
+                    .where(*conditions)
+                    .order_by(OrgUnit.path, OrgUnit.id)
+                )
+            )
+            .scalars()
+            .all()
+        )

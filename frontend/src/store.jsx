@@ -27,6 +27,7 @@ function emptyData() {
     notificationDoneBy: {},
     personalMaterials: [],
     materialReceipts: [],
+    materialReviews: [],
     memberInfoCollections: [],
     developmentProfiles: {},
     accounts: [],

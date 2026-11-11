@@ -186,6 +186,50 @@ test("received originals use the explicit roster and material identifiers", asyn
   const result = await roleApi.receivedFile("profile/1", "material 1");
   assert.equal(await result.text(), "private original");
 });
+test("material receipt uses the explicit roster and material identifiers", async () => {
+  globalThis.fetch = async (url, options) => {
+    assert.equal(
+      url,
+      "/api/v1/member/roster/profile%2F1/materials/material%201/receipt",
+    );
+    assert.equal(options.method, "POST");
+    return ok({
+      material_id: "material 1",
+      viewed_at: "2026-11-09T08:00:00",
+      view_count: 1,
+    });
+  };
+  const result = await roleApi.receiptMaterial("profile/1", "material 1");
+  assert.equal(result.view_count, 1);
+});
+
+test("personal material review and history use the explicit roster and material identifiers", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, method: options?.method || "GET" });
+    return ok({ material: { id: "material 1" }, reviews: [] });
+  };
+  await roleApi.ownMaterialReviews("material 1");
+  await roleApi.receivedMaterialReviews("profile/1", "material 1");
+  await roleApi.reviewPersonalMaterial("profile/1", "material 1", {
+    decision: "returned",
+    opinion: "请补充落款日期",
+  });
+  assert.deepEqual(calls, [
+    {
+      url: "/api/v1/member/self/materials/material%201/reviews",
+      method: "GET",
+    },
+    {
+      url: "/api/v1/member/roster/profile%2F1/materials/material%201/reviews",
+      method: "GET",
+    },
+    {
+      url: "/api/v1/member/roster/profile%2F1/materials/material%201/review",
+      method: "POST",
+    },
+  ]);
+});
 test("meeting review sends expected revision and explicit decision; submission omits decision", async () => {
   const bodies = [];
   globalThis.fetch = async (url, options) => {
@@ -209,6 +253,14 @@ test("meeting review sends expected revision and explicit decision; submission o
     reason: "独立审核意见",
     decision: "rejected",
   });
+});
+test("formal archive export uses the archived record package endpoint", async () => {
+  globalThis.fetch = async (url) => {
+    assert.equal(url, "/api/v1/meeting/records/meeting%2F1/export");
+    return ok({ format_version: "org-life-1" });
+  };
+  const result = await backend.exportMeetingArchive("meeting/1");
+  assert.equal(result.format_version, "org-life-1");
 });
 test("governance decisions preserve source version and returned decision", async () => {
   globalThis.fetch = async (url, options) => {

@@ -12,10 +12,12 @@ import {
   Books,
   Eye,
   WarningCircle,
+  ArrowsClockwise,
 } from "@phosphor-icons/react";
 import { useApp } from "../app-context";
 import { useStore } from "../store";
 import { IS_LIVE, getSession } from "../api";
+import { formatBusinessTime } from "../business-time";
 import { roleApi } from "../role-api";
 import { useOwnWorkspace } from "../role-hooks";
 import { isSelfService, roleLabel } from "../roles";
@@ -57,8 +59,43 @@ function previewKindLabel(kind) {
   return { pdf: "PDF", image: "图片", text: "文本" }[kind] || "不可在线预览";
 }
 
+function materialBadge(material, viewed) {
+  if (material.review_status === "returned")
+    return { label: "已退回", tone: "red" };
+  if (material.review_status === "approved")
+    return { label: "审核通过", tone: "green" };
+  if (material.has_file === false)
+    return { label: "原件待提交", tone: "orange" };
+  if (viewed) return { label: "组织已查阅", tone: "green" };
+  return { label: "已提交", tone: "blue" };
+}
+
+function MaterialReviewList({ reviews }) {
+  if (!reviews?.length)
+    return <p className="inline-note">尚未审核，等待支部书记办理。</p>;
+  return (
+    <ul className="material-review-list">
+      {reviews.map((review) => (
+        <li key={review.id}>
+          <div className="material-review-item-head">
+            <Badge tone={review.decision === "approved" ? "green" : "red"}>
+              {review.decision === "approved" ? "审核通过" : "已退回"}
+            </Badge>
+            <small>
+              {formatBusinessTime(review.created_at)} ·{" "}
+              {review.reviewer_name || "审核人待核对"}
+            </small>
+          </div>
+          <p>{review.opinion || "未填写审核意见"}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function PersonalHome() {
   const { session, navigate } = useApp();
+  const { data } = useStore();
   const own = useOwnWorkspace();
   const applicant = session.user.role === "applicant";
   const identity = `${session.user.tenant_id}:${session.user.id}`;
@@ -71,7 +108,7 @@ export function PersonalHome() {
         <section className="panel home-materials">
           <PanelTitle title="我的材料" action="全部材料" onAction={() => navigate("self-materials")} />
           <div className="home-material-actions"><span>个人提交记录 · {own.loading || own.error ? "—" : own.total} 份</span><button className="button secondary" onClick={() => navigate("self-materials")}><UploadSimple size={16} />提交个人材料</button></div>
-          {own.loading ? <Loading /> : own.materials.length ? <div className="table-scroll"><table><thead><tr><th>材料名称</th><th>来源</th><th>提交时间</th><th>状态</th></tr></thead><tbody>{own.materials.slice(0, 3).map(material => <tr key={material.id}><td><button className="text-button link" onClick={() => navigate("self-materials")}>{material.title}</button></td><td>个人提交</td><td>{material.created_at?.slice(0, 10) || "—"}</td><td><Badge tone={material.has_file === false ? "orange" : "blue"}>{material.has_file === false ? "原件待提交" : "已提交"}</Badge></td></tr>)}</tbody></table></div> : !own.error && <Empty title="暂无个人提交记录" description="请按所属组织要求提交个人材料。" />}
+          {own.loading ? <Loading /> : own.materials.length ? <div className="table-scroll"><table><thead><tr><th>材料名称</th><th>来源</th><th>提交时间</th><th>状态</th></tr></thead><tbody>{own.materials.slice(0, 3).map(material => <tr key={material.id}><td><button className="text-button link" onClick={() => navigate("self-materials")}>{material.title}</button></td><td>个人提交</td><td>{material.created_at?.slice(0, 10) || "—"}</td><td>{(() => { const viewed = material.last_viewed_at || (!IS_LIVE && data.materialReceipts.some((receipt) => receipt.material_id === material.id)); const state = materialBadge(material, viewed); return <Badge tone={state.tone}>{state.label}</Badge>; })()}</td></tr>)}</tbody></table></div> : !own.error && <Empty title="暂无个人提交记录" description="请按所属组织要求提交个人材料。" />}
           <p className="home-privacy"><ShieldCheck size={15} />本人材料由本人及授权组织人员查阅。</p>
         </section>
       </div>
@@ -189,7 +226,7 @@ export function OwnArchive() {
 }
 export function OwnMaterials() {
   const { session } = useApp();
-  const { update, notify } = useStore();
+  const { data, update, notify } = useStore();
   const own = useOwnWorkspace();
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState("全部材料");
@@ -198,6 +235,9 @@ export function OwnMaterials() {
   const [filePreview, setFilePreview] = useState({ status: "idle" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [reviewHistory, setReviewHistory] = useState(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [resubmitFrom, setResubmitFrom] = useState(null);
   const submissionKey = useRef(crypto.randomUUID());
   const materialDraft = useMaterialDraft({ title: "", category: "", description: "" });
   const alive = () => getSession()?.user?.id === session.user.id;
@@ -246,11 +286,97 @@ export function OwnMaterials() {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [detail, session.user.id]);
+  useEffect(() => {
+    let active = true;
+    if (!detail) {
+      setReviewHistory(null);
+      setReviewLoading(false);
+      return () => {};
+    }
+    if (!IS_LIVE) {
+      const reviews = (data.materialReviews || []).filter(
+        (review) => review.material_id === detail.id,
+      );
+      const prior = detail.previous_material_id
+        ? data.personalMaterials.find(
+            (material) => material.id === detail.previous_material_id,
+          )
+        : null;
+      setReviewHistory({
+        reviews,
+        previous_material: prior
+          ? {
+              ...prior,
+              reviews: (data.materialReviews || []).filter(
+                (review) => review.material_id === prior.id,
+              ),
+            }
+          : null,
+      });
+      return () => {};
+    }
+    setReviewLoading(true);
+    setReviewHistory(null);
+    roleApi
+      .ownMaterialReviews(detail.id)
+      .then((value) => {
+        if (!active) return;
+        setReviewHistory(value);
+        if (value?.material)
+          setDetail((prev) =>
+            prev && prev.id === value.material.id
+              ? { ...prev, ...value.material }
+              : prev,
+          );
+      })
+      .catch(() => {
+        if (active)
+          setReviewHistory({
+            reviews: [],
+            previous_material: null,
+            error: "暂时无法读取审核记录，请刷新后重试。",
+          });
+      })
+      .finally(() => {
+        if (active) setReviewLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [detail?.id, session.user.id]);
   const filtered = own.materials.filter(
     (m) =>
       m.title.includes(query) &&
       (tab === "全部材料" || MATERIAL_CATEGORIES[m.category] === tab),
   );
+  function lastViewedAt(m) {
+    if (IS_LIVE) return m.last_viewed_at || "";
+    return (
+      data.materialReceipts
+        .filter((receipt) => receipt.material_id === m.id)
+        .map((receipt) => receipt.viewed_at)
+        .sort()
+        .at(-1) || ""
+    );
+  }
+  function viewedCount(m) {
+    if (IS_LIVE) return Number(m.viewer_count) || 0;
+    return data.materialReceipts.filter((receipt) => receipt.material_id === m.id)
+      .length;
+  }
+  function materialState(m) {
+    return materialBadge(m, lastViewedAt(m));
+  }
+  function startResubmit(material) {
+    materialDraft.reset();
+    materialDraft.edit("title", material.title);
+    materialDraft.edit("category", material.category);
+    materialDraft.edit("description", material.description || "");
+    setResubmitFrom(material);
+    setDetail(null);
+    setUpload(true);
+    setError(null);
+  }
   async function submit(e) {
     e.preventDefault();
     if (!own.profile) {
@@ -279,6 +405,7 @@ export function OwnMaterials() {
         description: String(f.get("description") || "").trim(),
         file,
         submission_key: submissionKey.current,
+        previous_material_id: resubmitFrom?.id,
       };
       let material;
       if (IS_LIVE) {
@@ -294,6 +421,11 @@ export function OwnMaterials() {
           file_size: file.size,
           created_at: new Date().toISOString(),
           status: "submitted",
+          review_status: "pending",
+          review_note: "",
+          reviewed_at: null,
+          reviewer_name: "",
+          previous_material_id: resubmitFrom?.id || null,
           has_file: true,
         };
         delete material.file;
@@ -312,12 +444,15 @@ export function OwnMaterials() {
           ...prev,
         ]);
       setUpload(false);
+      setResubmitFrom(null);
       setTab("全部材料");
       setQuery("");
       submissionKey.current = crypto.randomUUID();
       notify(
         IS_LIVE
-          ? "材料已提交，等待组织人员接收"
+          ? resubmitFrom
+            ? "材料已重新提交，前次记录和审核意见保留"
+            : "材料已提交，等待组织人员接收"
           : "材料已保存在当前浏览器，授权组织人员可查阅。",
       );
     } catch (e) {
@@ -345,6 +480,7 @@ export function OwnMaterials() {
             disabled={!own.profile || own.loading}
             onClick={() => {
               materialDraft.reset();
+              setResubmitFrom(null);
               setUpload(true);
               setError(null);
             }}
@@ -369,6 +505,15 @@ export function OwnMaterials() {
         <span className="muted small-text">
           {IS_LIVE ? "组织授权接收" : "原件保存在当前浏览器"}
         </span>
+        <button
+          type="button"
+          className="button secondary"
+          disabled={own.loading}
+          onClick={own.reload}
+        >
+          <ArrowsClockwise size={16} />
+          刷新
+        </button>
       </div>
       {own.error && <ErrorBox error={own.error} retry={own.reload} />}{" "}
       {!own.profile && !own.loading && !own.error && (
@@ -406,7 +551,14 @@ export function OwnMaterials() {
                 </td>
                 <td>{m.created_at.slice(0, 10)}</td>
                 <td>
-                  <Badge tone="blue">已提交</Badge>
+                  <Badge tone={materialState(m).tone}>
+                    {materialState(m).label}
+                  </Badge>
+                  {(m.reviewed_at || lastViewedAt(m)) && (
+                    <small className="cell-subtext">
+                      {formatBusinessTime(m.reviewed_at || lastViewedAt(m))}
+                    </small>
+                  )}
                 </td>
                 <td>
                   <button
@@ -422,6 +574,14 @@ export function OwnMaterials() {
                   >
                     下载原件
                   </button>
+                  {m.review_status === "returned" && (
+                    <button
+                      className="text-button link separated-action"
+                      onClick={() => startResubmit(m)}
+                    >
+                      修改重交
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -446,14 +606,18 @@ export function OwnMaterials() {
         </div>
       )}
       <div className="page-note">
-        “已提交”表示材料可按权限接收，审核结果和发展阶段以组织办理记录为准。
+        个人材料由所属支部组织人员查阅、支部书记审核；退回后可修改重交，前次记录和审核意见继续保留。审核结论不改变党员发展阶段。
       </div>
       {upload && (
         <Modal
-          title="提交个人材料"
+          title={resubmitFrom ? "修改重交个人材料" : "提交个人材料"}
           wide
           flat
-          onClose={() => !busy && setUpload(false)}
+          onClose={() => {
+            if (busy) return;
+            setUpload(false);
+            setResubmitFrom(null);
+          }}
         >
           <form onSubmit={submit}>
             <div className="form-grid">
@@ -510,7 +674,9 @@ export function OwnMaterials() {
             <div className="inline-note">
               <ShieldCheck size={17} />
               {IS_LIVE
-                ? "原件私有保存，仅本人和授权组织人员可下载。"
+                ? resubmitFrom
+                  ? "本次重交会生成新的材料记录，前次记录和审核意见继续保留。"
+                  : "原件私有保存，仅本人和授权组织人员可下载。"
                 : "原件保存在当前浏览器，请妥善保管，并按组织要求提交。"}
             </div>
             {error && <ErrorBox error={error} />}
@@ -519,12 +685,15 @@ export function OwnMaterials() {
                 type="button"
                 disabled={busy}
                 className="button secondary"
-                onClick={() => setUpload(false)}
+                onClick={() => {
+                  setUpload(false);
+                  setResubmitFrom(null);
+                }}
               >
                 取消
               </button>
               <button className="button primary" disabled={busy}>
-                {busy ? "正在提交…" : "确认提交"}
+                {busy ? "正在提交…" : resubmitFrom ? "确认重交" : "确认提交"}
               </button>
             </div>
           </form>
@@ -543,6 +712,102 @@ export function OwnMaterials() {
             </div>
           </div>
           <p className="body-copy">{detail.description || "暂无补充说明"}</p>
+          {detail.review_status === "returned" && (
+            <div className="material-returned-note" role="alert">
+              <WarningCircle size={18} />
+              <div>
+                <strong>材料已退回</strong>
+                <p>{detail.review_note || "请按组织意见修改后重新提交。"}</p>
+              </div>
+            </div>
+          )}
+          <div className="material-progress" aria-label="办理进度">
+            <div className="material-progress-head">
+              <div>
+                <Clock size={17} />
+                <strong>办理进度</strong>
+              </div>
+              <Badge tone={materialState(detail).tone}>
+                当前环节：{materialState(detail).label}
+              </Badge>
+            </div>
+            <ol className="material-progress-steps">
+              <li className="done">
+                <span className="material-progress-dot" />
+                <div>
+                  <strong>已提交</strong>
+                  <small>{formatBusinessTime(detail.created_at)}</small>
+                </div>
+              </li>
+              <li className={lastViewedAt(detail) ? "done" : "current"}>
+                <span className="material-progress-dot" />
+                <div>
+                  <strong>组织查阅</strong>
+                  <small>
+                    {lastViewedAt(detail)
+                      ? `${formatBusinessTime(lastViewedAt(detail))} · 已查阅 ${Math.max(1, viewedCount(detail))} 次`
+                      : "待所属支部组织人员查阅"}
+                  </small>
+                </div>
+              </li>
+              <li
+                className={
+                  detail.review_status === "returned"
+                    ? "error"
+                    : detail.review_status === "approved"
+                      ? "done"
+                      : "current"
+                }
+              >
+                <span className="material-progress-dot" />
+                <div>
+                  <strong>支部书记审核</strong>
+                  <small>
+                    {detail.review_status === "approved"
+                      ? `审核通过 · ${formatBusinessTime(detail.reviewed_at)}${detail.reviewer_name ? ` · ${detail.reviewer_name}` : ""}`
+                      : detail.review_status === "returned"
+                        ? `已退回 · ${formatBusinessTime(detail.reviewed_at)}${detail.reviewer_name ? ` · ${detail.reviewer_name}` : ""}`
+                        : lastViewedAt(detail)
+                          ? "待支部书记审核"
+                          : "待组织查阅后审核"}
+                  </small>
+                </div>
+              </li>
+            </ol>
+            <p className="inline-note">
+              负责查阅组织：{own.profile?.organization || "—"}。
+            </p>
+          </div>
+          <div className="material-review-records" aria-label="审核记录">
+            <div className="material-review-records-title">
+              <FileText size={17} />
+              <strong>审核记录</strong>
+            </div>
+            {reviewLoading ? (
+              <Loading />
+            ) : reviewHistory?.error ? (
+              <p className="inline-note">{reviewHistory.error}</p>
+            ) : (
+              <MaterialReviewList reviews={reviewHistory?.reviews} />
+            )}
+            {reviewHistory?.previous_material && (
+              <div className="material-previous">
+                <strong>前次提交：{reviewHistory.previous_material.title}</strong>
+                <small>
+                  {formatBusinessTime(reviewHistory.previous_material.created_at)} ·{" "}
+                  {reviewHistory.previous_material.review_status === "returned"
+                    ? "已退回"
+                    : reviewHistory.previous_material.review_status === "approved"
+                      ? "审核通过"
+                      : "已提交"}
+                </small>
+                <MaterialReviewList reviews={reviewHistory.previous_material.reviews} />
+              </div>
+            )}
+            <p className="inline-note">
+              个人材料不进入发展材料核验；审核结论不改变党员发展阶段。
+            </p>
+          </div>
           <div className="material-preview" aria-label="文件预览">
             <div className="material-preview-header">
               <div className="material-preview-title">
@@ -602,7 +867,10 @@ export function OwnMaterials() {
             )}
           </div>
           <div className="inline-note">
-            {detail.file_name} · 已提交
+            {detail.file_name} ·{" "}
+            {lastViewedAt(detail)
+              ? `组织已查阅 ${formatBusinessTime(lastViewedAt(detail))}`
+              : "已提交，等待组织查阅"}
             {!IS_LIVE && !detail.has_file ? " · 尚未附原件" : ""}
           </div>
           <div className="modal-actions">
@@ -614,6 +882,15 @@ export function OwnMaterials() {
               <DownloadSimple size={16} />
               下载原件
             </button>
+            {detail.review_status === "returned" && (
+              <button
+                className="button primary"
+                onClick={() => startResubmit(detail)}
+              >
+                <UploadSimple size={16} />
+                修改重交
+              </button>
+            )}
           </div>
         </Modal>
       )}

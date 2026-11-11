@@ -49,9 +49,9 @@ class TestPromptVersions:
         # 只配了 qa：rewrite 回落默认，而不是留空——空字符串会被当成"没留痕"
         assert effective["rewrite"] == PROMPT_DEFAULTS["rewrite"]
 
-    def test_fingerprint_covers_prompt_and_workflow(self):
+    def test_fingerprint_covers_prompt_workflow_and_role_context(self):
         fingerprint = version_fingerprint(None)
-        assert set(fingerprint) == {"prompt", "workflow"}
+        assert set(fingerprint) == {"prompt", "workflow", "context"}
         assert set(fingerprint["prompt"]) == set(PROMPT_DEFAULTS)
         # 工作流版本就是契约常量本身，不在这里另写一遍
         assert set(fingerprint["workflow"]) == {item["workflow"] for item in workflow_versions()}
@@ -59,6 +59,8 @@ class TestPromptVersions:
             fingerprint["workflow"][item["workflow"]] == item["version"]
             for item in workflow_versions()
         )
+        # 角色上下文规则单独登记，便于区分“提示词改了”和“角色范围规则改了”
+        assert fingerprint["context"] == {"role": "v1", "format": "v1"}
 
     def test_prompt_versions_reads_tenant_config_cache(self):
         """生效版本必须走租户配置（缓存），不能只看默认值"""

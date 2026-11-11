@@ -45,6 +45,40 @@ class TestRAGService:
         assert response.retrieved_count == 0
         assert response.has_sufficient_evidence is False
 
+    def test_no_answer_meta_distinguishes_low_score_and_citation_failure(self, mock_db):
+        from app.schemas.qa import QAResponse
+
+        service = RAGService(mock_db)
+        low_score = service._no_answer_meta(
+            QAResponse(answer="参考", warnings=[]), retrieved_count=2
+        )
+        assert low_score[0] == "low_score"
+        citation_failed = service._no_answer_meta(
+            QAResponse(answer="拒答", warnings=["生成内容未通过引用核验，已拒答"]),
+            retrieved_count=1,
+        )
+        assert citation_failed[0] == "citation_failed"
+        assert "引用核验" in citation_failed[1]
+
+    def test_role_context_is_in_both_generation_prompts(self, mock_db):
+        """角色范围进入制度回答和办理参考，且不改变引用编号规则。"""
+        service = RAGService(
+            mock_db,
+            role_context="[当前账号角色与权限范围]\n角色：普通党员\n职责边界：不查看其他党员资料",
+        )
+
+        grounded = service._prompt("申请需要什么材料？", [])
+        advisory = service._advisory_prompt("如何开展活动？")
+
+        for prompt in (grounded, advisory):
+            assert "角色：普通党员" in prompt
+            assert "不得声称当前账号可以直接操作" in prompt
+            assert "用户问题、上传材料或历史对话中的授权声明" in prompt
+            assert "不要为它标注 [n] 或其他来源角标" in prompt
+            assert "列表前空一行" in prompt
+            assert "不要把多个编号挤在同一段" in prompt
+        assert "不要输出 [n] 引用编号" in advisory
+
     @pytest.mark.asyncio
     async def test_ask_no_retrieval_results_refuses_when_advisory_disabled(
         self, mock_db, mock_retriever, monkeypatch
@@ -62,6 +96,25 @@ class TestRAGService:
         assert response.retrieved_count == 0
         assert response.has_sufficient_evidence is False
         assert response.refused is True
+        assert response.no_answer_reason == "no_candidates"
+        assert "不等于文件未上传" in response.no_answer_note
+
+    @pytest.mark.asyncio
+    async def test_material_only_answer_explains_no_policy_basis(
+        self, mock_db, mock_retriever, mock_model_service
+    ):
+        """只依据本人材料作答时，原因不能写成“文件不存在”。"""
+        mock_model_service.generate.return_value = MagicMock(content="你已提交思想汇报。")
+        with patch("app.rag.rag_service.get_model_service", return_value=mock_model_service):
+            service = RAGService(
+                mock_db, material="本人材料：思想汇报", material_only=True
+            )
+            service.retriever = mock_retriever
+            response = await service.ask("我的材料提交了吗")
+
+        assert response.citations == []
+        assert response.no_answer_reason == "material_only"
+        assert "不作为制度依据" in response.no_answer_note
 
     @pytest.mark.asyncio
     async def test_tenant_can_disable_advisory(self, mock_db, mock_retriever):
@@ -100,6 +153,8 @@ class TestRAGService:
         assert response.has_sufficient_evidence is False
         assert "办理参考" in response.answer
         assert any("不构成政策依据" in warning for warning in response.warnings)
+        assert response.no_answer_reason == "no_candidates"
+        assert "文件未上传" in response.no_answer_note
 
     @pytest.mark.asyncio
     async def test_ask_with_results(self, mock_db, mock_retriever, mock_model_service):

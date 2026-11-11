@@ -24,17 +24,22 @@ async def archive_policy(db: AsyncSession, tenant_id: str, *, lock: bool = False
     return dict(value) if isinstance(value, dict) else {}
 
 
-async def require_archive_policy(db: AsyncSession, tenant_id: str) -> dict[str, Any]:
+def archive_policy_ready(policy: dict[str, Any]) -> bool:
     """启用、版本、确认人与依据均须有效；配置字符串或残缺配置不能放行。"""
-    policy = await archive_policy(db, tenant_id, lock=True)
-    if not (
+    return bool(
         policy.get("enabled") is True
         and type(policy.get("revision")) is int
         and policy["revision"] > 0
         and policy.get("confirmed_by")
         and policy.get("confirmed_at")
         and policy.get("evidence")
-    ):
+    )
+
+
+async def require_archive_policy(db: AsyncSession, tenant_id: str) -> dict[str, Any]:
+    """启用、版本、确认人与依据均须有效；配置字符串或残缺配置不能放行。"""
+    policy = await archive_policy(db, tenant_id, lock=True)
+    if not archive_policy_ready(policy):
         raise HTTPException(
             403, "学校组织部门尚未确认电子记录效力，归档、历史归档查询及导出暂不可用"
         )

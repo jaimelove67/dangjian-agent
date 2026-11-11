@@ -20,7 +20,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,6 +54,7 @@ from app.services.qa_attachment_service import (
     store_attachment,
 )
 from app.services.qa_personal_context import build_personal_context
+from app.services.qa_role_context import build_role_context
 from app.services.qa_scope_context import build_scope_context
 from app.services.qa_record_io import build_qa_records
 from app.services.qa_record_service import (
@@ -171,6 +172,18 @@ class CitationSchema(BaseModel):
     content_revision: Optional[int] = None
 
 
+class AccessContextSchema(BaseModel):
+    """本次回答使用的角色与权限范围（只回标签，不回个人资料正文）"""
+
+    role: str
+    role_label: str
+    business_scope: str
+    business_scope_label: str
+    knowledge_scopes: list[str] = Field(default_factory=list)
+    knowledge_scope_labels: list[str] = Field(default_factory=list)
+    version: str = "v1"
+
+
 class QuestionResponse(BaseModel):
     """问答响应"""
 
@@ -188,7 +201,14 @@ class QuestionResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     disclaimer: str
     refused: bool
+    #: 无依据时的结构化原因；只用于界面说明，不把“没检索到”误写成“文件未上传”。
+    no_answer_reason: Optional[str] = None
+    no_answer_note: Optional[str] = None
     session_id: Optional[str] = None
+    #: 本次回答使用的角色、业务范围和知识库范围；历史记录中保留当时的快照。
+    access_context: Optional[AccessContextSchema] = Field(
+        default=None, description="本次回答的角色与权限范围"
+    )
     #: 本次提问携带的附件（只回元数据）。材料不进引用，只说明"看过哪些材料"。
     attachments: list[QAAttachmentSchema] = Field(default_factory=list)
     #: 本次回答参考的本人资料（档案、采集表、个人材料），只回元数据。
@@ -226,6 +246,14 @@ class QASessionItem(QuestionResponse):
             for item in (getattr(record, "personal_sources", None) or [])
             if isinstance(item, dict) and item.get("id")
         ]
+        access_context = None
+        raw_access = getattr(record, "access_context", None)
+        if isinstance(raw_access, dict):
+            try:
+                access_context = AccessContextSchema(**raw_access)
+            except (TypeError, ValidationError):
+                # 旧记录或人工导入的异常数据不应阻断历史列表。
+                access_context = None
         answer_kind = (
             "refused"
             if record.refused
@@ -252,6 +280,7 @@ class QASessionItem(QuestionResponse):
             disclaimer=record.disclaimer,
             refused=record.refused,
             session_id=record.session_id,
+            access_context=access_context,
             attachments=attachments,
             personal_sources=personal_sources,
             # 本功能上线前的历史记录没有版本指纹，返回空字典，界面显示"未留痕"
@@ -506,6 +535,9 @@ async def ask_question(
         material_parts.append(personal.text)
     if scope_used and scope is not None:
         material_parts.append(scope.text)
+    # 角色上下文只约束办理建议的职责边界，不受“参考我的资料”开关影响，
+    # 也不写入 material_parts：它不是用户材料，更不能被当成制度依据。
+    role_context = build_role_context(user)
     # 创建 RAG 服务
     rag_service = RAGService(
         db,
@@ -518,6 +550,7 @@ async def ask_question(
         no_evidence_threshold=tenant_config.get(tenant_id, "no_evidence_threshold"),
         material="\n\n".join(material_parts) or None,
         material_only=personal_only,
+        role_context=role_context.text,
     )
 
     # 执行问答
@@ -541,9 +574,6 @@ async def ask_question(
         )
     if scope_used and scope is not None:
         warnings.extend(scope.warnings)
-        warnings.append(
-            "本次回答同时参考了当前账号授权范围内的组织统计；不含其他党员个人材料正文。"
-        )
     if body.include_personal and not context_used:
         warnings.append("当前账号没有可参考的本人档案或授权范围统计，本次仅依据制度库回答。")
     personal_sources = [
@@ -575,7 +605,10 @@ async def ask_question(
         warnings=list(dict.fromkeys(warnings)),
         disclaimer=rag_response.disclaimer,
         refused=rag_response.refused,
+        no_answer_reason=rag_response.no_answer_reason,
+        no_answer_note=rag_response.no_answer_note,
         session_id=body.session_id,
+        access_context=AccessContextSchema(**role_context.as_dict()),
         attachments=[QAAttachmentSchema(**item.summary()) for item in attachments],
         personal_sources=personal_sources,
         # 版本留痕（SEC-11）：在"回答产生的那一刻"记下当时的提示词与工作流契约版本，
@@ -587,6 +620,9 @@ async def ask_question(
         # answer_kind 是响应期派生字段，不落库；历史回看时由引用/拒答状态重新推导。
         history_response = response.model_dump(mode="json")
         history_response.pop("answer_kind", None)
+        # 原因说明是响应期派生字段，未落库；历史回看按引用/检索数量重新推导。
+        history_response.pop("no_answer_reason", None)
+        history_response.pop("no_answer_note", None)
         async with db.begin_nested():
             await create_session(
                 db,
@@ -618,6 +654,8 @@ async def ask_question(
             "personal_sources": [
                 {"kind": item.kind, "title": item.title} for item in personal_sources
             ],
+            # 角色与范围是回答当时的权限快照；个人信息和材料正文不进入审计。
+            "access_context": role_context.as_dict(),
         },
     )
     await db.commit()
