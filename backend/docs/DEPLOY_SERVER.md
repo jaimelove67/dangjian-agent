@@ -295,3 +295,68 @@ cd /opt/dangjian-agent/backend && docker compose -f docker-compose.server.yml up
 | audit_logs | 518 |
 
 8 个账号全部登录 200；`/health/live`、`/health/ready` 200；公网首页 200。
+
+---
+
+## 2026-11-11 增量上线：体验报告收尾（044 → 047）
+
+**变更范围**：个人材料查阅回执/支部书记审核/退回重交/前次记录、会议归档前置提示与正式归档导出、知识文件发布信息、账号创建说明、智能体角色权限与无答案原因、审核列表组织名称、登录帮助。
+
+### 上线步骤（已执行）
+
+```bash
+# 1) 本机打包（排除 .env、uploads、缓存、node_modules、tests）
+tar czf tmp/deploy-20261111.tar.gz \
+  --exclude='./.env' --exclude='./backend/.env' \
+  --exclude='./backend/uploads' --exclude='./backend/logs' \
+  --exclude='./backend/.mypy_cache' --exclude='./backend/.pytest_cache' \
+  --exclude='./backend/tests' --exclude='./backend/docs' \
+  --exclude='./backend/frontend' --exclude='./backend/frontend-test' \
+  --exclude='./frontend/node_modules' --exclude='./frontend/dist' \
+  --exclude='./frontend/tests' --exclude='./frontend/tmp' \
+  backend frontend package.json package-lock.json scripts
+
+# 2) 上传 + 备份
+scp tmp/deploy-20261111.tar.gz root@129.204.32.148:/root/
+docker exec party-agent-postgres pg_dump -U party_user -d party_agent -Fc \
+  > /root/backups/pg_<ts>_pre_047.dump
+tar czf /root/backups/code_<ts>_pre_047.tar.gz -C /opt/dangjian-agent \
+  backend frontend package.json package-lock.json scripts .env
+
+# 3) 旁路目录解包，保留线上 .env
+rm -rf /opt/dangjian-agent-new
+mkdir -p /opt/dangjian-agent-new
+tar xzf /root/deploy-20261111.tar.gz -C /opt/dangjian-agent-new
+cp /opt/dangjian-agent/backend/.env /opt/dangjian-agent-new/backend/.env
+cp /opt/dangjian-agent/.env /opt/dangjian-agent-new/.env
+
+# 4) 回滚镜像 + 构建
+docker tag party-agent-server-app:latest party-agent-app-bak-20261111
+docker tag party-agent-server-frontend:latest party-agent-frontend-bak-20261111
+cd /opt/dangjian-agent-new/backend
+docker compose -f docker-compose.server.yml build
+
+# 5) 切换 + 迁移 + 健康检查
+docker compose -f docker-compose.server.yml up -d --no-deps app frontend
+docker compose -f docker-compose.server.yml exec -T app python -m alembic upgrade head
+curl http://127.0.0.1/api/v1/health/ready
+curl http://129.204.32.148/
+
+# 6) 目录规范化
+mv /opt/dangjian-agent /opt/dangjian-agent-old-20261111
+mv /opt/dangjian-agent-new /opt/dangjian-agent
+cd /opt/dangjian-agent/backend
+docker compose -f docker-compose.server.yml up -d --no-deps app frontend
+```
+
+### 本次结果
+
+- 迁移：`044_meeting_document_templates` → `047_member_material_review (head)`。
+- 健康检查：`/api/v1/health/ready` 200；公网首页 200；登录帮助接口 200。
+- 新审核路由未登录返回 401，说明路由已生效。
+- `member_materials` 已存在 `reviewed_by` / `reviewed_at` / `previous_material_id` 三个字段。
+- 数据保留：7 个用户、2 个租户、8 份档案、3 条会议、17 份材料。
+- 备份：`/root/backups/pg_2026-11-11_1750_pre_047.dump`、`code_2026-11-11_1750_pre_047.tar.gz`。
+- 回滚：旧代码 `/opt/dangjian-agent-old-20261111`；旧镜像 `party-agent-app-bak-20261111` / `party-agent-frontend-bak-20261111`。
+
+**注意**：本次构建发现 `frontend/package-lock.json` 与 `package.json` 不同步（缺少 `react-markdown`、`remark-gfm`），已通过 `npm install --package-lock-only --workspaces=false` 更新并重新构建。后续发布前端前必须先执行该同步检查。
