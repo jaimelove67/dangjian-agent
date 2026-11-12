@@ -278,9 +278,7 @@ async def account_org_units(
         return list(
             (
                 await db.execute(
-                    select(OrgUnit)
-                    .where(*conditions)
-                    .order_by(OrgUnit.path, OrgUnit.id)
+                    select(OrgUnit).where(*conditions).order_by(OrgUnit.path, OrgUnit.id)
                 )
             )
             .scalars()

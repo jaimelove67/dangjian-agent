@@ -170,7 +170,9 @@ async def review(
         try:
             reset_password = approved_reset_password(tenant.name, target.name)
         except ValueError as exc:
-            raise HTTPException(409, "账号资料不完整，暂时无法生成默认密码，请先完善学校名称和姓名") from exc
+            raise HTTPException(
+                409, "账号资料不完整，暂时无法生成默认密码，请先完善学校名称和姓名"
+            ) from exc
         target.password_hash = hash_password(reset_password)
         target.updated_at = datetime.utcnow()
     row.status, row.review_comment, row.reviewed_by = decision, comment, actor.id

@@ -92,7 +92,9 @@ def training_blocker(days: int | None, hours: int | None) -> str | None:
             f"集中培训未达 {MIN_TRAINING_DAYS} 天或 {MIN_TRAINING_HOURS} 学时："
             f"已登记 {attended_days} 天 / {attended_hours} 学时"
         )
-    return f"集中培训未登记：须参加不少于 {MIN_TRAINING_DAYS} 天或 {MIN_TRAINING_HOURS} 学时的集中培训"
+    return (
+        f"集中培训未登记：须参加不少于 {MIN_TRAINING_DAYS} 天或 {MIN_TRAINING_HOURS} 学时的集中培训"
+    )
 
 
 @dataclass(frozen=True)

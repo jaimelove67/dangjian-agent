@@ -44,8 +44,10 @@ def default_schema() -> dict[str, Any]:
 def normalize_schema(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return default_schema()
-    labels = value.get("labels") if isinstance(value.get("labels"), dict) else {}
-    raw_sections = value.get("sections") if isinstance(value.get("sections"), list) else []
+    raw_labels = value.get("labels")
+    labels: dict[str, Any] = raw_labels if isinstance(raw_labels, dict) else {}
+    raw_sections_value = value.get("sections")
+    raw_sections: list[Any] = raw_sections_value if isinstance(raw_sections_value, list) else []
     by_key: dict[str, dict[str, Any]] = {}
     ordered_keys: list[str] = []
     for item in raw_sections:

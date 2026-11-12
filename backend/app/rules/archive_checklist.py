@@ -226,7 +226,17 @@ ARCHIVE_CHECKLIST: tuple[ArchiveItem, ...] = (
         13,
         "跨 5 页：培养教育情况 + 4 个季度考察 + 半年考察评价",
     ),
-    ArchiveItem("m09", 9, "入党积极分子思想汇报", SECTION_ACTIVIST, CARRIER_PASTE, True, ("思想汇报",), (), 18),
+    ArchiveItem(
+        "m09",
+        9,
+        "入党积极分子思想汇报",
+        SECTION_ACTIVIST,
+        CARRIER_PASTE,
+        True,
+        ("思想汇报",),
+        (),
+        18,
+    ),
     ArchiveItem(
         "m10",
         10,

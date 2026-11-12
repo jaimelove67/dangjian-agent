@@ -3,7 +3,7 @@
 import hashlib
 from datetime import date, datetime
 from pathlib import PurePath
-from typing import cast
+from typing import Literal, cast
 from urllib.parse import quote
 from uuid import UUID
 
@@ -135,18 +135,14 @@ def _personal_material(
     return PersonalMaterial(**data)
 
 
-async def _reviewer_names(
-    db: AsyncSession, records: list[MemberMaterial]
-) -> dict[str, str]:
+async def _reviewer_names(db: AsyncSession, records: list[MemberMaterial]) -> dict[str, str]:
     """批量解析材料审核人姓名；只用于本人和授权组织查看办理记录。"""
     user_ids = {str(record.reviewed_by) for record in records if record.reviewed_by}
     if not user_ids:
         return {}
     rows = (
         await db.execute(
-            select(User.id, User.name).where(
-                User.id.in_(user_ids), User.is_deleted.is_(False)
-            )
+            select(User.id, User.name).where(User.id.in_(user_ids), User.is_deleted.is_(False))
         )
     ).all()
     return {str(row.id): row.name for row in rows}
@@ -182,7 +178,10 @@ async def _review_items(
         items.append(
             MaterialReviewItem(
                 id=str(revision.id),
-                decision=decision,
+                decision=cast(
+                    Literal["approved", "returned"],
+                    decision,
+                ),
                 opinion=revision.reason or "",
                 reviewer_name=names.get(str(revision.actor_id)) or "审核人待核对",
                 created_at=revision.created_at,
@@ -191,9 +190,7 @@ async def _review_items(
     return items
 
 
-async def _material_history(
-    db: AsyncSession, material: MemberMaterial
-) -> MaterialReviewHistory:
+async def _material_history(db: AsyncSession, material: MemberMaterial) -> MaterialReviewHistory:
     """材料当前状态、全部审核记录以及退回前一条材料的记录。"""
     names = await _reviewer_names(db, [material])
     previous: MaterialPrevious | None = None
@@ -215,10 +212,13 @@ async def _material_history(
                 id=str(prior.id),
                 title=prior.title,
                 created_at=prior.created_at,
-                review_status=(
-                    prior.review_status
-                    if prior.review_status in ("pending", "approved", "returned")
-                    else "pending"
+                review_status=cast(
+                    Literal["pending", "approved", "returned"],
+                    (
+                        prior.review_status
+                        if prior.review_status in ("pending", "approved", "returned")
+                        else "pending"
+                    ),
                 ),
                 review_note=prior.note or "",
                 reviewed_at=prior.reviewed_at,
@@ -534,9 +534,7 @@ async def submit_material(
             )
         ):
             raise HTTPException(409, "该提交编号已用于其他材料，请重新提交")
-        return APIResponse(
-            data=_personal_material(existing), trace_id=_trace(request)
-        )
+        return APIResponse(data=_personal_material(existing), trace_id=_trace(request))
 
     existing_response = await existing_submission()
     if existing_response is not None:
@@ -813,9 +811,7 @@ async def record_material_receipt(
     )
     await db.commit()
     return APIResponse(
-        data=MaterialReceipt(
-            material_id=str(material.id), viewed_at=now, view_count=count
-        ),
+        data=MaterialReceipt(material_id=str(material.id), viewed_at=now, view_count=count),
         trace_id=_trace(request),
     )
 

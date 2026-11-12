@@ -247,12 +247,13 @@ async def build_personal_context(
             "floating_county",
         ):
             value = payload.get(key)
+            lookup = value if isinstance(value, str) else ""
             if key == "gender":
-                value = {"male": "男", "female": "女"}.get(value, value)
+                value = {"male": "男", "female": "女"}.get(lookup, value)
             elif key == "party_status":
-                value = _PARTY_STATUS.get(value, value)
+                value = _PARTY_STATUS.get(lookup, value)
             elif key == "filing_type":
-                value = _FILING_TYPE.get(value, value)
+                value = _FILING_TYPE.get(lookup, value)
             _append(info_lines, _INFO_LABELS[key], value)
         if info_lines:
             lines.extend(["", f"[本人基本信息采集表 · 第{collection.version}版]"])
@@ -284,10 +285,11 @@ async def build_personal_context(
     )
     if history:
         lines.extend(["", "[本人阶段流转]"])
-        for row in history:
+        for history_row in history:
             lines.append(
-                f"{_value(row.decision_date)}："
-                f"{_stage_label(row.from_stage)} → {_stage_label(row.to_stage)}"
+                f"{_value(history_row.decision_date)}："
+                f"{_stage_label(history_row.from_stage)} → "
+                f"{_stage_label(history_row.to_stage)}"
             )
         sources.append(
             PersonalSource(
@@ -316,15 +318,22 @@ async def build_personal_context(
     )
     if procedures:
         lines.extend(["", "[本人发展程序记录]"])
-        for row in procedures:
-            label = _SAFE_PROCEDURE_LABELS.get(row.kind, "发展程序")
+        for procedure_row in procedures:
+            label = _SAFE_PROCEDURE_LABELS.get(procedure_row.kind, "发展程序")
             detail = ""
-            if row.kind == "publicity":
-                detail = f"；{((row.details or {}).get('working_days') or '未登记')} 个工作日"
-            elif row.kind == "secondary_review":
-                detail = f"；节点：{((row.details or {}).get('node_label') or '未登记')}"
-            status = _PROCEDURE_STATUS_LABELS.get(row.status, row.status or "待核对")
-            lines.append(f"{_value(row.occurred_on)}：{label}，状态 {status}{detail}")
+            if procedure_row.kind == "publicity":
+                detail = (
+                    f"；{((procedure_row.details or {}).get('working_days') or '未登记')} "
+                    "个工作日"
+                )
+            elif procedure_row.kind == "secondary_review":
+                detail = (
+                    "；节点：" f"{((procedure_row.details or {}).get('node_label') or '未登记')}"
+                )
+            status = _PROCEDURE_STATUS_LABELS.get(
+                procedure_row.status, procedure_row.status or "待核对"
+            )
+            lines.append(f"{_value(procedure_row.occurred_on)}：{label}，状态 {status}{detail}")
         sources.append(
             PersonalSource(
                 id=f"{profile.id}:procedures",
@@ -454,10 +463,10 @@ async def build_personal_context(
     )
     if cultivation_rows:
         lines.extend(["", "[本人培养与表现记录]"])
-        for row in cultivation_rows:
-            label = _CULTIVATION_LABELS.get(row.category, "培养记录")
-            score = f"，成绩 {row.score}" if row.score is not None else ""
-            period = f"，期间 {row.period}" if row.period else ""
+        for cultivation_row in cultivation_rows:
+            label = _CULTIVATION_LABELS.get(cultivation_row.category, "培养记录")
+            score = f"，成绩 {cultivation_row.score}" if cultivation_row.score is not None else ""
+            period = f"，期间 {cultivation_row.period}" if cultivation_row.period else ""
             lines.append(f"{label}{period}{score}")
         sources.append(
             PersonalSource(

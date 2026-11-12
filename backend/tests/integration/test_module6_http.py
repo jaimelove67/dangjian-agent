@@ -719,8 +719,16 @@ async def test_version_trail_shows_prompt_workflow_and_knowledge_versions(http_c
 
     data = await call(c, c["admin"], "GET", "/admin/version-trail")
     # 提示词：当前生效值来自租户配置（未配置回落出厂默认），默认值也明确给出
-    assert data["prompt"]["current"] == {"qa": "v1", "rewrite": "v1"}
-    assert data["prompt"]["defaults"] == {"qa": "v1", "rewrite": "v1"}
+    assert data["prompt"]["current"] == {
+        "qa": "v1",
+        "rewrite": "v1",
+        "advisory": "v2",
+    }
+    assert data["prompt"]["defaults"] == {
+        "qa": "v1",
+        "rewrite": "v1",
+        "advisory": "v2",
+    }
     history = data["prompt"]["history"]
     assert [entry["config_version"] for entry in history] == [3, 1]
     assert history[0]["reason"] == "问答提示词升版" and history[0]["actor"] == "测试审核人"

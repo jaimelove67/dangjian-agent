@@ -150,9 +150,7 @@ class MemberMaterialReceipt(Base):
 
     material_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     viewer_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    viewed_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
-    )
+    viewed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
@@ -660,9 +658,7 @@ class MemberInfoCollection(Base):
     __tablename__ = "member_info_collections"
     __mapper_args__ = {"eager_defaults": True}
     __table_args__ = (
-        UniqueConstraint(
-            "tenant_id", "profile_id", name="uq_member_info_collections_profile"
-        ),
+        UniqueConstraint("tenant_id", "profile_id", name="uq_member_info_collections_profile"),
         Index(
             "ix_member_info_collections_scope",
             "tenant_id",
@@ -675,54 +671,32 @@ class MemberInfoCollection(Base):
     profile_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("member_profiles.id"), nullable=False
     )
-    user_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=True
-    )
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     member_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     member_stage: Mapped[str] = mapped_column(String(32), nullable=False, default="")
-    member_stage_label: Mapped[str] = mapped_column(
-        String(50), nullable=False, default=""
-    )
+    member_stage_label: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     org_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     department: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    id_card_masked: Mapped[str] = mapped_column(
-        String(32), nullable=False, default=""
-    )
+    id_card_masked: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     stage_joined_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    history: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
+    history: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     collector_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
-    member_confirmed_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
+    member_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    branch_reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
-    branch_reviewed_by_name: Mapped[str] = mapped_column(
-        String(50), nullable=False, default=""
-    )
+    branch_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    branch_reviewed_by_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     branch_opinion: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    department_reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
-    department_reviewed_by_name: Mapped[str] = mapped_column(
-        String(50), nullable=False, default=""
-    )
+    department_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    department_reviewed_by_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     department_opinion: Mapped[str] = mapped_column(Text, nullable=False, default="")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    archived_by_name: Mapped[str] = mapped_column(
-        String(50), nullable=False, default=""
-    )
+    archived_by_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     returned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    returned_by_name: Mapped[str] = mapped_column(
-        String(50), nullable=False, default=""
-    )
+    returned_by_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     return_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     return_stage: Mapped[str] = mapped_column(String(32), nullable=False, default="")

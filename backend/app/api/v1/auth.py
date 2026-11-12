@@ -51,9 +51,7 @@ def _trace_id(request: Request) -> str | None:
     description="无需登录的找回密码帮助；只返回平台租户已登记的联系方式。",
     tags=["鉴权"],
 )
-async def login_help(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> APIResponse[dict]:
+async def login_help(request: Request, db: AsyncSession = Depends(get_db)) -> APIResponse[dict]:
     """公开接口：不返回租户配置、账号列表或任何个人材料。"""
     with bypass_tenant_filter():
         platform = (

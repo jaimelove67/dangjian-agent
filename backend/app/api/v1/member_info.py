@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import io
+from datetime import date
 from urllib.parse import quote
 
 from docx import Document
@@ -44,7 +45,6 @@ from app.services.member_info_service import (
     can_edit_self,
     can_review,
     can_self_fill,
-    ensure_scope,
     error_message,
     history_event,
     load_collection,
@@ -642,8 +642,13 @@ async def export_info_collection(
         table.rows[index].cells[1].text = _docx_text(value)
 
     document.add_paragraph()
+    confirmed = (
+        "已在线确认 " + collection.member_confirmed_at.isoformat(sep=" ", timespec="minutes")
+        if collection.member_confirmed_at
+        else ""
+    )
     signatures = [
-        f"党员（签字）：{'已在线确认 ' + collection.member_confirmed_at.isoformat(sep=' ', timespec='minutes') if collection.member_confirmed_at else ''}",
+        f"党员（签字）：{confirmed}",
         f"信息采集员（签字）：{collection.collector_name or ''}",
         f"党支部书记（签字）：{collection.branch_reviewed_by_name or ''}",
         f"党总支复核（党总支公章）：{collection.department_reviewed_by_name or ''}",

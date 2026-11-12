@@ -26,15 +26,15 @@ from app.schemas.meeting import (
     AgendaFromUpdates,
     AgendaItemsRequest,
     DecisionsRequest,
-    RebuildDocumentsRequest,
-    TopicFeedbackRequest,
-    TopicSuggestionRequest,
     ImageMutation,
+    RebuildDocumentsRequest,
     ReviewRequest,
     RevisionRequest,
     TaskCreate,
     TaskHandle,
     TaskUpdate,
+    TopicFeedbackRequest,
+    TopicSuggestionRequest,
 )
 from app.services.activity_frequency import (
     FREQUENCY_NOTICE,
@@ -56,7 +56,6 @@ from app.services.meeting_document_settings import (
     get_meeting_document_settings,
 )
 from app.services.meeting_images import MEETING_IMAGE_LIMIT, inspect_meeting_image
-from app.services.meeting_template_service import get_effective_template
 from app.services.meeting_service import (
     ORG_LIFE_ACTIVITY_TYPE,
     apply_review,
@@ -68,12 +67,9 @@ from app.services.meeting_service import (
     utc_now,
     validate_minutes,
 )
+from app.services.meeting_template_service import get_effective_template
 from app.services.org_scope import visible_org_units
-from app.services.study_materials import (
-    recommend_sources,
-    selected_sources,
-    visible_sources,
-)
+from app.services.study_materials import recommend_sources, selected_sources, visible_sources
 from app.utils.snapshot import record_snapshot as row_data
 
 ORGANIZATION_LIFE_NOTICE = "供支部委员会研究确定，不作为正式纪要"
@@ -933,27 +929,29 @@ class ActivityService:
         if body.org_unit_id:
             recent_query = recent_query.where(MeetingRecord.org_unit_id == body.org_unit_id)
         recent_rows = (await self.db.execute(recent_query)).all()
-        recent_titles = {row.title for row in recent_rows if row.title}
+        recent_titles = {recent_row.title for recent_row in recent_rows if recent_row.title}
         # 最近已开过的会议按主题归并，避免同一方向仅换一个标题就重复推荐。
         recent_topics = {_topic_for(title)[0] for title in recent_titles if title}
         recent_topic_list: list[dict[str, Any]] = []
         seen_recent_topics: set[str] = set()
-        for row in sorted(
+        for recent_row in sorted(
             recent_rows,
             key=lambda item: item.held_on or date.min,
             reverse=True,
         ):
-            if not row.title:
+            if not recent_row.title:
                 continue
-            topic_title, _ = _topic_for(row.title)
+            topic_title, _ = _topic_for(recent_row.title)
             if topic_title in seen_recent_topics:
                 continue
             seen_recent_topics.add(topic_title)
             recent_topic_list.append(
                 {
                     "title": topic_title,
-                    "held_on": row.held_on,
-                    "activity_type_label": ACTIVITY_TYPES.get(row.activity_type, row.activity_type),
+                    "held_on": recent_row.held_on,
+                    "activity_type_label": ACTIVITY_TYPES.get(
+                        recent_row.activity_type, recent_row.activity_type
+                    ),
                 }
             )
             if len(recent_topic_list) >= 5:
@@ -961,8 +959,8 @@ class ActivityService:
         feedback: dict[str, str] = {}
         if body.org_unit_id:
             feedback = {
-                row.topic: row.decision
-                for row in (
+                feedback_row.topic: feedback_row.decision
+                for feedback_row in (
                     await self.db.execute(
                         select(MeetingTopicFeedback).where(
                             MeetingTopicFeedback.tenant_id == self.tenant_id,
@@ -975,14 +973,16 @@ class ActivityService:
                 .all()
             }
         groups: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            if any(word in row.title for word in TOPIC_IGNORE):
+        for update_row in rows:
+            if any(word in update_row.title for word in TOPIC_IGNORE):
                 continue
-            if not any(word in row.title for word in TOPIC_RELEVANT):
+            if not any(word in update_row.title for word in TOPIC_RELEVANT):
                 continue
-            if focus_topics and not matches_focus(f"{row.title} {row.summary or ''}", focus_topics):
+            if focus_topics and not matches_focus(
+                f"{update_row.title} {update_row.summary or ''}", focus_topics
+            ):
                 continue
-            topic, activity_type = _topic_for(row.title)
+            topic, activity_type = _topic_for(update_row.title)
             if topic in recent_titles or topic in recent_topics:
                 continue
             if feedback.get(topic) in {"not_relevant", "done"}:
@@ -1006,36 +1006,38 @@ class ActivityService:
                 continue
             group["sources"].append(
                 {
-                    "id": str(row.id),
-                    "title": row.title,
-                    "source_name": row.source_name,
-                    "source_url": row.source_url,
-                    "published_at": row.published_at,
-                    "status": row.status,
+                    "id": str(update_row.id),
+                    "title": update_row.title,
+                    "source_name": update_row.source_name,
+                    "source_url": update_row.source_url,
+                    "published_at": update_row.published_at,
+                    "status": update_row.status,
                 }
             )
-            group["source_ids"].append(str(row.id))
-            stamp = row.published_at or row.fetched_at
+            group["source_ids"].append(str(update_row.id))
+            stamp = update_row.published_at or update_row.fetched_at
             if stamp and stamp > group["sort"]:
                 group["sort"] = stamp
 
         topics = _balanced_topics(list(groups.values()))
-        for topic in topics:
-            source_names = list(dict.fromkeys(source["source_name"] for source in topic["sources"]))
+        for topic_item in topics:
+            source_names = list(
+                dict.fromkeys(source["source_name"] for source in topic_item["sources"])
+            )
             names = "、".join(source_names)
             focus_note = "，并结合本校关注方向" if focus_topics else ""
-            topic["reason"] = (
+            topic_item["reason"] = (
                 f"结合{names}近期发布的资料{focus_note}，建议围绕本条主题开展学习研讨。"
             )
-            latest = topic["sources"][0]["published_at"] if topic["sources"] else None
+            latest = topic_item["sources"][0]["published_at"] if topic_item["sources"] else None
             if latest:
                 days = max(0, (date.today() - latest.date()).days)
-                topic["urgency"] = "本周" if days <= 7 else "近30天" if days <= 30 else "近期"
-            topic["sources"].sort(
+                topic_item["urgency"] = "本周" if days <= 7 else "近30天" if days <= 30 else "近期"
+            topic_item["sources"].sort(
                 key=lambda item: item["published_at"] or datetime.min,
                 reverse=True,
             )
-            topic.pop("sort", None)
+            topic_item.pop("sort", None)
         return {
             "topics": topics,
             "recent_topics": recent_topic_list,

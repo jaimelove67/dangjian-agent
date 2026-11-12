@@ -798,6 +798,7 @@ class MemberDevelopment:
                 "message": "未登记已核验入党申请书的落款日期，无法核算 1 个月谈话时限。",
             }
         elif talk_on is None:
+            assert deadline is not None
             talk_check = {
                 "status": "pending",
                 "label": "待补录",
@@ -809,7 +810,7 @@ class MemberDevelopment:
                 "label": "待核对",
                 "message": f"谈话日期 {talk_on.isoformat()} 早于申请日期 {application_on.isoformat()}，请核对材料。",
             }
-        elif talk_on > deadline:
+        elif deadline is not None and talk_on > deadline:
             talk_check = {
                 "status": "overdue",
                 "label": "已超期",
@@ -819,6 +820,7 @@ class MemberDevelopment:
                 ),
             }
         else:
+            assert deadline is not None
             talk_check = {
                 "status": "ok",
                 "label": "符合",
@@ -888,13 +890,19 @@ class MemberDevelopment:
             quarterly_check = {
                 "status": "overdue",
                 "label": "已超期",
-                "message": f"最近一次思想汇报为 {report_latest.isoformat()}，下一季度汇报应在 {report_due.isoformat()} 前完成。",
+                "message": (
+                    f"最近一次思想汇报为 {report_latest.isoformat()}，"
+                    f"下一季度汇报应在 {report_due.isoformat()} 前完成。"
+                ),
             }
         else:
             quarterly_check = {
                 "status": "ok",
                 "label": "符合",
-                "message": f"最近一次思想汇报为 {report_latest.isoformat()}，下一季度汇报应在 {report_due.isoformat()} 前完成。",
+                "message": (
+                    f"最近一次思想汇报为 {report_latest.isoformat()}，"
+                    f"下一季度汇报应在 {report_due.isoformat()} 前完成。"
+                ),
             }
 
         review_types = {"预备期考察记录"} if stage == "probationary" else {"培养考察记录"}
@@ -916,13 +924,19 @@ class MemberDevelopment:
             semi_annual_check = {
                 "status": "overdue",
                 "label": "已超期",
-                "message": f"最近一次培养考察记录为 {review_latest.isoformat()}，下一次半年考察应在 {review_due.isoformat()} 前完成。",
+                "message": (
+                    f"最近一次培养考察记录为 {review_latest.isoformat()}，"
+                    f"下一次半年考察应在 {review_due.isoformat()} 前完成。"
+                ),
             }
         else:
             semi_annual_check = {
                 "status": "ok",
                 "label": "符合",
-                "message": f"最近一次培养考察记录为 {review_latest.isoformat()}，下一次半年考察应在 {review_due.isoformat()} 前完成。",
+                "message": (
+                    f"最近一次培养考察记录为 {review_latest.isoformat()}，"
+                    f"下一次半年考察应在 {review_due.isoformat()} 前完成。"
+                ),
             }
 
         transfer_application = latest_material_on({"转正申请书"})
@@ -944,13 +958,19 @@ class MemberDevelopment:
             transfer_check = {
                 "status": "overdue",
                 "label": "已超期",
-                "message": f"转正申请日期 {transfer_application.isoformat()} 晚于应提出日期 {transfer_apply_by.isoformat()}。",
+                "message": (
+                    f"转正申请日期 {transfer_application.isoformat()} "
+                    f"晚于应提出日期 {transfer_apply_by.isoformat()}。"
+                ),
             }
         else:
             transfer_check = {
                 "status": "ok",
                 "label": "符合",
-                "message": f"转正申请日期 {transfer_application.isoformat()}，不晚于 {transfer_apply_by.isoformat()}。",
+                "message": (
+                    f"转正申请日期 {transfer_application.isoformat()}，"
+                    f"不晚于 {transfer_apply_by.isoformat()}。"
+                ),
             }
 
         pre_review = await self._current_procedure(profile_id, "upper_pre_review")
@@ -986,13 +1006,19 @@ class MemberDevelopment:
                 pre_review_check = {
                     "status": "overdue",
                     "label": "已超期",
-                    "message": f"预审日期 {pre_review.occurred_on.isoformat()} 晚于应完成日期 {pre_due.isoformat()}。",
+                    "message": (
+                        f"预审日期 {pre_review.occurred_on.isoformat()} "
+                        f"晚于应完成日期 {pre_due.isoformat()}。"
+                    ),
                 }
             else:
                 pre_review_check = {
                     "status": "ok",
                     "label": "符合",
-                    "message": f"预审日期 {pre_review.occurred_on.isoformat()}，在 {pre_due.isoformat()} 前完成。",
+                    "message": (
+                        f"预审日期 {pre_review.occurred_on.isoformat()}，"
+                        f"在 {pre_due.isoformat()} 前完成。"
+                    ),
                 }
 
         application_form = await self._current_procedure(profile_id, "application_form")
@@ -1017,7 +1043,10 @@ class MemberDevelopment:
             form_check = {
                 "status": "pending",
                 "label": "填写中",
-                "message": f"志愿书正在填写；已勾选 {len(form_checklist)}/{len(APPLICATION_FORM_CHECKLIST)} 项。",
+                "message": (
+                    f"志愿书正在填写；已勾选 {len(form_checklist)}/"
+                    f"{len(APPLICATION_FORM_CHECKLIST)} 项。"
+                ),
             }
         elif len(form_checklist) < len(APPLICATION_FORM_CHECKLIST):
             form_check = {
@@ -1036,6 +1065,7 @@ class MemberDevelopment:
             row for row in await self._procedure_rows(profile_id) if row.kind == "secondary_review"
         ]
         secondary_nodes = {(row.details or {}).get("node") for row in secondary_items}
+        required_nodes: tuple[str, ...]
         if stage == "activist":
             required_nodes = ("candidate_determination",)
         elif stage == "candidate":
@@ -1167,7 +1197,9 @@ class MemberDevelopment:
                         "note": entry.note,
                         "status": status,
                         "status_label": STATUS_LABELS.get(status, ""),
-                        "material_id": str(material["id"]) if material and material.get("id") else "",
+                        "material_id": (
+                            str(material["id"]) if material and material.get("id") else ""
+                        ),
                         "document_date": (material or {}).get("document_date"),
                     }
                 )
@@ -1178,9 +1210,7 @@ class MemberDevelopment:
                     "total": len(rows),
                     "archived": sum(1 for row in rows if row["status"] == STATUS_ARCHIVED),
                     "missing": sum(1 for row in rows if row["status"] == STATUS_MISSING),
-                    "unconfirmed": sum(
-                        1 for row in rows if row["status"] == STATUS_UNCONFIRMED
-                    ),
+                    "unconfirmed": sum(1 for row in rows if row["status"] == STATUS_UNCONFIRMED),
                     "items": rows,
                 }
             )
@@ -2166,7 +2196,7 @@ class MemberDevelopment:
         if isinstance(raw, bool):
             raise HTTPException(422, f"{label}格式无效")
         try:
-            value = int(raw)
+            value = int(str(raw))
         except (TypeError, ValueError):
             raise HTTPException(422, f"{label}格式无效") from None
         if value < 0 or value > maximum:
@@ -2897,8 +2927,8 @@ class MemberDevelopment:
             .all()
         )
         procedures_by_profile: dict[str, list[MemberProcedure]] = defaultdict(list)
-        for row in procedure_rows:
-            procedures_by_profile[row.profile_id].append(row)
+        for procedure_row in procedure_rows:
+            procedures_by_profile[procedure_row.profile_id].append(procedure_row)
 
         material_rows = (
             await self.db.execute(
@@ -2913,8 +2943,8 @@ class MemberDevelopment:
             )
         ).all()
         approved_by_profile: dict[str, set[str]] = defaultdict(set)
-        for row in material_rows:
-            approved_by_profile[row.profile_id].add(row.material_type)
+        for material_row in material_rows:
+            approved_by_profile[material_row.profile_id].add(material_row.material_type)
 
         review_rows = (
             (
@@ -2937,8 +2967,8 @@ class MemberDevelopment:
             .all()
         )
         latest_review: dict[str, MemberPoliticalReview] = {}
-        for row in review_rows:
-            latest_review.setdefault(row.profile_id, row)
+        for review_row in review_rows:
+            latest_review.setdefault(review_row.profile_id, review_row)
 
         training_rows = (
             (
@@ -2954,9 +2984,11 @@ class MemberDevelopment:
             .all()
         )
         training_ready: dict[str, bool] = defaultdict(bool)
-        for row in training_rows:
-            if (row.days or 0) >= MIN_TRAINING_DAYS or (row.hours or 0) >= MIN_TRAINING_HOURS:
-                training_ready[row.profile_id] = True
+        for training_row in training_rows:
+            if (training_row.days or 0) >= MIN_TRAINING_DAYS or (
+                training_row.hours or 0
+            ) >= MIN_TRAINING_HOURS:
+                training_ready[training_row.profile_id] = True
 
         for profile in profiles:
             await self.sync_reminders(profile, procedures_by_profile.get(str(profile.id), []))
@@ -2979,8 +3011,8 @@ class MemberDevelopment:
             .all()
         )
         reminders_by_profile: dict[str, list[MemberReminder]] = defaultdict(list)
-        for row in reminder_rows:
-            reminders_by_profile[row.profile_id].append(row)
+        for reminder_row in reminder_rows:
+            reminders_by_profile[reminder_row.profile_id].append(reminder_row)
 
         items = [
             self._flow_item(

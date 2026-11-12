@@ -545,9 +545,7 @@ async def _document_response(db: AsyncSession, document: KnowledgeDoc) -> Docume
     )
 
 
-async def _user_names(
-    db: AsyncSession, documents: list[KnowledgeDoc]
-) -> dict[str, str]:
+async def _user_names(db: AsyncSession, documents: list[KnowledgeDoc]) -> dict[str, str]:
     """批量解析上传人/审核人姓名；只读展示，不改变发布或审核状态。"""
     user_ids = {
         str(identifier)
@@ -564,9 +562,7 @@ async def _user_names(
     with bypass_tenant_filter():
         rows = (
             await db.execute(
-                select(User.id, User.name).where(
-                    User.id.in_(user_ids), User.is_deleted.is_(False)
-                )
+                select(User.id, User.name).where(User.id.in_(user_ids), User.is_deleted.is_(False))
             )
         ).all()
     return {str(row.id): row.name for row in rows}

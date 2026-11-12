@@ -25,7 +25,7 @@ DECISION_LABELS = {
 NUMERALS = "一二三四五六七八九十"
 
 
-def _set_run_font(run, size: int | None = None, bold: bool = False) -> None:
+def _set_run_font(run: Any, size: int | None = None, bold: bool = False) -> None:
     run.font.name = "宋体"
     run._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), "宋体")
     if size:
@@ -33,7 +33,7 @@ def _set_run_font(run, size: int | None = None, bold: bool = False) -> None:
     run.bold = bold
 
 
-def _paragraph(document: Document, text: str, *, bold: bool = False, size: int = 11):
+def _paragraph(document: Any, text: str, *, bold: bool = False, size: int = 11) -> Any:
     paragraph = document.add_paragraph()
     run = paragraph.add_run(str(text or ""))
     _set_run_font(run, size=size, bold=bold)

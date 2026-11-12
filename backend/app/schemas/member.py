@@ -24,7 +24,8 @@ class QualificationCheckRequest(BaseModel):
     """资格校验请求"""
 
     current_stage: str = Field(
-        ..., description="当前阶段（applicant/activist/candidate/probationary/member/disqualified/rejected）"
+        ...,
+        description="当前阶段（applicant/activist/candidate/probationary/member/disqualified/rejected）",
     )
     target_stage: str = Field(..., description="拟转入阶段")
     materials: List[str] = Field(default_factory=list, description="已提交材料名称")

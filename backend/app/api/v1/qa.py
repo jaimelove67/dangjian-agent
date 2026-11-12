@@ -54,8 +54,6 @@ from app.services.qa_attachment_service import (
     store_attachment,
 )
 from app.services.qa_personal_context import build_personal_context
-from app.services.qa_role_context import build_role_context
-from app.services.qa_scope_context import build_scope_context
 from app.services.qa_record_io import build_qa_records
 from app.services.qa_record_service import (
     MAX_EXPORT_ROWS,
@@ -64,6 +62,8 @@ from app.services.qa_record_service import (
     count_qa_records,
     fetch_qa_records,
 )
+from app.services.qa_role_context import build_role_context
+from app.services.qa_scope_context import build_scope_context
 from app.services.qa_session_service import create_session, list_sessions, soft_delete_session
 
 router = APIRouter()
@@ -184,6 +184,9 @@ class AccessContextSchema(BaseModel):
     version: str = "v1"
 
 
+AnswerKind = Literal["grounded", "grounded_personal", "personal", "advisory", "refused"]
+
+
 class QuestionResponse(BaseModel):
     """问答响应"""
 
@@ -254,16 +257,14 @@ class QASessionItem(QuestionResponse):
             except (TypeError, ValidationError):
                 # 旧记录或人工导入的异常数据不应阻断历史列表。
                 access_context = None
-        answer_kind = (
+        answer_kind: AnswerKind = (
             "refused"
             if record.refused
-            else "grounded_personal"
-            if citations and personal_sources
-            else "grounded"
-            if citations
-            else "personal"
-            if personal_sources
-            else "advisory"
+            else (
+                "grounded_personal"
+                if citations and personal_sources
+                else "grounded" if citations else "personal" if personal_sources else "advisory"
+            )
         )
         return cls(
             id=str(record.id),
@@ -584,16 +585,14 @@ async def ask_question(
         )
         for item in source_group
     ]
-    answer_kind = (
+    answer_kind: AnswerKind = (
         "refused"
         if rag_response.refused
-        else "grounded_personal"
-        if citations and context_used
-        else "grounded"
-        if citations
-        else "personal"
-        if context_used
-        else "advisory"
+        else (
+            "grounded_personal"
+            if citations and context_used
+            else "grounded" if citations else "personal" if context_used else "advisory"
+        )
     )
     response = QuestionResponse(
         answer=rag_response.answer,

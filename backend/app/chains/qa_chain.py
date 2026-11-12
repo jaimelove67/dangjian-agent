@@ -277,9 +277,7 @@ class QAChain:
         # 按句移除这类内容，保留其余通用思路；整段都被移除时退回固定说明。
         if _POLICY_REFERENCE.search(answer):
             parts = re.split(r"(?<=[。；\n])", answer)
-            answer = "".join(
-                part for part in parts if not _POLICY_REFERENCE.search(part)
-            ).strip()
+            answer = "".join(part for part in parts if not _POLICY_REFERENCE.search(part)).strip()
             warnings.append("办理参考中涉及具体条款或文号的内容已移除，请以正式文件为准。")
         if not answer:
             answer = (

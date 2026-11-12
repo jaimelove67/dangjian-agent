@@ -61,7 +61,8 @@ USER_AGENT = "party-agent/1.0 (+official-source-review)"
 DATE_IN_URL = re.compile(r"/(20\d{2})[-/]?(\d{2})[-/]?(\d{2})(?:/|[^0-9])")
 ANCHOR = re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', re.I | re.S)
 META_DESCRIPTION = re.compile(
-    r'<meta[^>]+(?:name=["\']description["\']|property=["\']og:description["\'])[^>]+content=["\']([^"\']*)["\']',
+    r'<meta[^>]+(?:name=["\']description["\']|'
+    r'property=["\']og:description["\'])[^>]+content=["\']([^"\']*)["\']',
     re.I | re.S,
 )
 PAGE_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
@@ -97,7 +98,8 @@ def _published_date(url: str) -> datetime | None:
     if not match:
         return None
     try:
-        return datetime(*map(int, match.groups()))
+        year, month, day = match.groups()
+        return datetime(int(year), int(month), int(day))
     except ValueError:
         return None
 

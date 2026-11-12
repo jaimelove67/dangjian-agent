@@ -213,11 +213,7 @@ class RAGService:
         filters = filters or {}
         tenant_id = filters.get("tenant_id") or ""
         advisory_enabled = (
-            bool(
-                tenant_config.get(
-                    tenant_id, "qa_advisory_enabled", settings.QA_ADVISORY_ENABLED
-                )
-            )
+            bool(tenant_config.get(tenant_id, "qa_advisory_enabled", settings.QA_ADVISORY_ENABLED))
             if tenant_id
             else settings.QA_ADVISORY_ENABLED
         )
@@ -226,9 +222,7 @@ class RAGService:
             retriever=retriever,
             generator=_GeneratorAdapter(self, temperature),
             advisory_generator=(
-                _AdvisoryGeneratorAdapter(self, temperature)
-                if advisory_enabled
-                else None
+                _AdvisoryGeneratorAdapter(self, temperature) if advisory_enabled else None
             ),
             session=self.session,
             llm_call=self._rewrite,
@@ -242,9 +236,7 @@ class RAGService:
             session_id=session_id,
             include_expired=filters.get("include_expired", False),
         )
-        no_answer_reason, no_answer_note = self._no_answer_meta(
-            response, retriever.retrieved_count
-        )
+        no_answer_reason, no_answer_note = self._no_answer_meta(response, retriever.retrieved_count)
         citations = [
             Citation(
                 title=c.doc_name,
@@ -320,8 +312,7 @@ class RAGService:
             )
         return (
             "low_score",
-            "已找到相关文件，但没有达到可引用阈值的段落；"
-            "可补充文件名称、文号或具体条款后再问。",
+            "已找到相关文件，但没有达到可引用阈值的段落；" "可补充文件名称、文号或具体条款后再问。",
         )
 
     async def _rewrite(self, prompt: str) -> str:
@@ -353,9 +344,7 @@ class RAGService:
         if self.role_context:
             role_rule = ROLE_CONTEXT_RULE + "\n"
             role_part = (
-                "<当前账号角色与权限范围>\n"
-                + self.role_context
-                + "\n</当前账号角色与权限范围>\n"
+                "<当前账号角色与权限范围>\n" + self.role_context + "\n</当前账号角色与权限范围>\n"
             )
         material_rule = ""
         material_part = ""
@@ -393,9 +382,7 @@ class RAGService:
         if self.role_context:
             role_rule = ROLE_CONTEXT_RULE + "\n"
             role_part = (
-                "<当前账号角色与权限范围>\n"
-                + self.role_context
-                + "\n</当前账号角色与权限范围>\n"
+                "<当前账号角色与权限范围>\n" + self.role_context + "\n</当前账号角色与权限范围>\n"
             )
         return (
             advisory_prompt()

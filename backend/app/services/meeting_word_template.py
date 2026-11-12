@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import zipfile
 from io import BytesIO
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from docx import Document
 
@@ -132,8 +132,8 @@ def template_values(data: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _paragraphs(document: Document):
-    def walk(paragraphs):
+def _paragraphs(document: Any) -> Iterator[Any]:
+    def walk(paragraphs: Iterable[Any]) -> Iterator[Any]:
         for paragraph in paragraphs:
             yield paragraph
 
@@ -151,7 +151,7 @@ def _paragraphs(document: Document):
         yield from walk(section.footer.paragraphs)
 
 
-def _replace_paragraph(paragraph, mapping: dict[str, str]) -> None:
+def _replace_paragraph(paragraph: Any, mapping: dict[str, str]) -> None:
     if "{{" not in paragraph.text:
         return
     replaced = PLACEHOLDER.sub(
